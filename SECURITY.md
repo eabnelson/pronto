@@ -12,11 +12,15 @@ participants and choosing chats whose members they trust.
 it does not sandbox Codex or Claude Code. Untagged messages and attachments are
 untrusted evidence and may still influence model behavior.
 
-The current-chat query token is random, expires, is scoped to one numeric chat
-row, and is passed only through a child-process environment. It is revoked after
-every runtime attempt. The MCP surface is read-only and cannot send, react, vote,
-edit, unsend, or select another chat. This boundary does not restrict the
-runtime's other locally configured tools.
+The current-chat query token is random, expires, and is scoped to one numeric
+chat row. Claude Code receives it through a private temporary MCP configuration;
+Codex receives it through a private temporary profile used to configure the
+`s4imsg` MCP server. It is not added to the agent process environment or
+command-line arguments, and the temporary configuration is deleted after every
+runtime attempt. Because the runtime still acts as the same macOS user, this is
+capability scoping rather than an operating-system sandbox. The MCP surface is
+read-only and cannot send, react, vote, edit, unsend, or select another chat.
+This boundary does not restrict the runtime's other locally configured tools.
 
 Private state is stored below `~/Library/Application Support/s4imsg` with
 owner-only permissions. The database retains at most eight confirmed tagged

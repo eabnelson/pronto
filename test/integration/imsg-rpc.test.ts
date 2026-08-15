@@ -101,6 +101,46 @@ for await (const chunk of Bun.stdin.stream()) {
   await client.close();
 });
 
+test("does not let sustained imsg diagnostics block RPC responses", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "s4imsg-rpc-"));
+  temporaryDirectories.push(directory);
+  const executable = join(directory, "fake-imsg");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env bun
+import { fstatSync } from "node:fs";
+
+const decoder = new TextDecoder();
+let buffer = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buffer += decoder.decode(chunk, { stream: true });
+  while (buffer.includes("\\n")) {
+    const newline = buffer.indexOf("\\n");
+    const line = buffer.slice(0, newline);
+    buffer = buffer.slice(newline + 1);
+    if (!line.trim()) continue;
+    const request = JSON.parse(line);
+    const stderr = fstatSync(2);
+    await Bun.stderr.write(new Uint8Array(1024 * 1024).fill(120));
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        ok: true,
+        stderr_is_pipe: stderr.isFIFO() || stderr.isSocket(),
+      },
+    }));
+  }
+}
+`,
+    { mode: 0o700 },
+  );
+  const client = new NdjsonRpcClient(executable, { requestTimeoutMs: 250 });
+
+  expect(await client.call("status")).toEqual({ ok: true, stderr_is_pipe: false });
+  await client.close();
+});
+
 test("times out an unresponsive request and terminates a stuck child on close", async () => {
   const directory = await mkdtemp(join(tmpdir(), "s4imsg-rpc-"));
   temporaryDirectories.push(directory);

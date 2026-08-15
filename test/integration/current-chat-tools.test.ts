@@ -43,3 +43,25 @@ test("isolates two simultaneous capabilities through the loopback broker", async
     listener.close();
   }
 });
+
+test("rejects request bodies over the byte limit before parsing tool arguments", async () => {
+  const broker = new ConversationBroker(new TwoChatSource());
+  const capability = broker.issue(1);
+  const listener = broker.listen();
+  try {
+    const response = await fetch(`${listener.url}/query`, {
+      body: JSON.stringify({
+        arguments: { padding: "😀".repeat(3_000) },
+        tool: "current_chat_details",
+      }),
+      headers: {
+        authorization: `Bearer ${capability.token}`,
+        "content-type": "application/json",
+      },
+      method: "POST",
+    });
+    expect(response.status).toBe(413);
+  } finally {
+    listener.close();
+  }
+});

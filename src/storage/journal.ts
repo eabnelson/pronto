@@ -238,14 +238,29 @@ export class DeliveryJournal {
            SET tool_activity = CASE
              WHEN ? = 1 THEN 1
              WHEN ? = 2 AND COALESCE(tool_activity, 0) != 1 THEN 2
+             WHEN ? = 0 AND tool_activity = 2 THEN 0
              WHEN tool_activity IS NULL THEN 0
              ELSE tool_activity
            END,
            updated_at = ?
            WHERE provider_guid = ? AND lease_token = ? AND state = 'running'`,
         )
-        .run(value, value, this.now(), providerGuid, lease).changes,
+        .run(value, value, value, this.now(), providerGuid, lease).changes,
       "record tool activity",
+    );
+  }
+
+  beginRuntimeAttempt(providerGuid: string, lease: string): void {
+    this.#requireChange(
+      this.database
+        .query(
+          `UPDATE delivery_events
+           SET tool_activity = CASE WHEN tool_activity = 1 THEN 1 ELSE 2 END,
+               updated_at = ?
+           WHERE provider_guid = ? AND lease_token = ? AND state = 'running'`,
+        )
+        .run(this.now(), providerGuid, lease).changes,
+      "begin runtime attempt",
     );
   }
 

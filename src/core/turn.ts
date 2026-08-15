@@ -125,6 +125,9 @@ export class TurnProcessor {
       try {
         result = await this.dependencies.runtimes.run(inputForAttempt(), {
           fallbackInput: inputForAttempt,
+          onAttemptStart: () => {
+            this.dependencies.journal.beginRuntimeAttempt(event.providerGuid, lease);
+          },
           onResult: (runtime, attempt) => {
             this.dependencies.journal.recordAttempt(event.providerGuid, runtime, attempt);
             this.dependencies.journal.recordToolActivity(

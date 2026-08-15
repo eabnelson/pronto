@@ -52,6 +52,36 @@ describe("operational fallback", () => {
     expect(Object.isFrozen(fallback.calls[0])).toBeTrue();
   });
 
+  test("marks every runtime attempt as started before it can execute tools", async () => {
+    const primary = new FakeAdapter("codex", {
+      reason: "authentication",
+      status: "operational-failure",
+      toolActivity: "none",
+    });
+    const fallback = new FakeAdapter("claude", {
+      output: { reply: "fallback" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const transitions: string[] = [];
+
+    await new RuntimeChain(primary, fallback).run(input, {
+      onAttemptStart: (runtime) => {
+        transitions.push(`start:${runtime}`);
+      },
+      onResult: (runtime) => {
+        transitions.push(`result:${runtime}`);
+      },
+    });
+
+    expect(transitions).toEqual([
+      "start:codex",
+      "result:codex",
+      "start:claude",
+      "result:claude",
+    ]);
+  });
+
   test("does not replay unknown side effects or application failures", async () => {
     for (const primaryResult of [
       { reason: "timeout", status: "operational-failure", toolActivity: "unknown" },

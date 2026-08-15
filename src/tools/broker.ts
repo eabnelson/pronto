@@ -2,6 +2,8 @@ import { lstat, realpath } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { isAbsolute } from "node:path";
 
+const MAX_REQUEST_BODY_BYTES = 8_192;
+
 export interface CurrentChatSource {
   details(chatId: number): Promise<unknown>;
   history(chatId: number, limit: number): Promise<unknown>;
@@ -170,7 +172,9 @@ export class ConversationBroker {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
         const bodyText = await request.text();
-        if (bodyText.length > 8_192) return Response.json({ error: "request too large" }, { status: 413 });
+        if (bodyText.length > MAX_REQUEST_BODY_BYTES) {
+          return Response.json({ error: "request too large" }, { status: 413 });
+        }
         try {
           const body = object(JSON.parse(bodyText));
           if (typeof body.tool !== "string") throw new Error("Tool name is required");
@@ -188,6 +192,7 @@ export class ConversationBroker {
         }
       },
       hostname: "127.0.0.1",
+      maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
       port: 0,
     });
     return {

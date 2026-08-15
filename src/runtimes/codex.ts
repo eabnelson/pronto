@@ -1,6 +1,7 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import {
   BoundedProcessRunner,
   ProcessSpawnError,
@@ -80,46 +81,54 @@ export class CodexAdapter implements RuntimeAdapter {
   constructor(
     readonly executablePath: string,
     readonly runner: ProcessRunner = new BoundedProcessRunner(),
+    readonly codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex"),
   ) {}
 
   async run(input: RuntimeInput): Promise<RuntimeAttemptResult> {
     const directory = await mkdtemp(join(tmpdir(), "s4imsg-codex-"));
-    await chmod(directory, 0o700);
     const schemaPath = join(directory, "output-schema.json");
-    await writeFile(schemaPath, JSON.stringify(RUNTIME_OUTPUT_SCHEMA), { mode: 0o600 });
+    const profileName = `s4imsg-${randomUUID()}`;
+    const profilePath = join(this.codexHome, `${profileName}.config.toml`);
     try {
+      await chmod(directory, 0o700);
+      await writeFile(schemaPath, JSON.stringify(RUNTIME_OUTPUT_SCHEMA), { mode: 0o600 });
+      await mkdir(this.codexHome, { mode: 0o700, recursive: true });
+      await writeFile(
+        profilePath,
+        [
+          "[mcp_servers.s4imsg]",
+          `command = ${JSON.stringify(input.bridgeExecutablePath)}`,
+          `args = ${JSON.stringify([...(input.bridgeExecutableArgs ?? []), "mcp"])}`,
+          "",
+          "[mcp_servers.s4imsg.env]",
+          `S4IMSG_ATTEMPT_CAPABILITY = ${JSON.stringify(input.capability)}`,
+          `S4IMSG_BROKER_URL = ${JSON.stringify(input.brokerUrl)}`,
+          "",
+        ].join("\n"),
+        { flag: "wx", mode: 0o600 },
+      );
       let execution: ProcessExecution;
       try {
         execution = await this.runner.run({
-        args: [
-          "exec",
-          "--ephemeral",
-          "--json",
-          "--color",
-          "never",
-          "--skip-git-repo-check",
-          "--output-schema",
-          schemaPath,
-          "-C",
-          input.workingDirectory,
-          "-c",
-          `mcp_servers.s4imsg.command=${JSON.stringify(input.bridgeExecutablePath)}`,
-          "-c",
-          `mcp_servers.s4imsg.args=${JSON.stringify([
-            ...(input.bridgeExecutableArgs ?? []),
-            "mcp",
-          ])}`,
-          "-c",
-          'mcp_servers.s4imsg.env_vars=["S4IMSG_BROKER_URL","S4IMSG_ATTEMPT_CAPABILITY"]',
-          "-",
-        ],
-        env: {
-          S4IMSG_ATTEMPT_CAPABILITY: input.capability,
-          S4IMSG_BROKER_URL: input.brokerUrl,
-        },
-        executable: this.executablePath,
-        stdin: input.prompt,
-        workingDirectory: input.workingDirectory,
+          args: [
+            "exec",
+            "--ephemeral",
+            "--json",
+            "--color",
+            "never",
+            "--skip-git-repo-check",
+            "--output-schema",
+            schemaPath,
+            "--profile",
+            profileName,
+            "-C",
+            input.workingDirectory,
+            "-",
+          ],
+          env: {},
+          executable: this.executablePath,
+          stdin: input.prompt,
+          workingDirectory: input.workingDirectory,
         });
       } catch (error) {
         return {
@@ -148,7 +157,10 @@ export class CodexAdapter implements RuntimeAdapter {
           }
         : { output, status: "success", toolActivity: parsed.toolActivity };
     } finally {
-      await rm(directory, { force: true, recursive: true });
+      await Promise.all([
+        rm(directory, { force: true, recursive: true }),
+        unlink(profilePath).catch(() => undefined),
+      ]);
     }
   }
 }

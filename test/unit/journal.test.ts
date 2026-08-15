@@ -151,6 +151,49 @@ test("records content-free daemon health", async () => {
 });
 
 describe("restart recovery", () => {
+  test("parks an interrupted runtime attempt whose tool activity is unknown", async () => {
+    const { close, journal } = await stores();
+    try {
+      journal.admit({
+        chatId: 42,
+        chatKey: "chat-a",
+        providerGuid: "unknown-attempt",
+        request: "question",
+      });
+      const lease = journal.lease("unknown-attempt")!;
+      journal.beginRuntimeAttempt("unknown-attempt", lease);
+
+      expect(journal.recoverInterrupted()).toEqual({ ambiguous: 0, parked: 1, resumed: 0 });
+      expect(journal.state("unknown-attempt")).toBe("parked");
+      expect(journal.recoverInterrupted()).toEqual({ ambiguous: 0, parked: 0, resumed: 0 });
+      expect(journal.state("unknown-attempt")).toBe("parked");
+    } finally {
+      close();
+    }
+  });
+
+  test("resumes a completed tool-free runtime attempt exactly once", async () => {
+    const { close, journal } = await stores();
+    try {
+      journal.admit({
+        chatId: 42,
+        chatKey: "chat-a",
+        providerGuid: "tool-free-attempt",
+        request: "question",
+      });
+      const lease = journal.lease("tool-free-attempt")!;
+      journal.beginRuntimeAttempt("tool-free-attempt", lease);
+      journal.recordToolActivity("tool-free-attempt", lease, "none");
+
+      expect(journal.recoverInterrupted()).toEqual({ ambiguous: 0, parked: 0, resumed: 1 });
+      expect(journal.state("tool-free-attempt")).toBe("admitted");
+      expect(journal.recoverInterrupted()).toEqual({ ambiguous: 0, parked: 0, resumed: 0 });
+      expect(journal.state("tool-free-attempt")).toBe("admitted");
+    } finally {
+      close();
+    }
+  });
+
   test("replays only proven pre-tool work and parks uncertain state", async () => {
     const { close, journal } = await stores();
     try {

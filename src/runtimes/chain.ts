@@ -1,3 +1,4 @@
+import type { RuntimeKind } from "../config";
 import type {
   RuntimeAdapter,
   RuntimeAttemptResult,
@@ -10,8 +11,9 @@ export type ChainedRuntimeResult = RuntimeAttemptResult & {
 
 export interface RuntimeChainOptions {
   fallbackInput?: () => RuntimeInput;
+  onAttemptStart?: (runtime: RuntimeKind) => void | Promise<void>;
   onResult?: (
-    runtime: "codex" | "claude",
+    runtime: RuntimeKind,
     result: RuntimeAttemptResult,
   ) => void | Promise<void>;
 }
@@ -39,6 +41,7 @@ export class RuntimeChain {
 
   async run(input: RuntimeInput, options: RuntimeChainOptions = {}): Promise<ChainedRuntimeResult> {
     const immutableInput = freezeInput(input);
+    await options.onAttemptStart?.(this.primary.kind);
     const primaryResult = await this.primary.run(immutableInput);
     await options.onResult?.(this.primary.kind, primaryResult);
     if (
@@ -53,6 +56,7 @@ export class RuntimeChain {
     if (!sameContext(immutableInput, fallbackInput)) {
       throw new Error("Fallback runtime context must match the primary context");
     }
+    await options.onAttemptStart?.(this.fallback.kind);
     const fallbackResult = await this.fallback.run(fallbackInput);
     await options.onResult?.(this.fallback.kind, fallbackResult);
     return { ...fallbackResult, runtime: this.fallback.kind };

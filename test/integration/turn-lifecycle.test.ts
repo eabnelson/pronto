@@ -28,12 +28,14 @@ afterEach(async () => {
 class FakeAdapter implements RuntimeAdapter {
   readonly executablePath = "/usr/local/bin/fake";
   readonly inputs: RuntimeInput[] = [];
+  onRun?: () => void;
   constructor(
     readonly kind: "codex" | "claude",
     readonly result: RuntimeAttemptResult,
   ) {}
   async run(input: RuntimeInput): Promise<RuntimeAttemptResult> {
     this.inputs.push(input);
+    this.onRun?.();
     return this.result;
   }
 }
@@ -164,10 +166,18 @@ describe("turn lifecycle", () => {
     });
     const h = await harness(primary, fallback);
     try {
+      const fallbackToolActivity: { value: number | null } = { value: null };
+      fallback.onRun = () => {
+        const row = h.database
+          .query("SELECT tool_activity FROM delivery_events WHERE provider_guid = ?")
+          .get("IN-1") as { tool_activity: number | null };
+        fallbackToolActivity.value = row.tool_activity;
+      };
       h.coordinator.admit(activation);
       await h.coordinator.idle();
       expect(primary.inputs[0]!.prompt).toBe(fallback.inputs[0]!.prompt);
       expect(primary.inputs[0]!.capability).not.toBe(fallback.inputs[0]!.capability);
+      expect(fallbackToolActivity.value).toBe(2);
       expect(h.transport.sends).toHaveLength(1);
       expect(
         h.database

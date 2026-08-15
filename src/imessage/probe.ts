@@ -41,10 +41,12 @@ export function qualifyImsgStatus(value: unknown): QualifiedImsg {
     database.features !== null && typeof database.features === "object"
       ? (database.features as Record<string, unknown>)
       : {};
+  if (features.routing_metadata !== true) {
+    throw new Error("imsg routing metadata is unavailable");
+  }
   const degraded: string[] = [];
   if (features.reactions !== true) degraded.push("reactions");
   if (features.balloon_payloads !== true) degraded.push("polls");
   if (features.reply_context !== true) degraded.push("reply-context");
-  if (features.routing_metadata !== true) degraded.push("routing-metadata");
   return { degraded, version: status.version };
 }
