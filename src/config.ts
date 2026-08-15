@@ -1,0 +1,123 @@
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, parse } from "node:path";
+import { randomUUID } from "node:crypto";
+
+export const CONFIG_VERSION = 1 as const;
+export const TAG_PATTERN = /^@[A-Za-z0-9_-]{1,32}$/;
+
+export type RuntimeKind = "codex" | "claude";
+
+export interface S4imsgConfig {
+  version: typeof CONFIG_VERSION;
+  tag: string;
+  primaryRuntime: RuntimeKind;
+  fallbackRuntime?: RuntimeKind;
+  imsgPath: string;
+  installedExecutableHash?: string;
+  primaryRuntimePath?: string;
+  fallbackRuntimePath?: string;
+  workingDirectory: string;
+}
+
+export type ConfigInput = Omit<S4imsgConfig, "tag" | "version"> & { tag: string };
+
+export function normalizeTag(value: string): string {
+  const tag = value.trim();
+  if (!TAG_PATTERN.test(tag)) {
+    throw new Error("Tag must match @[A-Za-z0-9_-]{1,32}");
+  }
+  return tag.toLowerCase();
+}
+
+export function createConfig(input: ConfigInput): S4imsgConfig {
+  if (input.fallbackRuntime === input.primaryRuntime) {
+    throw new Error("Fallback runtime must differ from the primary runtime");
+  }
+  if (!isAbsolute(input.imsgPath)) throw new Error("imsg path must be absolute");
+  if (!isAbsolute(input.workingDirectory)) {
+    throw new Error("Working directory must be absolute");
+  }
+
+  return {
+    ...input,
+    tag: normalizeTag(input.tag),
+    version: CONFIG_VERSION,
+  };
+}
+
+async function existingKind(path: string): Promise<"directory" | "missing" | "symlink" | "other"> {
+  try {
+    const stat = await lstat(path);
+    if (stat.isSymbolicLink()) return "symlink";
+    if (stat.isDirectory()) return "directory";
+    return "other";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+    throw error;
+  }
+}
+
+export async function ensurePrivateDirectory(path: string): Promise<void> {
+  const kind = await existingKind(path);
+  if (kind === "symlink") throw new Error(`Refusing symbolic link directory: ${path}`);
+  if (kind === "other") throw new Error(`Expected a directory: ${path}`);
+  if (kind === "directory") return;
+
+  const parent = dirname(path);
+  if (parent !== path && parent !== parse(path).root) await ensurePrivateDirectory(parent);
+  await mkdir(path, { mode: 0o700 });
+}
+
+export async function atomicWritePrivate(path: string, contents: string): Promise<void> {
+  const directory = dirname(path);
+  await ensurePrivateDirectory(directory);
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, contents, { encoding: "utf8", mode: 0o600 });
+    await rename(temporaryPath, path);
+  } finally {
+    await unlink(temporaryPath).catch(() => undefined);
+  }
+}
+
+export async function saveConfig(path: string, config: S4imsgConfig): Promise<void> {
+  await atomicWritePrivate(path, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+function isRuntime(value: unknown): value is RuntimeKind {
+  return value === "codex" || value === "claude";
+}
+
+export async function loadConfig(path: string): Promise<S4imsgConfig> {
+  const raw: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (raw === null || typeof raw !== "object") throw new Error("Invalid configuration");
+  const value = raw as Record<string, unknown>;
+  if (value.version !== CONFIG_VERSION) throw new Error("Unsupported configuration version");
+  if (!isRuntime(value.primaryRuntime)) throw new Error("Invalid primary runtime");
+  if (value.fallbackRuntime !== undefined && !isRuntime(value.fallbackRuntime)) {
+    throw new Error("Invalid fallback runtime");
+  }
+  if (typeof value.tag !== "string" || typeof value.imsgPath !== "string") {
+    throw new Error("Invalid configuration fields");
+  }
+  if (typeof value.workingDirectory !== "string") throw new Error("Invalid working directory");
+
+  return createConfig({
+    ...(value.fallbackRuntime === undefined
+      ? {}
+      : { fallbackRuntime: value.fallbackRuntime }),
+    ...(typeof value.primaryRuntimePath === "string"
+      ? { primaryRuntimePath: value.primaryRuntimePath }
+      : {}),
+    ...(typeof value.installedExecutableHash === "string"
+      ? { installedExecutableHash: value.installedExecutableHash }
+      : {}),
+    ...(typeof value.fallbackRuntimePath === "string"
+      ? { fallbackRuntimePath: value.fallbackRuntimePath }
+      : {}),
+    imsgPath: value.imsgPath,
+    primaryRuntime: value.primaryRuntime,
+    tag: value.tag,
+    workingDirectory: value.workingDirectory,
+  });
+}
