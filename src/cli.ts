@@ -17,6 +17,7 @@ import {
 } from "./macos/setup";
 import { openS4imsgDatabase } from "./storage/database";
 import { MemoryStore } from "./storage/memory";
+import { brokerQuery, runMcpStdio } from "./tools/mcp";
 
 const HELP = `s4imsg ${packageJson.version}
 
@@ -148,6 +149,16 @@ export async function runCli(args: readonly string[]): Promise<number> {
   }
 
   if (command === "setup") return runSetup();
+  if (command === "mcp") {
+    const brokerUrl = process.env.S4IMSG_BROKER_URL;
+    const capability = process.env.S4IMSG_ATTEMPT_CAPABILITY;
+    if (brokerUrl === undefined || capability === undefined) {
+      console.error("The current-chat MCP server requires a turn-scoped capability.");
+      return 1;
+    }
+    await runMcpStdio((name, toolArgs) => brokerQuery(brokerUrl, capability, name, toolArgs));
+    return 0;
+  }
   if (command === "run") return runDaemon();
   if (command === "doctor") return runDoctor(args.includes("--json"));
   if (command === "status") return runDoctor(args.includes("--json"));
