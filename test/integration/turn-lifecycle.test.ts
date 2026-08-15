@@ -222,6 +222,23 @@ describe("turn lifecycle", () => {
     }
   });
 
+  test("sends a failure notice for invalid output even after read-only tool activity", async () => {
+    const primary = new FakeAdapter("codex", {
+      reason: "invalid-output",
+      status: "application-failure",
+      toolActivity: "observed",
+    });
+    const h = await harness(primary);
+    try {
+      h.coordinator.admit(activation);
+      await h.coordinator.idle();
+      expect(h.transport.sends).toEqual([{ chatId: 42, text: FAILURE_NOTICE }]);
+      expect(h.journal.state("IN-1")).toBe("delivered");
+    } finally {
+      h.close();
+    }
+  });
+
   test("parks an uncertain send and never promotes it", async () => {
     const primary = new FakeAdapter("codex", {
       output: { reply: "Possibly sent." },
@@ -250,6 +267,34 @@ describe("turn lifecycle", () => {
       expect(primary.requests).toEqual(["first", "second"]);
       expect(primary.maxActive).toBe(1);
       expect(h.transport.sends.map((send) => send.text)).toEqual(["first reply", "second reply"]);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("resumes an accepted reply after restart without rerunning the agent", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "must not run" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    try {
+      h.journal.admit({
+        chatId: 42,
+        chatKey: chatKeyForId(42, h.salt),
+        providerGuid: "IN-RECOVER",
+        request: "recover me",
+      });
+      const lease = h.journal.lease("IN-RECOVER")!;
+      h.journal.accept("IN-RECOVER", lease, { reply: "already accepted" });
+
+      expect(h.coordinator.start()).toEqual({ ambiguous: 0, parked: 0, resumed: 1 });
+      await h.coordinator.idle();
+
+      expect(primary.inputs).toHaveLength(0);
+      expect(h.transport.sends).toEqual([{ chatId: 42, text: "already accepted" }]);
+      expect(h.journal.state("IN-RECOVER")).toBe("delivered");
     } finally {
       h.close();
     }

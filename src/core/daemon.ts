@@ -66,6 +66,8 @@ export class S4imsgDaemon {
         this.config.chatKeySalt,
       );
       const recovered = coordinator.start();
+      journal.recordDegradedCapabilities(qualification.degraded);
+      journal.recordDaemonHealth("ready");
       console.log(
         JSON.stringify({
           component: "daemon",
@@ -99,10 +101,15 @@ export class S4imsgDaemon {
           ...(sinceRowId === undefined ? {} : { sinceRowId }),
           tag: this.config.tag,
         });
-        const outcome = await Promise.race([stopSignal, overflowSignal]);
-        await activeWatch.close();
+        const outcome = await Promise.race([
+          stopSignal,
+          overflowSignal,
+          activeWatch.terminated.then(() => "transport-closed" as const),
+        ]);
+        await activeWatch.close().catch(() => undefined);
         activeWatch = null;
         if (outcome === "stop") break;
+        if (outcome === "transport-closed") throw new Error("imsg RPC transport closed");
         const cursor = await transport.catchUp({
           onActivation: (request) => {
             coordinator.admit(request);
@@ -114,6 +121,10 @@ export class S4imsgDaemon {
         journal.advanceCursor(cursor);
       }
       await coordinator.idle();
+      journal.recordDaemonHealth("stopped");
+    } catch (error) {
+      journal.recordDaemonHealth("failed");
+      throw error;
     } finally {
       this.#stop = null;
       await activeWatch?.close().catch(() => undefined);

@@ -52,6 +52,7 @@ test("admits a provider GUID once and bounds pending work per chat", async () =>
         .query("SELECT tagged_request FROM delivery_events WHERE provider_guid = ?")
         .get("event-5"),
     ).toEqual({ tagged_request: null });
+    expect(journal.operationalStatus().rateLimited).toBe(1);
   } finally {
     close();
   }
@@ -126,8 +127,24 @@ test("reports content-free operational status and optional opaque chat keys", as
       chats: ["c_opaque"],
       lastSettledAt: null,
       parked: 0,
+      rateLimited: 0,
     });
     expect(JSON.stringify(journal.operationalStatus(true))).not.toContain("secret");
+  } finally {
+    close();
+  }
+});
+
+test("records content-free daemon health", async () => {
+  const { close, journal } = await stores();
+  try {
+    expect(journal.daemonHealth()).toBeNull();
+    journal.recordDaemonHealth("ready");
+    expect(journal.daemonHealth()).toMatchObject({ state: "ready" });
+    journal.recordDaemonHealth("failed");
+    expect(journal.daemonHealth()).toMatchObject({ state: "failed" });
+    journal.recordDegradedCapabilities(["polls", "reactions", "polls", "not valid"]);
+    expect(journal.degradedCapabilities()).toEqual(["polls", "reactions"]);
   } finally {
     close();
   }
@@ -137,20 +154,23 @@ describe("restart recovery", () => {
   test("replays only proven pre-tool work and parks uncertain state", async () => {
     const { close, journal } = await stores();
     try {
-      for (const providerGuid of ["safe", "side-effect", "sending"]) {
+      for (const providerGuid of ["safe", "side-effect", "ready", "sending"]) {
         journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid, request: providerGuid });
       }
       const safeLease = journal.lease("safe")!;
       journal.recordToolActivity("safe", safeLease, false);
       const sideEffectLease = journal.lease("side-effect")!;
       journal.recordToolActivity("side-effect", sideEffectLease, true);
+      const readyLease = journal.lease("ready")!;
+      journal.accept("ready", readyLease, { reply: "ready answer" });
       const sendingLease = journal.lease("sending")!;
       journal.accept("sending", sendingLease, { reply: "answer" });
       journal.beginSend("sending", sendingLease);
 
-      expect(journal.recoverInterrupted()).toEqual({ ambiguous: 1, parked: 1, resumed: 1 });
+      expect(journal.recoverInterrupted()).toEqual({ ambiguous: 1, parked: 1, resumed: 2 });
       expect(journal.state("safe")).toBe("admitted");
       expect(journal.state("side-effect")).toBe("parked");
+      expect(journal.state("ready")).toBe("ready_to_send");
       expect(journal.state("sending")).toBe("ambiguous");
     } finally {
       close();

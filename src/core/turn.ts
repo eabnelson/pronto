@@ -74,8 +74,22 @@ export class TurnProcessor {
   ) {}
 
   async process(event: QueuedEvent): Promise<void> {
-    const lease = this.dependencies.journal.lease(event.providerGuid);
+    const lease =
+      event.state === "ready_to_send"
+        ? event.lease
+        : this.dependencies.journal.lease(event.providerGuid);
     if (lease === null) return;
+
+    if (event.state === "ready_to_send") {
+      try {
+        await this.#deliver(event, lease, event.acceptedReply);
+      } catch {
+        const state = this.dependencies.journal.state(event.providerGuid);
+        if (state === "sending") this.dependencies.journal.markAmbiguous(event.providerGuid, lease);
+        else if (state === "ready_to_send") this.dependencies.journal.markFailed(event.providerGuid, lease);
+      }
+      return;
+    }
 
     let runtimeStarted = false;
     try {
@@ -128,7 +142,7 @@ export class TurnProcessor {
       if (result.status === "success") {
         this.dependencies.journal.accept(event.providerGuid, lease, result.output);
         await this.#deliver(event, lease, result.output.reply);
-      } else if (result.toolActivity === "none") {
+      } else if (result.status === "application-failure" || result.toolActivity === "none") {
         await this.#deliverFailure(event, lease);
       } else {
         this.dependencies.journal.markParked(event.providerGuid, lease);
@@ -206,13 +220,13 @@ export class TurnCoordinator {
     if (this.#draining !== null) return;
     this.#draining = this.#drain().finally(() => {
       this.#draining = null;
-      if (this.journal.nextAdmitted() !== null) this.#schedule();
+      if (this.journal.nextRunnable() !== null) this.#schedule();
     });
   }
 
   async #drain(): Promise<void> {
     while (true) {
-      const event = this.journal.nextAdmitted();
+      const event = this.journal.nextRunnable();
       if (event === null) return;
       await this.processor.process(event);
     }

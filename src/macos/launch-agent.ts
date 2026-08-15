@@ -10,6 +10,16 @@ export interface ProcessResult {
 
 export type LaunchctlRunner = (args: readonly string[]) => Promise<ProcessResult>;
 
+export type LaunchAgentState = "running" | "loaded" | "stopped";
+
+export function parseLaunchAgentState(result: ProcessResult): LaunchAgentState {
+  if (result.exitCode !== 0) return "stopped";
+  return /(?:^|\n)\s*state\s*=\s*running\s*(?:\n|$)/.test(result.stdout) &&
+    /(?:^|\n)\s*pid\s*=\s*\d+\s*(?:\n|$)/.test(result.stdout)
+    ? "running"
+    : "loaded";
+}
+
 function xml(value: string): string {
   return value
     .replaceAll("&", "&amp;")

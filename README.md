@@ -106,16 +106,17 @@ attachment metadata, and tool results are not archived by `s4imsg`.
 ## Operations
 
 ```sh
-s4imsg status
-s4imsg status --chats
-s4imsg doctor
-s4imsg stop
-s4imsg forget <opaque-chat-key>
-s4imsg uninstall
-s4imsg uninstall --purge --confirm-purge
+~/Library/Application\ Support/s4imsg/bin/s4imsg status
+~/Library/Application\ Support/s4imsg/bin/s4imsg status --chats
+~/Library/Application\ Support/s4imsg/bin/s4imsg doctor
+~/Library/Application\ Support/s4imsg/bin/s4imsg stop
+~/Library/Application\ Support/s4imsg/bin/s4imsg forget <opaque-chat-key>
+~/Library/Application\ Support/s4imsg/bin/s4imsg uninstall
+~/Library/Application\ Support/s4imsg/bin/s4imsg uninstall --purge --confirm-purge
 ```
 
-`status` reports only operational counts and opaque chat keys. `forget` removes
+`status` reports only operational counts, including silently rate-limited events,
+and opaque chat keys. `forget` removes
 tagged memory for one opaque key. Normal uninstall removes the service and
 executable but retains private configuration and conversation state; the explicit
 purge form removes all `s4imsg` state.

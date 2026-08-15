@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { chmodSync, copyFileSync, mkdirSync, statSync, unlinkSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, copyFileSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
+import { dirname, join, parse, resolve } from "node:path";
 import { CURRENT_SCHEMA_VERSION, migrateDatabase } from "./migrations";
 
 export function openS4imsgDatabase(
@@ -9,11 +9,13 @@ export function openS4imsgDatabase(
 ): Database {
   const directory = dirname(path);
   const backupPath = `${path}.backup`;
-  mkdirSync(directory, { mode: 0o700, recursive: true });
-  chmodSync(directory, 0o700);
+  ensurePrivateDirectorySync(directory);
   let existed = false;
   try {
-    existed = statSync(path).size > 0;
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) throw new Error(`Refusing symbolic link database: ${path}`);
+    if (!stat.isFile()) throw new Error(`Expected a database file: ${path}`);
+    existed = stat.size > 0;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -23,6 +25,7 @@ export function openS4imsgDatabase(
     const version = inspection.query("PRAGMA user_version").get() as { user_version: number };
     inspection.close();
     if (version.user_version < CURRENT_SCHEMA_VERSION) {
+      refuseSymlink(backupPath, "database backup");
       copyFileSync(path, backupPath);
       chmodSync(backupPath, 0o600);
     }
@@ -44,5 +47,40 @@ export function openS4imsgDatabase(
   } catch (error) {
     database.close();
     throw error;
+  }
+}
+
+function ensurePrivateDirectorySync(path: string): void {
+  const absolutePath = resolve(path);
+  const root = parse(absolutePath).root;
+  const components = absolutePath.slice(root.length).split("/").filter(Boolean);
+  let current = root;
+
+  for (const [index, component] of components.entries()) {
+    current = join(current, component);
+    try {
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        if (allowedMacosSystemAlias(current)) continue;
+        throw new Error(`Refusing symbolic link directory: ${current}`);
+      }
+      if (!stat.isDirectory()) throw new Error(`Expected a directory: ${current}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      mkdirSync(current, { mode: 0o700 });
+    }
+    if (index === components.length - 1) chmodSync(current, 0o700);
+  }
+}
+
+function allowedMacosSystemAlias(path: string): boolean {
+  return process.platform === "darwin" && ["/etc", "/tmp", "/var"].includes(path);
+}
+
+function refuseSymlink(path: string, label: string): void {
+  try {
+    if (lstatSync(path).isSymbolicLink()) throw new Error(`Refusing symbolic link ${label}: ${path}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   installLaunchAgent,
+  parseLaunchAgentState,
   renderLaunchAgent,
   type LaunchctlRunner,
 } from "../../src/macos/launch-agent";
@@ -26,6 +27,20 @@ test("renders a stable owner LaunchAgent without shell interpolation", () => {
   expect(plist).toContain("<string>run</string>");
   expect(plist).toContain("agent &amp; output.log");
   expect(plist).not.toContain("/bin/sh");
+});
+
+test("distinguishes a live launchd process from a merely loaded service", () => {
+  expect(parseLaunchAgentState({ exitCode: 1, stderr: "not found", stdout: "" })).toBe("stopped");
+  expect(parseLaunchAgentState({ exitCode: 0, stderr: "", stdout: "state = exited\n" })).toBe(
+    "loaded",
+  );
+  expect(
+    parseLaunchAgentState({
+      exitCode: 0,
+      stderr: "",
+      stdout: "state = running\npid = 123\n",
+    }),
+  ).toBe("running");
 });
 
 test("installs and bootstraps one LaunchAgent", async () => {

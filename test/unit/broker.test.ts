@@ -106,4 +106,12 @@ test("returns only a canonical path selected by the fixed-chat source", async ()
       path: "/etc/passwd",
     }),
   ).rejects.toThrow("Unknown argument");
+
+  source.attachmentPath = "notes.txt";
+  await expect(
+    broker.query(capability.token, "current_chat_attachment", {
+      attachment_id: "A1",
+      message_guid: "M1",
+    }),
+  ).rejects.toThrow("must be absolute");
 });

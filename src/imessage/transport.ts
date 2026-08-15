@@ -69,7 +69,7 @@ export class ImsgTransport {
     onOverflow: (resumeAfterRowId: number) => void | Promise<void>;
     sinceRowId?: number;
     tag: string;
-  }): Promise<{ close: () => Promise<void> }> {
+  }): Promise<{ close: () => Promise<void>; terminated: Promise<void> }> {
     if (!("on" in this.rpc) || typeof this.rpc.on !== "function") {
       throw new Error("imsg RPC client does not support notifications");
     }
@@ -79,9 +79,9 @@ export class ImsgTransport {
       const notification = object(params);
       if (notification.subscription !== subscription) return;
       const message = normalizeMessage(notification.message);
-      if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
       const request = await this.#activationForMessage(message, input.tag);
       if (request !== null) await input.onActivation(request);
+      if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
     });
     const disposeOverflow = rpc.on("watch.overflow", async (params) => {
       const notification = object(params);
@@ -116,6 +116,10 @@ export class ImsgTransport {
           disposeOverflow();
           if (active !== null) await rpc.call("watch.unsubscribe", { subscription: active });
         },
+        terminated:
+          "terminated" in rpc && rpc.terminated instanceof Promise
+            ? (rpc.terminated as Promise<void>)
+            : new Promise<void>(() => undefined),
       };
     } catch (error) {
       disposeMessage();
@@ -147,9 +151,9 @@ export class ImsgTransport {
       }
       for (const raw of Array.isArray(result.messages) ? result.messages : []) {
         const message = normalizeMessage(raw);
-        if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
         const request = await this.#activationForMessage(message, input.tag);
         if (request !== null) await input.onActivation(request);
+        if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
       }
       cursor = next;
       if (result.has_more !== true) return cursor;

@@ -25,6 +25,7 @@ export async function qualifyRuntime(input: {
   bridgeExecutableArgs?: readonly string[];
   bridgeExecutablePath: string;
   commandRunner: CommandRunner;
+  workingDirectory: string;
 }): Promise<RuntimeQualification> {
   const { adapter, commandRunner } = input;
   const checks: DoctorCheck[] = [];
@@ -80,7 +81,7 @@ export async function qualifyRuntime(input: {
         `Use your normal local file tools to create ${markerPath} containing exactly: ${marker}`,
         "Do not call the s4imsg current-chat tools. Then return a short confirmation reply.",
       ].join("\n"),
-      workingDirectory: directory,
+      workingDirectory: input.workingDirectory,
     });
     const markerMatches =
       result.status === "success" &&

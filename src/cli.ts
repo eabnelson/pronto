@@ -3,10 +3,10 @@
 import packageJson from "../package.json" with { type: "json" };
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import { loadConfig } from "./config";
-import { stopLaunchAgent } from "./macos/launch-agent";
+import { parseLaunchAgentState, stopLaunchAgent } from "./macos/launch-agent";
 import { pathsForHome } from "./macos/paths";
 import {
   TRUST_DISCLOSURE,
@@ -125,7 +125,7 @@ async function runSetup(): Promise<number> {
     console.log("Qualifying each selected runtime with one temporary, noninteractive file-tool probe...");
     const sourceEntry = process.argv[1];
     const sourceInvocation = sourceEntry !== undefined && sourceEntry.endsWith(".ts");
-    const bridgeExecutablePath = sourceInvocation ? process.execPath : paths.executablePath;
+    const bridgeExecutablePath = process.execPath;
     const bridgeExecutableArgs = sourceInvocation ? [resolve(sourceEntry)] : undefined;
     for (const [kind, executablePath] of [
       [config.primaryRuntime, config.primaryRuntimePath],
@@ -137,6 +137,7 @@ async function runSetup(): Promise<number> {
         ...(bridgeExecutableArgs === undefined ? {} : { bridgeExecutableArgs }),
         bridgeExecutablePath,
         commandRunner: runCommand,
+        workingDirectory: config.workingDirectory,
       });
       for (const check of result.checks) printCheck(check);
       if (!result.qualified) {
@@ -144,8 +145,14 @@ async function runSetup(): Promise<number> {
         return 1;
       }
     }
-    await installSetup({ config, paths, repositoryRoot: process.cwd() });
-    console.log("s4imsg installed. Run `s4imsg doctor` to verify local permissions.");
+    await installSetup({
+      config,
+      paths,
+      ...(sourceInvocation ? { repositoryRoot: dirname(dirname(resolve(sourceEntry))) } : {}),
+    });
+    console.log(
+      `s4imsg installed. Run \`"${paths.executablePath}" doctor\` to verify local permissions.`,
+    );
     return 0;
   } finally {
     prompt.close();
@@ -204,9 +211,31 @@ async function runDoctor(json = false): Promise<number> {
         adapter: createRuntimeAdapter(kind, executablePath),
         bridgeExecutablePath: paths.executablePath,
         commandRunner: runCommand,
+        workingDirectory: config.workingDirectory,
       });
       report.checks.push(...qualification.checks);
     }
+    const listener = await runCommand("/bin/launchctl", [
+      "print",
+      `gui/${process.getuid?.() ?? 0}/${LAUNCH_AGENT_LABEL}`,
+    ]);
+    const database = openS4imsgDatabase(paths.databasePath);
+    let daemonHealth;
+    try {
+      daemonHealth = new DeliveryJournal(database).daemonHealth();
+    } finally {
+      database.close();
+    }
+    report.checks.push(
+      parseLaunchAgentState(listener) === "running" && daemonHealth?.state === "ready"
+        ? { id: "installed-service-runtime", status: "ok" }
+        : {
+          id: "installed-service-runtime",
+          remediation:
+            "The installed launchd process has not reported ready. Check the private log and re-grant Full Disk Access to the installed executable.",
+          status: "failed",
+        },
+    );
     report.healthy = report.checks.every((check) => check.status !== "failed");
   }
   if (json) console.log(JSON.stringify(report));
@@ -222,24 +251,34 @@ async function runStatus(json: boolean, includeChats: boolean): Promise<number> 
     "print",
     `gui/${process.getuid?.() ?? 0}/${LAUNCH_AGENT_LABEL}`,
   ]);
+  const listenerState = parseLaunchAgentState(listener);
   const database = openS4imsgDatabase(paths.databasePath);
   try {
+    const journal = new DeliveryJournal(database);
+    const daemonHealth = journal.daemonHealth();
     const status = {
       database: "ready",
-      listener: listener.exitCode === 0 ? "running" : "stopped",
-      ...new DeliveryJournal(database).operationalStatus(includeChats),
+      daemon: daemonHealth?.state ?? "unknown",
+      degradedCapabilities: journal.degradedCapabilities(),
+      listener: listenerState,
+      ...journal.operationalStatus(includeChats),
     };
     if (json) console.log(JSON.stringify(status));
     else {
       console.log(`listener   ${status.listener}`);
       console.log(`database   ${status.database}`);
+      console.log(`daemon     ${status.daemon}`);
       console.log(`active     ${status.active}`);
       console.log(`ambiguous  ${status.ambiguous}`);
       console.log(`parked     ${status.parked}`);
+      console.log(`limited    ${status.rateLimited}`);
       console.log(`last       ${status.lastSettledAt ?? "none"}`);
+      for (const capability of status.degradedCapabilities) {
+        console.log(`degraded   ${capability}`);
+      }
       for (const chat of status.chats ?? []) console.log(`chat       ${chat}`);
     }
-    return listener.exitCode === 0 ? 0 : 1;
+    return listenerState === "running" && daemonHealth?.state === "ready" ? 0 : 1;
   } finally {
     database.close();
   }

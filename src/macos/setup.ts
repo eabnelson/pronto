@@ -1,4 +1,4 @@
-import { access, chmod, readFile, rename, rm, unlink } from "node:fs/promises";
+import { access, chmod, copyFile, readFile, rename, rm, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
@@ -126,6 +126,10 @@ export function sourceBuild(repositoryRoot: string): (outputPath: string) => Pro
   };
 }
 
+export function executableBuild(executablePath: string): (outputPath: string) => Promise<void> {
+  return async (outputPath) => copyFile(executablePath, outputPath);
+}
+
 export async function installSetup(input: {
   config: S4imsgConfig;
   dependencies?: SetupDependencies;
@@ -135,7 +139,10 @@ export async function installSetup(input: {
   const dependencies =
     input.dependencies ??
     ({
-      buildExecutable: sourceBuild(input.repositoryRoot ?? process.cwd()),
+      buildExecutable:
+        input.repositoryRoot === undefined
+          ? executableBuild(process.execPath)
+          : sourceBuild(input.repositoryRoot),
       installAgent: installLaunchAgent,
     } satisfies SetupDependencies);
   const binDirectory = join(input.paths.appSupportDirectory, "bin");

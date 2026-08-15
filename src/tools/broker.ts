@@ -1,5 +1,6 @@
 import { lstat, realpath } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import { isAbsolute } from "node:path";
 
 export interface CurrentChatSource {
   details(chatId: number): Promise<unknown>;
@@ -143,6 +144,7 @@ export class ConversationBroker {
           args.attachment_id,
         );
         if (attachment === null) throw new Error("Attachment is unavailable in the current chat");
+        if (!isAbsolute(attachment.path)) throw new Error("Attachment path must be absolute");
         const canonicalPath = await realpath(attachment.path);
         if (!(await lstat(canonicalPath)).isFile()) throw new Error("Attachment is not a regular file");
         result = { ...attachment, path: canonicalPath };

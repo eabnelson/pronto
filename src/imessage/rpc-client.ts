@@ -22,16 +22,34 @@ type NotificationHandler = (params: unknown) => void | Promise<void>;
 interface PendingRequest {
   reject: (error: Error) => void;
   resolve: (value: unknown) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
+export interface NdjsonRpcClientOptions {
+  closeTimeoutMs?: number;
+  requestTimeoutMs?: number;
 }
 
 export class NdjsonRpcClient implements ImsgRpc {
+  readonly terminated: Promise<void>;
   readonly #child: Bun.Subprocess<"pipe", "pipe", "pipe">;
   readonly #handlers = new Map<string, Set<NotificationHandler>>();
   readonly #pending = new Map<number, PendingRequest>();
+  readonly #closeTimeoutMs: number;
+  readonly #requestTimeoutMs: number;
+  #closeTask: Promise<void> | null = null;
   #nextId = 1;
+  #notificationTask = Promise.resolve();
+  #readError: Error | null = null;
+  #resolveTerminated!: () => void;
   #readTask: Promise<void>;
 
-  constructor(executablePath: string) {
+  constructor(executablePath: string, options: NdjsonRpcClientOptions = {}) {
+    this.#closeTimeoutMs = options.closeTimeoutMs ?? 2_000;
+    this.#requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.terminated = new Promise<void>((resolve) => {
+      this.#resolveTerminated = resolve;
+    });
     this.#child = Bun.spawn([executablePath, "rpc"], {
       stderr: "pipe",
       stdin: "pipe",
@@ -51,19 +69,31 @@ export class NdjsonRpcClient implements ImsgRpc {
   }
 
   async call(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    if (this.#readError !== null) throw this.#readError;
     const id = this.#nextId++;
     const result = new Promise<unknown>((resolve, reject) => {
-      this.#pending.set(id, { reject, resolve });
+      const timeout = setTimeout(() => {
+        if (this.#pending.delete(id)) reject(new Error(`imsg RPC request timed out: ${method}`));
+      }, this.#requestTimeoutMs);
+      this.#pending.set(id, { reject, resolve, timeout });
     });
-    this.#child.stdin.write(`${JSON.stringify({ id, jsonrpc: "2.0", method, params })}\n`);
-    await this.#child.stdin.flush();
-    return result;
+    try {
+      this.#child.stdin.write(`${JSON.stringify({ id, jsonrpc: "2.0", method, params })}\n`);
+      await this.#child.stdin.flush();
+    } catch (error) {
+      const pending = this.#pending.get(id);
+      if (pending !== undefined) {
+        this.#pending.delete(id);
+        clearTimeout(pending.timeout);
+        pending.reject(error instanceof Error ? error : new Error("Unable to write imsg RPC request"));
+      }
+    }
+    return await result;
   }
 
   async close(): Promise<void> {
-    this.#child.stdin.end();
-    await this.#readTask;
-    await this.#child.exited;
+    this.#closeTask ??= this.#close();
+    await this.#closeTask;
   }
 
   async #readLoop(): Promise<void> {
@@ -80,18 +110,25 @@ export class NdjsonRpcClient implements ImsgRpc {
           if (newline < 0) break;
           const line = buffer.slice(0, newline).trim();
           buffer = buffer.slice(newline + 1);
-          if (line.length > 0) await this.#handleLine(line);
+          if (line.length > 0) this.#handleLine(line);
         }
       }
+    } catch (error) {
+      this.#readError =
+        error instanceof Error ? error : new Error("imsg RPC reader failed unexpectedly");
     } finally {
-      const error = new Error("imsg RPC process closed");
-      for (const pending of this.#pending.values()) pending.reject(error);
+      const error = this.#readError ?? new Error("imsg RPC process closed");
+      for (const pending of this.#pending.values()) {
+        clearTimeout(pending.timeout);
+        pending.reject(error);
+      }
       this.#pending.clear();
       reader.releaseLock();
+      this.#resolveTerminated();
     }
   }
 
-  async #handleLine(line: string): Promise<void> {
+  #handleLine(line: string): void {
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
@@ -101,15 +138,25 @@ export class NdjsonRpcClient implements ImsgRpc {
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return;
     const message = parsed as Record<string, unknown>;
     if (typeof message.method === "string" && !("id" in message)) {
-      for (const handler of this.#handlers.get(message.method) ?? []) {
-        await handler(message.params);
-      }
+      const handlers = [...(this.#handlers.get(message.method) ?? [])];
+      this.#notificationTask = this.#notificationTask.then(async () => {
+        for (const handler of handlers) {
+          try {
+            await handler(message.params);
+          } catch {
+            console.error(
+              JSON.stringify({ component: "imsg-rpc", state: "notification-handler-failed" }),
+            );
+          }
+        }
+      });
       return;
     }
     if (typeof message.id !== "number") return;
     const pending = this.#pending.get(message.id);
     if (pending === undefined) return;
     this.#pending.delete(message.id);
+    clearTimeout(pending.timeout);
     if (message.error !== null && typeof message.error === "object") {
       const error = message.error as Record<string, unknown>;
       pending.reject(
@@ -122,5 +169,27 @@ export class NdjsonRpcClient implements ImsgRpc {
     } else {
       pending.resolve(message.result);
     }
+  }
+
+  async #close(): Promise<void> {
+    await Promise.race([this.#notificationTask, Bun.sleep(this.#closeTimeoutMs)]);
+    try {
+      this.#child.stdin.end();
+    } catch {
+      // The child may already have closed its input.
+    }
+    if (!(await this.#exitedWithin(this.#closeTimeoutMs))) {
+      this.#child.kill("SIGTERM");
+      if (!(await this.#exitedWithin(this.#closeTimeoutMs))) this.#child.kill("SIGKILL");
+    }
+    await this.#readTask;
+    await this.#child.exited;
+  }
+
+  async #exitedWithin(timeoutMs: number): Promise<boolean> {
+    return await Promise.race([
+      this.#child.exited.then(() => true),
+      Bun.sleep(timeoutMs).then(() => false),
+    ]);
   }
 }

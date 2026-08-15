@@ -6,9 +6,11 @@ import { qualifyRuntime } from "../../src/runtimes/qualification";
 class ProbeAdapter implements RuntimeAdapter {
   readonly executablePath = "/usr/local/bin/codex";
   readonly kind = "codex" as const;
+  lastInput: RuntimeInput | null = null;
   constructor(readonly writesMarker = true) {}
 
   async run(input: RuntimeInput) {
+    this.lastInput = input;
     const match = input.prompt.match(/create (.+) containing exactly: ([A-Za-z0-9_-]+)/);
     if (this.writesMarker && match !== null) await writeFile(match[1]!, match[2]!);
     return {
@@ -27,10 +29,12 @@ const successfulRunner = async (_executable: string, args: readonly string[]) =>
 
 describe("runtime qualification", () => {
   test("proves authentication, required CLI capabilities, and effective permissions", async () => {
+    const adapter = new ProbeAdapter();
     const result = await qualifyRuntime({
-      adapter: new ProbeAdapter(),
+      adapter,
       bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
       commandRunner: successfulRunner,
+      workingDirectory: "/Users/example/project",
     });
     expect(result.qualified).toBeTrue();
     expect(result.checks.map((check) => check.id)).toEqual([
@@ -39,6 +43,7 @@ describe("runtime qualification", () => {
       "codex-noninteractive-interface",
       "codex-effective-permissions",
     ]);
+    expect(adapter.lastInput?.workingDirectory).toBe("/Users/example/project");
   });
 
   test("fails before the live probe when authentication is unavailable", async () => {
@@ -54,6 +59,7 @@ describe("runtime qualification", () => {
           stdout: "--ephemeral --json --output-schema",
         };
       },
+      workingDirectory: "/Users/example/project",
     });
     expect(result.qualified).toBeFalse();
     expect(result.checks).toContainEqual(expect.objectContaining({
@@ -68,6 +74,7 @@ describe("runtime qualification", () => {
       adapter: new ProbeAdapter(false),
       bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
       commandRunner: successfulRunner,
+      workingDirectory: "/Users/example/project",
     });
     expect(result.qualified).toBeFalse();
     expect(result.checks.at(-1)).toMatchObject({

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { access, lstat, mkdtemp, rm } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openS4imsgDatabase } from "../../src/storage/database";
@@ -71,4 +71,23 @@ test("removes a recovery backup after a successful migration", async () => {
   const database = openS4imsgDatabase(path);
   database.close();
   await expect(access(`${path}.backup`)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("refuses symlinked database directories and files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "s4imsg-migration-"));
+  temporaryDirectories.push(directory);
+  const actual = join(directory, "actual");
+  await mkdir(actual);
+  await symlink(actual, join(directory, "linked"));
+  expect(() => openS4imsgDatabase(join(directory, "linked", "state.sqlite"))).toThrow(
+    "symbolic link directory",
+  );
+
+  const target = join(actual, "target.sqlite");
+  const targetDatabase = new Database(target, { create: true });
+  targetDatabase.close();
+  await symlink(target, join(actual, "state.sqlite"));
+  expect(() => openS4imsgDatabase(join(actual, "state.sqlite"))).toThrow(
+    "symbolic link database",
+  );
 });

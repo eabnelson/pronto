@@ -16,4 +16,6 @@ jobs:
       - run: bun run typecheck
       - run: bun test
       - run: bun run build
+      - run: ./dist/s4imsg --version
+      - run: ./dist/s4imsg --help
       - run: bun run release:validate

@@ -100,4 +100,23 @@ describe("configuration persistence", () => {
 
     expect((await lstat(stateDirectory)).mode & 0o777).toBe(0o700);
   });
+
+  test("does not change permissions on existing ancestor directories", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    temporaryDirectories.push(directory);
+    await chmod(directory, 0o755);
+
+    await saveConfig(
+      join(directory, "private", "config.json"),
+      createConfig({
+        imsgPath: "/usr/local/bin/imsg",
+        primaryRuntime: "codex",
+        tag: "@helper",
+        workingDirectory: "/Users/example",
+      }),
+    );
+
+    expect((await lstat(directory)).mode & 0o777).toBe(0o755);
+    expect((await lstat(join(directory, "private"))).mode & 0o777).toBe(0o700);
+  });
 });

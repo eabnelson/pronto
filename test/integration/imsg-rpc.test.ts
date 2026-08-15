@@ -55,3 +55,85 @@ for await (const chunk of Bun.stdin.stream()) {
   expect(notifications).toEqual([{ message: { guid: "M1" }, subscription: 7 }]);
   await client.close();
 });
+
+test("keeps reading responses while a notification handler makes a nested call", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "s4imsg-rpc-"));
+  temporaryDirectories.push(directory);
+  const executable = join(directory, "fake-imsg");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env bun
+const decoder = new TextDecoder();
+let buffer = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buffer += decoder.decode(chunk, { stream: true });
+  while (buffer.includes("\\n")) {
+    const newline = buffer.indexOf("\\n");
+    const line = buffer.slice(0, newline);
+    buffer = buffer.slice(newline + 1);
+    if (!line.trim()) continue;
+    const request = JSON.parse(line);
+    if (request.method === "watch.subscribe") {
+      console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { subscription: 7 } }));
+      console.log(JSON.stringify({ jsonrpc: "2.0", method: "message", params: { subscription: 7 } }));
+    } else if (request.method === "messages.stats") {
+      console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sent_messages: 1 } }));
+    }
+  }
+}
+`,
+    { mode: 0o700 },
+  );
+  const client = new NdjsonRpcClient(executable, { requestTimeoutMs: 250 });
+  let nestedResult: unknown;
+  let complete: (() => void) | undefined;
+  const handled = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  client.on("message", async () => {
+    nestedResult = await client.call("messages.stats", { chat_id: 42 });
+    complete?.();
+  });
+
+  expect(await client.call("watch.subscribe")).toEqual({ subscription: 7 });
+  await handled;
+  expect(nestedResult).toEqual({ sent_messages: 1 });
+  await client.close();
+});
+
+test("times out an unresponsive request and terminates a stuck child on close", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "s4imsg-rpc-"));
+  temporaryDirectories.push(directory);
+  const executable = join(directory, "fake-imsg");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env bun
+for await (const _chunk of Bun.stdin.stream()) {}
+await Bun.sleep(60_000);
+`,
+    { mode: 0o700 },
+  );
+  const client = new NdjsonRpcClient(executable, { closeTimeoutMs: 25, requestTimeoutMs: 25 });
+
+  await expect(client.call("never.responds")).rejects.toThrow("timed out");
+  await client.close();
+});
+
+test("fails closed and signals termination for malformed protocol output", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "s4imsg-rpc-"));
+  temporaryDirectories.push(directory);
+  const executable = join(directory, "fake-imsg");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env bun
+console.log("not-json");
+await Bun.sleep(60_000);
+`,
+    { mode: 0o700 },
+  );
+  const client = new NdjsonRpcClient(executable, { closeTimeoutMs: 25 });
+
+  await client.terminated;
+  await expect(client.call("initialize")).rejects.toThrow("invalid JSON-RPC");
+  await client.close();
+});

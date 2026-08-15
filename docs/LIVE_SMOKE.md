@@ -8,9 +8,9 @@ provider and sends real iMessages; it is never run by CI.
 
 1. Confirm Messages is signed in and the owner has already sent a message in the
    test chat.
-2. Run `s4imsg doctor`. Resolve failed checks. A degraded
+2. Run `~/Library/Application\ Support/s4imsg/bin/s4imsg doctor`. Resolve failed checks. A degraded
    `messages-send-automation` check is expected until this smoke succeeds.
-3. Run `s4imsg status` and confirm the listener is `running`.
+3. Run `~/Library/Application\ Support/s4imsg/bin/s4imsg status` and confirm the listener is `running`.
 4. Send `<tag> reply with exactly: s4imsg smoke ok` in the test chat.
 5. Approve the macOS Messages Automation prompt for the installed `s4imsg`
    executable if it appears.
@@ -32,11 +32,11 @@ provider and sends real iMessages; it is never run by CI.
 
 ## Recovery and inspection
 
-1. Run `s4imsg status --chats`; confirm it prints only opaque `c_...` keys and
+1. Run `~/Library/Application\ Support/s4imsg/bin/s4imsg status --chats`; confirm it prints only opaque `c_...` keys and
    counts, never handles or message text.
 2. Stop and restart through `bun run src/cli.ts setup`, then send one new tagged
    request. Confirm no old request is replayed.
-3. Run `s4imsg forget <opaque-chat-key>`, then confirm the prior tagged fact is no
+3. Run `~/Library/Application\ Support/s4imsg/bin/s4imsg forget <opaque-chat-key>`, then confirm the prior tagged fact is no
    longer available unless it is still present in recent Messages history.
 4. Inspect `~/Library/Logs/s4imsg/daemon.log` and confirm it contains no message
    text, participant handles, chat identifiers, provider output, or attachment

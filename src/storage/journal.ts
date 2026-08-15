@@ -24,7 +24,11 @@ export interface AdmissionInput {
   request: string;
 }
 
-export type QueuedEvent = AdmissionInput;
+export type QueuedEvent = AdmissionInput &
+  (
+    | { state: "admitted" }
+    | { acceptedReply: string; lease: string; state: "ready_to_send" }
+  );
 
 export interface OperationalStatus {
   active: number;
@@ -32,6 +36,12 @@ export interface OperationalStatus {
   chats?: string[];
   lastSettledAt: number | null;
   parked: number;
+  rateLimited: number;
+}
+
+export interface DaemonHealth {
+  state: "failed" | "ready" | "stopped";
+  updatedAt: number;
 }
 
 const ACTIVE_STATES = ["admitted", "running", "ready_to_send", "sending"] as const;
@@ -92,12 +102,13 @@ export class DeliveryJournal {
     return result.changes === 1 ? token : null;
   }
 
-  nextAdmitted(): QueuedEvent | null {
+  nextRunnable(): QueuedEvent | null {
     const row = this.database
       .query(
-        `SELECT provider_guid, chat_key, chat_id, tagged_request
+        `SELECT provider_guid, chat_key, chat_id, tagged_request, state,
+                accepted_reply, lease_token
          FROM delivery_events
-         WHERE state = 'admitted' AND tagged_request IS NOT NULL
+         WHERE state IN ('admitted', 'ready_to_send') AND tagged_request IS NOT NULL
          ORDER BY created_at ASC, rowid ASC
          LIMIT 1`,
       )
@@ -107,16 +118,28 @@ export class DeliveryJournal {
           chat_key: string;
           provider_guid: string;
           tagged_request: string;
+          state: "admitted" | "ready_to_send";
+          accepted_reply: string | null;
+          lease_token: string | null;
         }
       | null;
-    return row === null
-      ? null
-      : {
-          chatId: row.chat_id,
-          chatKey: row.chat_key,
-          providerGuid: row.provider_guid,
-          request: row.tagged_request,
-        };
+    if (row === null) return null;
+    const event = {
+      chatId: row.chat_id,
+      chatKey: row.chat_key,
+      providerGuid: row.provider_guid,
+      request: row.tagged_request,
+    };
+    if (row.state === "admitted") return { ...event, state: "admitted" };
+    if (row.accepted_reply === null || row.lease_token === null) {
+      throw new Error("Ready delivery is missing its accepted output or lease");
+    }
+    return {
+      ...event,
+      acceptedReply: row.accepted_reply,
+      lease: row.lease_token,
+      state: "ready_to_send",
+    };
   }
 
   cursor(): number | undefined {
@@ -139,6 +162,66 @@ export class DeliveryJournal {
          END`,
       )
       .run(String(rowId));
+  }
+
+  recordDaemonHealth(state: DaemonHealth["state"]): void {
+    this.database.transaction(() => {
+      for (const [key, value] of [
+        ["daemon_state", state],
+        ["daemon_updated_at", String(this.now())],
+      ] as const) {
+        this.database
+          .query(
+            `INSERT INTO service_state (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          )
+          .run(key, value);
+      }
+    })();
+  }
+
+  daemonHealth(): DaemonHealth | null {
+    const rows = this.database
+      .query("SELECT key, value FROM service_state WHERE key IN ('daemon_state', 'daemon_updated_at')")
+      .all() as Array<{ key: string; value: string }>;
+    const values = new Map(rows.map((row) => [row.key, row.value]));
+    const state = values.get("daemon_state");
+    const updatedAt = Number(values.get("daemon_updated_at"));
+    if (
+      (state !== "failed" && state !== "ready" && state !== "stopped") ||
+      !Number.isSafeInteger(updatedAt) ||
+      updatedAt <= 0
+    ) {
+      return null;
+    }
+    return { state, updatedAt };
+  }
+
+  recordDegradedCapabilities(capabilities: readonly string[]): void {
+    const bounded = [...new Set(capabilities.filter((value) => /^[a-z0-9_-]{1,64}$/.test(value)))]
+      .sort()
+      .slice(0, 32);
+    this.database
+      .query(
+        `INSERT INTO service_state (key, value) VALUES ('degraded_capabilities', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(JSON.stringify(bounded));
+  }
+
+  degradedCapabilities(): string[] {
+    const row = this.database
+      .query("SELECT value FROM service_state WHERE key = 'degraded_capabilities'")
+      .get() as { value: string } | null;
+    if (row === null) return [];
+    try {
+      const parsed: unknown = JSON.parse(row.value);
+      return Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === "string")
+        : [];
+    } catch {
+      return [];
+    }
   }
 
   recordToolActivity(
@@ -295,7 +378,8 @@ export class DeliveryJournal {
         .query(
           `UPDATE delivery_events
            SET state = 'failed', tagged_request = NULL, accepted_reply = NULL,
-               proposed_summary = NULL, updated_at = ?
+               proposed_summary = NULL, outbound_fingerprint = NULL,
+               outbound_fingerprint_expires_at = NULL, updated_at = ?
            WHERE provider_guid = ? AND lease_token = ?
              AND state IN ('running', 'ready_to_send', 'sending')`,
         )
@@ -359,6 +443,7 @@ export class DeliveryJournal {
            SUM(CASE WHEN state IN ('admitted', 'running', 'ready_to_send', 'sending') THEN 1 ELSE 0 END) AS active,
            SUM(CASE WHEN state = 'ambiguous' THEN 1 ELSE 0 END) AS ambiguous,
            SUM(CASE WHEN state = 'parked' THEN 1 ELSE 0 END) AS parked,
+           SUM(CASE WHEN state = 'rate_limited' THEN 1 ELSE 0 END) AS rate_limited,
            MAX(CASE WHEN state IN ('delivered', 'failed', 'ambiguous', 'parked', 'rate_limited')
              THEN updated_at ELSE NULL END) AS last_settled_at
          FROM delivery_events`,
@@ -368,6 +453,7 @@ export class DeliveryJournal {
       ambiguous: number | null;
       last_settled_at: number | null;
       parked: number | null;
+      rate_limited: number | null;
     };
     const chats = includeChats
       ? (this.database
@@ -386,13 +472,17 @@ export class DeliveryJournal {
       ...(chats === undefined ? {} : { chats }),
       lastSettledAt: counts.last_settled_at,
       parked: counts.parked ?? 0,
+      rateLimited: counts.rate_limited ?? 0,
     };
   }
 
   recoverInterrupted(): { ambiguous: number; parked: number; resumed: number } {
     return this.database.transaction(() => {
       const now = this.now();
-      const resumed = this.database
+      const readyToSend = this.database
+        .query("SELECT COUNT(*) AS count FROM delivery_events WHERE state = 'ready_to_send'")
+        .get() as { count: number };
+      const replayed = this.database
         .query(
           `UPDATE delivery_events
            SET state = 'admitted', lease_token = NULL, resume_count = resume_count + 1,
@@ -414,7 +504,7 @@ export class DeliveryJournal {
            WHERE state = 'sending'`,
         )
         .run(now).changes;
-      return { ambiguous, parked, resumed };
+      return { ambiguous, parked, resumed: replayed + readyToSend.count };
     })();
   }
 

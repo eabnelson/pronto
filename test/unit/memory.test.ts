@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { openS4imsgDatabase } from "../../src/storage/database";
 import { MemoryStore } from "../../src/storage/memory";
 import { chatKeyForId } from "../../src/storage/chat-key";
+import { DeliveryJournal } from "../../src/storage/journal";
 
 const temporaryDirectories: string[] = [];
 
@@ -51,8 +52,22 @@ test("retains eight exact exchanges, one valid summary, and supports forget", as
       summary: "x".repeat(4_001),
     });
     expect(memory.get("chat-a").summary).toBe("summary");
+
+    const journal = new DeliveryJournal(database);
+    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "pending", request: "private" });
+    const lease = journal.lease("pending")!;
+    journal.accept("pending", lease, { reply: "private reply" });
+    journal.beginSend("pending", lease);
+    journal.markAmbiguous("pending", lease);
     memory.forget("chat-a");
     expect(memory.get("chat-a")).toEqual({ exchanges: [], summary: null });
+    expect(
+      database
+        .query(
+          "SELECT tagged_request, accepted_reply, proposed_summary FROM delivery_events WHERE provider_guid = 'pending'",
+        )
+        .get(),
+    ).toEqual({ accepted_reply: null, proposed_summary: null, tagged_request: null });
   } finally {
     database.close();
   }

@@ -1,5 +1,5 @@
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, parse } from "node:path";
+import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 
 export const CONFIG_VERSION = 1 as const;
@@ -62,18 +62,26 @@ async function existingKind(path: string): Promise<"directory" | "missing" | "sy
   }
 }
 
-export async function ensurePrivateDirectory(path: string): Promise<void> {
-  const kind = await existingKind(path);
-  if (kind === "symlink") throw new Error(`Refusing symbolic link directory: ${path}`);
-  if (kind === "other") throw new Error(`Expected a directory: ${path}`);
-  if (kind === "directory") {
-    await chmod(path, 0o700);
-    return;
-  }
+function allowedMacosSystemAlias(path: string): boolean {
+  return process.platform === "darwin" && ["/etc", "/tmp", "/var"].includes(path);
+}
 
-  const parent = dirname(path);
-  if (parent !== path && parent !== parse(path).root) await ensurePrivateDirectory(parent);
-  await mkdir(path, { mode: 0o700 });
+export async function ensurePrivateDirectory(path: string): Promise<void> {
+  const absolutePath = resolve(path);
+  const root = parse(absolutePath).root;
+  const components = absolutePath.slice(root.length).split("/").filter(Boolean);
+  let current = root;
+
+  for (const [index, component] of components.entries()) {
+    current = join(current, component);
+    const kind = await existingKind(current);
+    if (kind === "symlink" && !allowedMacosSystemAlias(current)) {
+      throw new Error(`Refusing symbolic link directory: ${current}`);
+    }
+    if (kind === "other") throw new Error(`Expected a directory: ${current}`);
+    if (kind === "missing") await mkdir(current, { mode: 0o700 });
+    if (index === components.length - 1) await chmod(current, 0o700);
+  }
 }
 
 export async function atomicWritePrivate(path: string, contents: string): Promise<void> {
