@@ -33,6 +33,7 @@ class FakeRunner implements ProcessRunner {
 }
 
 const input = {
+  bridgeExecutableArgs: ["/source/src/cli.ts"],
   bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
   brokerUrl: "http://127.0.0.1:3456",
   capability: "secret-capability",
@@ -59,6 +60,7 @@ describe("Codex adapter", () => {
     const execution = runner.executions[0]!;
     expect(execution.args).toContain("--ephemeral");
     expect(execution.args).toContain("--json");
+    expect(execution.args.join(" ")).toContain("/source/src/cli.ts");
     expect(execution.args).not.toContain("--model");
     expect(execution.args).not.toContain("--sandbox");
     expect(execution.args.join(" ")).not.toContain("bypass");
@@ -94,7 +96,7 @@ describe("Claude Code adapter", () => {
     expect(runner.observedMcpConfig).toEqual({
       mcpServers: {
         s4imsg: {
-          args: ["mcp"],
+          args: ["/source/src/cli.ts", "mcp"],
           command: input.bridgeExecutablePath,
           env: {
             S4IMSG_ATTEMPT_CAPABILITY: input.capability,
@@ -165,6 +167,22 @@ test("classifies permission denial as an application failure", async () => {
   expect(await new ClaudeAdapter("/usr/local/bin/claude", runner).run(input)).toEqual({
     reason: "permission-denial",
     status: "application-failure",
+    toolActivity: "none",
+  });
+});
+
+test("classifies configured MCP startup failure before generic authentication text", async () => {
+  const runner = new FakeRunner();
+  runner.response = {
+    exitCode: 1,
+    outputLimitExceeded: false,
+    stderr: "MCP startup failed: OAuth token refresh failed: reauthorization required",
+    stdout: "",
+    timedOut: false,
+  };
+  expect(await new CodexAdapter("/usr/local/bin/codex", runner).run(input)).toEqual({
+    reason: "mcp-configuration",
+    status: "operational-failure",
     toolActivity: "none",
   });
 });

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { activatedRequest, type ActivatedRequest } from "../activation";
-import { normalizeMessage } from "./message";
+import { normalizeMessage, type NormalizedMessage } from "./message";
 import { qualifyImsgStatus, type QualifiedImsg } from "./probe";
 import { ImsgRpcError, type ImsgRpc, type WatchableImsgRpc } from "./rpc-client";
 
@@ -32,7 +32,13 @@ export class ImsgTransport {
   }
 
   async activationFor(raw: unknown, tag: string): Promise<ActivatedRequest | null> {
-    const message = normalizeMessage(raw);
+    return this.#activationForMessage(normalizeMessage(raw), tag);
+  }
+
+  async #activationForMessage(
+    message: NormalizedMessage,
+    tag: string,
+  ): Promise<ActivatedRequest | null> {
     if (
       message.isFromMe &&
       message.chatId !== null &&
@@ -74,7 +80,7 @@ export class ImsgTransport {
       if (notification.subscription !== subscription) return;
       const message = normalizeMessage(notification.message);
       if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
-      const request = await this.activationFor(notification.message, input.tag);
+      const request = await this.#activationForMessage(message, input.tag);
       if (request !== null) await input.onActivation(request);
     });
     const disposeOverflow = rpc.on("watch.overflow", async (params) => {
@@ -142,7 +148,7 @@ export class ImsgTransport {
       for (const raw of Array.isArray(result.messages) ? result.messages : []) {
         const message = normalizeMessage(raw);
         if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
-        const request = await this.activationFor(raw, input.tag);
+        const request = await this.#activationForMessage(message, input.tag);
         if (request !== null) await input.onActivation(request);
       }
       cursor = next;

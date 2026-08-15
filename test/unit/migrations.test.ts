@@ -59,3 +59,16 @@ test("creates the current owner-private WAL schema", async () => {
     database.close();
   }
 });
+
+test("removes a recovery backup after a successful migration", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "s4imsg-migration-"));
+  temporaryDirectories.push(directory);
+  const path = join(directory, "state.sqlite");
+  const empty = new Database(path, { create: true });
+  empty.exec("CREATE TABLE pre_migration_marker (value TEXT)");
+  empty.close();
+
+  const database = openS4imsgDatabase(path);
+  database.close();
+  await expect(access(`${path}.backup`)).rejects.toMatchObject({ code: "ENOENT" });
+});

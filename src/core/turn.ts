@@ -90,6 +90,10 @@ export class TurnProcessor {
       });
       const prompt = runtimePrompt(context);
       const capabilities = new Set<string>();
+      const revokeCapabilities = () => {
+        for (const token of capabilities) this.dependencies.broker.revoke(token);
+        capabilities.clear();
+      };
       const inputForAttempt = (): RuntimeInput => {
         const { token } = this.dependencies.broker.issue(event.chatId);
         capabilities.add(token);
@@ -114,14 +118,11 @@ export class TurnProcessor {
               lease,
               attempt.toolActivity,
             );
-            for (const token of capabilities) {
-              this.dependencies.broker.revoke(token);
-              capabilities.delete(token);
-            }
+            revokeCapabilities();
           },
         });
       } finally {
-        for (const token of capabilities) this.dependencies.broker.revoke(token);
+        revokeCapabilities();
       }
 
       if (result.status === "success") {

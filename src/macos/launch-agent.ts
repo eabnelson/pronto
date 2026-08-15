@@ -77,10 +77,13 @@ export async function installLaunchAgent(input: {
   await runner(["bootout", service]);
   const bootstrap = await runner(["bootstrap", `gui/${uid}`, input.plistPath]);
   if (bootstrap.exitCode !== 0) {
+    await unlink(input.plistPath).catch(() => undefined);
     throw new Error(`launchctl bootstrap failed: ${bootstrap.stderr.trim() || bootstrap.exitCode}`);
   }
   const kickstart = await runner(["kickstart", "-k", service]);
   if (kickstart.exitCode !== 0) {
+    await runner(["bootout", service]);
+    await unlink(input.plistPath).catch(() => undefined);
     throw new Error(`launchctl kickstart failed: ${kickstart.stderr.trim() || kickstart.exitCode}`);
   }
 }

@@ -4,6 +4,15 @@
   "description": "A local iMessage bridge for Codex and Claude Code",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "keywords": [
+    "imessage",
+    "codex",
+    "claude-code",
+    "macos"
+  ],
   "bin": {
     "s4imsg": "./src/cli.ts"
   },

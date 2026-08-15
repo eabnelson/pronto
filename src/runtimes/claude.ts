@@ -82,7 +82,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
       JSON.stringify({
         mcpServers: {
           s4imsg: {
-            args: ["mcp"],
+            args: [...(input.bridgeExecutableArgs ?? []), "mcp"],
             command: input.bridgeExecutablePath,
             env: {
               S4IMSG_ATTEMPT_CAPABILITY: input.capability,

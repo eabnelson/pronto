@@ -3,6 +3,7 @@
 import packageJson from "../package.json" with { type: "json" };
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import { loadConfig } from "./config";
 import { stopLaunchAgent } from "./macos/launch-agent";
@@ -14,11 +15,18 @@ import {
   installSetup,
   prepareSetupConfig,
   uninstallInstallation,
+  runCommand,
 } from "./macos/setup";
 import { openS4imsgDatabase } from "./storage/database";
 import { MemoryStore } from "./storage/memory";
 import { brokerQuery, runMcpStdio } from "./tools/mcp";
 import { S4imsgDaemon } from "./core/daemon";
+import { qualifyRuntime } from "./runtimes/qualification";
+import { createRuntimeAdapter } from "./runtimes/factory";
+import { NdjsonRpcClient } from "./imessage/rpc-client";
+import { ImsgTransport } from "./imessage/transport";
+import { DeliveryJournal } from "./storage/journal";
+import { LAUNCH_AGENT_LABEL } from "./macos/paths";
 
 const HELP = `s4imsg ${packageJson.version}
 
@@ -89,6 +97,53 @@ async function runSetup(): Promise<number> {
       tag,
       workingDirectory: homedir(),
     });
+    const imsgRpc = new NdjsonRpcClient(discovery.imsgPath);
+    try {
+      const transport = new ImsgTransport(imsgRpc);
+      const imsg = await transport.qualify();
+      const watch = await transport.watch({
+        onActivation: () => undefined,
+        onOverflow: () => undefined,
+        tag: config.tag,
+      });
+      await watch.close();
+      printCheck({ id: "imessage-read-watch", status: "ok" });
+      for (const capability of imsg.degraded) {
+        printCheck({ id: `imessage-${capability}`, status: "degraded" });
+      }
+    } catch {
+      printCheck({
+        id: "imessage-read-watch",
+        remediation: "Grant Full Disk Access to this setup terminal and verify imsg RPC access.",
+        status: "failed",
+      });
+      console.error("Setup stopped before installation because iMessage qualification failed.");
+      return 1;
+    } finally {
+      await imsgRpc.close().catch(() => undefined);
+    }
+    console.log("Qualifying each selected runtime with one temporary, noninteractive file-tool probe...");
+    const sourceEntry = process.argv[1];
+    const sourceInvocation = sourceEntry !== undefined && sourceEntry.endsWith(".ts");
+    const bridgeExecutablePath = sourceInvocation ? process.execPath : paths.executablePath;
+    const bridgeExecutableArgs = sourceInvocation ? [resolve(sourceEntry)] : undefined;
+    for (const [kind, executablePath] of [
+      [config.primaryRuntime, config.primaryRuntimePath],
+      [config.fallbackRuntime, config.fallbackRuntimePath],
+    ] as const) {
+      if (kind === undefined || executablePath === undefined) continue;
+      const result = await qualifyRuntime({
+        adapter: createRuntimeAdapter(kind, executablePath),
+        ...(bridgeExecutableArgs === undefined ? {} : { bridgeExecutableArgs }),
+        bridgeExecutablePath,
+        commandRunner: runCommand,
+      });
+      for (const check of result.checks) printCheck(check);
+      if (!result.qualified) {
+        console.error("Setup stopped before installation because runtime qualification failed.");
+        return 1;
+      }
+    }
     await installSetup({ config, paths, repositoryRoot: process.cwd() });
     console.log("s4imsg installed. Run `s4imsg doctor` to verify local permissions.");
     return 0;
@@ -97,16 +152,97 @@ async function runSetup(): Promise<number> {
   }
 }
 
+function printCheck(check: { id: string; remediation?: string; status: string }): void {
+  console.log(`${check.status.padEnd(8)} ${check.id}`);
+  if (check.remediation !== undefined) console.log(`         ${check.remediation}`);
+}
+
 async function runDoctor(json = false): Promise<number> {
-  const report = await inspectInstallation(pathsForHome(homedir()));
+  const paths = pathsForHome(homedir());
+  const report = await inspectInstallation(paths);
+  if (report.healthy) {
+    const config = await loadConfig(paths.configPath);
+    const rpc = new NdjsonRpcClient(config.imsgPath);
+    try {
+      const transport = new ImsgTransport(rpc);
+      const imsg = await transport.qualify();
+      const watch = await transport.watch({
+        onActivation: () => undefined,
+        onOverflow: () => undefined,
+        tag: config.tag,
+      });
+      await watch.close();
+      report.checks.push({ id: "imessage-read-watch", status: "ok" });
+      for (const capability of imsg.degraded) {
+        report.checks.push({
+          id: `imessage-${capability}`,
+          remediation: `Update or reconfigure imsg to expose ${capability}; core tagged replies remain available.`,
+          status: "degraded",
+        });
+      }
+      report.checks.push({
+        id: "messages-send-automation",
+        remediation: "A real send cannot be tested without messaging a chat; complete the documented live smoke after setup.",
+        status: "degraded",
+      });
+    } catch {
+      report.checks.push({
+        id: "imessage-read-watch",
+        remediation: "Grant Full Disk Access to the installed s4imsg executable and verify imsg RPC access.",
+        status: "failed",
+      });
+    } finally {
+      await rpc.close().catch(() => undefined);
+    }
+
+    for (const [kind, executablePath] of [
+      [config.primaryRuntime, config.primaryRuntimePath],
+      [config.fallbackRuntime, config.fallbackRuntimePath],
+    ] as const) {
+      if (kind === undefined || executablePath === undefined) continue;
+      const qualification = await qualifyRuntime({
+        adapter: createRuntimeAdapter(kind, executablePath),
+        bridgeExecutablePath: paths.executablePath,
+        commandRunner: runCommand,
+      });
+      report.checks.push(...qualification.checks);
+    }
+    report.healthy = report.checks.every((check) => check.status !== "failed");
+  }
   if (json) console.log(JSON.stringify(report));
   else {
-    for (const check of report.checks) {
-      console.log(`${check.status.padEnd(8)} ${check.id}`);
-      if (check.remediation !== undefined) console.log(`         ${check.remediation}`);
-    }
+    for (const check of report.checks) printCheck(check);
   }
   return report.healthy ? 0 : 1;
+}
+
+async function runStatus(json: boolean, includeChats: boolean): Promise<number> {
+  const paths = pathsForHome(homedir());
+  const listener = await runCommand("/bin/launchctl", [
+    "print",
+    `gui/${process.getuid?.() ?? 0}/${LAUNCH_AGENT_LABEL}`,
+  ]);
+  const database = openS4imsgDatabase(paths.databasePath);
+  try {
+    const status = {
+      database: "ready",
+      listener: listener.exitCode === 0 ? "running" : "stopped",
+      ...new DeliveryJournal(database).operationalStatus(includeChats),
+    };
+    if (json) console.log(JSON.stringify(status));
+    else {
+      console.log(`listener   ${status.listener}`);
+      console.log(`database   ${status.database}`);
+      console.log(`active     ${status.active}`);
+      console.log(`ambiguous  ${status.ambiguous}`);
+      console.log(`parked     ${status.parked}`);
+      console.log(`last       ${status.lastSettledAt ?? "none"}`);
+      for (const chat of status.chats ?? []) console.log(`chat       ${chat}`);
+    }
+    return listener.exitCode === 0 ? 0 : 1;
+  } finally {
+    database.close();
+  }
 }
 
 async function runDaemon(): Promise<number> {
@@ -117,7 +253,14 @@ async function runDaemon(): Promise<number> {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   try {
-    await daemon.run();
+    try {
+      await daemon.run();
+    } catch {
+      console.error(
+        JSON.stringify({ component: "daemon", reason: "startup-or-transport-failure", state: "failed" }),
+      );
+      return 1;
+    }
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
@@ -167,7 +310,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
   }
   if (command === "run") return runDaemon();
   if (command === "doctor") return runDoctor(args.includes("--json"));
-  if (command === "status") return runDoctor(args.includes("--json"));
+  if (command === "status") return runStatus(args.includes("--json"), args.includes("--chats"));
   if (command === "stop") {
     const result = await stopLaunchAgent();
     if (result.exitCode !== 0) console.error("s4imsg was not running.");

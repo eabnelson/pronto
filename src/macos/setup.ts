@@ -174,6 +174,7 @@ export async function uninstallInstallation(input: {
   });
   if (input.purge === true) {
     await rm(input.paths.appSupportDirectory, { force: true, recursive: true });
+    await rm(input.paths.logDirectory, { force: true, recursive: true });
   }
 }
 

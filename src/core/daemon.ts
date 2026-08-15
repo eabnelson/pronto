@@ -3,19 +3,13 @@ import { ImsgCurrentChatSource } from "../imessage/current-chat-source";
 import { NdjsonRpcClient } from "../imessage/rpc-client";
 import { ImsgTransport } from "../imessage/transport";
 import type { S4imsgPaths } from "../macos/paths";
-import { ClaudeAdapter } from "../runtimes/claude";
-import { CodexAdapter } from "../runtimes/codex";
 import { RuntimeChain } from "../runtimes/chain";
-import type { RuntimeAdapter } from "../runtimes/types";
+import { createRuntimeAdapter } from "../runtimes/factory";
 import { openS4imsgDatabase } from "../storage/database";
 import { DeliveryJournal } from "../storage/journal";
 import { MemoryStore } from "../storage/memory";
 import { ConversationBroker } from "../tools/broker";
 import { TurnCoordinator, TurnProcessor } from "./turn";
-
-function adapter(kind: "codex" | "claude", path: string): RuntimeAdapter {
-  return kind === "codex" ? new CodexAdapter(path) : new ClaudeAdapter(path);
-}
 
 function runtimePath(config: S4imsgConfig, fallback = false): string {
   const path = fallback ? config.fallbackRuntimePath : config.primaryRuntimePath;
@@ -51,11 +45,11 @@ export class S4imsgDaemon {
     try {
       const qualification = await transport.qualify();
       brokerServer = broker.listen();
-      const primary = adapter(this.config.primaryRuntime, runtimePath(this.config));
+      const primary = createRuntimeAdapter(this.config.primaryRuntime, runtimePath(this.config));
       const fallback =
         this.config.fallbackRuntime === undefined
           ? undefined
-          : adapter(this.config.fallbackRuntime, runtimePath(this.config, true));
+          : createRuntimeAdapter(this.config.fallbackRuntime, runtimePath(this.config, true));
       const memory = new MemoryStore(database);
       const coordinator = new TurnCoordinator(
         new TurnProcessor({

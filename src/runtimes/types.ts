@@ -8,6 +8,7 @@ export interface RuntimeOutput {
 }
 
 export interface RuntimeInput {
+  bridgeExecutableArgs?: readonly string[];
   bridgeExecutablePath: string;
   brokerUrl: string;
   capability: string;
@@ -39,6 +40,14 @@ export function classifyProcessFailure(input: {
     return { reason: "output-limit", status: "operational-failure" };
   }
   const evidence = input.stderr.toLowerCase();
+  if (
+    evidence.includes("mcp") &&
+    (evidence.includes("oauth") ||
+      evidence.includes("failed to initialize") ||
+      evidence.includes("startup failed"))
+  ) {
+    return { reason: "mcp-configuration", status: "operational-failure" };
+  }
   if (
     evidence.includes("permission denied") ||
     evidence.includes("permission was denied") ||

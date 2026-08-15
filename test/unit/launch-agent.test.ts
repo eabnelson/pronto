@@ -52,3 +52,23 @@ test("installs and bootstraps one LaunchAgent", async () => {
     ["kickstart", "-k", "gui/501/dev.s4imsg.agent"],
   ]);
 });
+
+test("removes a partial plist when launchd bootstrap fails", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "s4imsg-agent-"));
+  temporaryDirectories.push(directory);
+  const plistPath = join(directory, "dev.s4imsg.agent.plist");
+
+  await expect(
+    installLaunchAgent({
+      plist: "<?xml version=\"1.0\"?><plist></plist>\n",
+      plistPath,
+      runner: async (args) => ({
+        exitCode: args[0] === "bootstrap" ? 1 : 0,
+        stderr: "synthetic bootstrap failure",
+        stdout: "",
+      }),
+      uid: 501,
+    }),
+  ).rejects.toThrow("synthetic bootstrap failure");
+  await expect(readFile(plistPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+});

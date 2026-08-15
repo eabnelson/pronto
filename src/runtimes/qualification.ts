@@ -22,6 +22,7 @@ export interface RuntimeQualification {
 
 export async function qualifyRuntime(input: {
   adapter: RuntimeAdapter;
+  bridgeExecutableArgs?: readonly string[];
   bridgeExecutablePath: string;
   commandRunner: CommandRunner;
 }): Promise<RuntimeQualification> {
@@ -68,6 +69,9 @@ export async function qualifyRuntime(input: {
   const marker = randomBytes(24).toString("base64url");
   try {
     const result = await adapter.run({
+      ...(input.bridgeExecutableArgs === undefined
+        ? {}
+        : { bridgeExecutableArgs: input.bridgeExecutableArgs }),
       bridgeExecutablePath: input.bridgeExecutablePath,
       brokerUrl: "http://127.0.0.1:1",
       capability: randomBytes(32).toString("base64url"),
@@ -80,14 +84,15 @@ export async function qualifyRuntime(input: {
     });
     const markerMatches =
       result.status === "success" &&
-      (await readFile(markerPath, "utf8").catch(() => "")) === marker;
+      (await readFile(markerPath, "utf8").catch(() => "")).trim() === marker;
+    const remediation =
+      result.status !== "success" && result.reason !== "permission-denial"
+        ? `Repair ${adapter.kind}'s configured noninteractive environment (${result.reason}), then run setup or doctor again.`
+        : `Allow ${adapter.kind} to use its normal file tools noninteractively, then run setup or doctor again.`;
     checks.push(
       markerMatches
         ? { id: `${adapter.kind}-effective-permissions`, status: "ok" }
-        : failed(
-            `${adapter.kind}-effective-permissions`,
-            `Allow ${adapter.kind} to use its normal file tools noninteractively, then run setup or doctor again.`,
-          ),
+        : failed(`${adapter.kind}-effective-permissions`, remediation),
     );
   } finally {
     await rm(directory, { force: true, recursive: true });

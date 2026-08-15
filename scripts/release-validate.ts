@@ -35,6 +35,17 @@ const [license, notices, provenance] = await Promise.all([
   read("PROVENANCE.md"),
 ]);
 
+for (const required of [
+  "README.md",
+  "SECURITY.md",
+  "docs/LIVE_SMOKE.md",
+  "docs/RELEASE_QUALIFICATION.md",
+  ".github/workflows/ci.yml",
+  ".github/workflows/release.yml",
+]) {
+  if (!(await Bun.file(join(root, required)).exists())) failures.push(`${required} is missing`);
+}
+
 if (!license.startsWith("MIT License")) failures.push("MIT license text is missing");
 if (!notices.includes("Copyright (c) 2026 Peter Steinberger")) {
   failures.push("imsg copyright notice is missing");
@@ -46,6 +57,19 @@ if (!provenance.includes("implemented clean-room")) {
 for (const file of await sourceFiles("src")) {
   if ((await read(file)).includes("@studio-four/")) {
     failures.push(`${file} imports a Studio Four package`);
+  }
+}
+
+const [codexAdapter, claudeAdapter] = await Promise.all([
+  read("src/runtimes/codex.ts"),
+  read("src/runtimes/claude.ts"),
+]);
+for (const [name, source] of [
+  ["Codex", codexAdapter],
+  ["Claude Code", claudeAdapter],
+] as const) {
+  for (const forbidden of ["--model", "--sandbox", "bypassPermissions", "--permission-mode"]) {
+    if (source.includes(forbidden)) failures.push(`${name} adapter overrides ${forbidden}`);
   }
 }
 

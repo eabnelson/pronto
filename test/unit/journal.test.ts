@@ -116,6 +116,23 @@ test("advances the durable message cursor monotonically without storing messages
   }
 });
 
+test("reports content-free operational status and optional opaque chat keys", async () => {
+  const { close, journal } = await stores();
+  try {
+    journal.admit({ chatId: 42, chatKey: "c_opaque", providerGuid: "event-1", request: "secret" });
+    expect(journal.operationalStatus(true)).toMatchObject({
+      active: 1,
+      ambiguous: 0,
+      chats: ["c_opaque"],
+      lastSettledAt: null,
+      parked: 0,
+    });
+    expect(JSON.stringify(journal.operationalStatus(true))).not.toContain("secret");
+  } finally {
+    close();
+  }
+});
+
 describe("restart recovery", () => {
   test("replays only proven pre-tool work and parks uncertain state", async () => {
     const { close, journal } = await stores();

@@ -105,7 +105,10 @@ export class CodexAdapter implements RuntimeAdapter {
           "-c",
           `mcp_servers.s4imsg.command=${JSON.stringify(input.bridgeExecutablePath)}`,
           "-c",
-          'mcp_servers.s4imsg.args=["mcp"]',
+          `mcp_servers.s4imsg.args=${JSON.stringify([
+            ...(input.bridgeExecutableArgs ?? []),
+            "mcp",
+          ])}`,
           "-c",
           'mcp_servers.s4imsg.env_vars=["S4IMSG_BROKER_URL","S4IMSG_ATTEMPT_CAPABILITY"]',
           "-",

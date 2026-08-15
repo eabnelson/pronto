@@ -24,7 +24,15 @@ export interface AdmissionInput {
   request: string;
 }
 
-export interface QueuedEvent extends AdmissionInput {}
+export type QueuedEvent = AdmissionInput;
+
+export interface OperationalStatus {
+  active: number;
+  ambiguous: number;
+  chats?: string[];
+  lastSettledAt: number | null;
+  parked: number;
+}
 
 const ACTIVE_STATES = ["admitted", "running", "ready_to_send", "sending"] as const;
 
@@ -342,6 +350,43 @@ export class DeliveryJournal {
       .query("SELECT state FROM delivery_events WHERE provider_guid = ?")
       .get(providerGuid) as { state: DeliveryState } | null;
     return row?.state ?? null;
+  }
+
+  operationalStatus(includeChats = false): OperationalStatus {
+    const counts = this.database
+      .query(
+        `SELECT
+           SUM(CASE WHEN state IN ('admitted', 'running', 'ready_to_send', 'sending') THEN 1 ELSE 0 END) AS active,
+           SUM(CASE WHEN state = 'ambiguous' THEN 1 ELSE 0 END) AS ambiguous,
+           SUM(CASE WHEN state = 'parked' THEN 1 ELSE 0 END) AS parked,
+           MAX(CASE WHEN state IN ('delivered', 'failed', 'ambiguous', 'parked', 'rate_limited')
+             THEN updated_at ELSE NULL END) AS last_settled_at
+         FROM delivery_events`,
+      )
+      .get() as {
+      active: number | null;
+      ambiguous: number | null;
+      last_settled_at: number | null;
+      parked: number | null;
+    };
+    const chats = includeChats
+      ? (this.database
+          .query(
+            `SELECT chat_key FROM (
+               SELECT chat_key FROM tagged_exchanges
+               UNION SELECT chat_key FROM chat_memory
+               UNION SELECT chat_key FROM delivery_events
+             ) ORDER BY chat_key`,
+          )
+          .all() as Array<{ chat_key: string }>).map((row) => row.chat_key)
+      : undefined;
+    return {
+      active: counts.active ?? 0,
+      ambiguous: counts.ambiguous ?? 0,
+      ...(chats === undefined ? {} : { chats }),
+      lastSettledAt: counts.last_settled_at,
+      parked: counts.parked ?? 0,
+    };
   }
 
   recoverInterrupted(): { ambiguous: number; parked: number; resumed: number } {

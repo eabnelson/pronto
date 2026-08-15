@@ -22,6 +22,8 @@ function freezeInput(input: RuntimeInput): Readonly<RuntimeInput> {
 
 function sameContext(primary: RuntimeInput, fallback: RuntimeInput): boolean {
   return (
+    JSON.stringify(primary.bridgeExecutableArgs ?? []) ===
+      JSON.stringify(fallback.bridgeExecutableArgs ?? []) &&
     primary.bridgeExecutablePath === fallback.bridgeExecutablePath &&
     primary.brokerUrl === fallback.brokerUrl &&
     primary.prompt === fallback.prompt &&

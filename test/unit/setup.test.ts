@@ -158,3 +158,18 @@ test("uninstall removes the service executable but retains private data by defau
   expect(await readFile(paths.configPath, "utf8")).toBe("configuration");
   expect(await readFile(paths.databasePath, "utf8")).toBe("database");
 });
+
+test("confirmed purge removes private state and logs", async () => {
+  const home = await mkdtemp(join(tmpdir(), "s4imsg-purge-"));
+  temporaryDirectories.push(home);
+  const paths = pathsForHome(home);
+  await mkdir(paths.appSupportDirectory, { recursive: true });
+  await mkdir(paths.logDirectory, { recursive: true });
+  await writeFile(paths.configPath, "configuration");
+  await writeFile(paths.logPath, "content-free log");
+
+  await uninstallInstallation({ paths, purge: true, removeAgent: async () => undefined });
+
+  await expect(access(paths.appSupportDirectory)).rejects.toThrow();
+  await expect(access(paths.logDirectory)).rejects.toThrow();
+});
