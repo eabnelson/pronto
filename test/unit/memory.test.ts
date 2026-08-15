@@ -1,0 +1,59 @@
+import { afterEach, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { openS4imsgDatabase } from "../../src/storage/database";
+import { MemoryStore } from "../../src/storage/memory";
+import { chatKeyForId } from "../../src/storage/chat-key";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((path) => rm(path, { force: true, recursive: true })),
+  );
+});
+
+test("derives stable opaque chat keys from the private installation salt", () => {
+  const key = chatKeyForId(42, "private-salt");
+  expect(key).toBe(chatKeyForId(42, "private-salt"));
+  expect(key).not.toBe(chatKeyForId(43, "private-salt"));
+  expect(key).not.toContain("42");
+});
+
+test("retains eight exact exchanges, one valid summary, and supports forget", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "s4imsg-memory-"));
+  temporaryDirectories.push(directory);
+  const database = openS4imsgDatabase(join(directory, "state.sqlite"));
+  const memory = new MemoryStore(database);
+  try {
+    for (let index = 1; index <= 9; index++) {
+      memory.promote({
+        eventGuid: `event-${index}`,
+        chatKey: "chat-a",
+        reply: `reply-${index}`,
+        request: `request-${index}`,
+        ...(index === 9 ? { summary: "summary" } : {}),
+      });
+    }
+    expect(memory.get("chat-a").exchanges).toHaveLength(8);
+    expect(memory.get("chat-a").exchanges[0]).toEqual({
+      reply: "reply-2",
+      request: "request-2",
+    });
+    expect(memory.get("chat-a").summary).toBe("summary");
+
+    memory.promote({
+      chatKey: "chat-a",
+      eventGuid: "event-10",
+      reply: "reply-10",
+      request: "request-10",
+      summary: "x".repeat(4_001),
+    });
+    expect(memory.get("chat-a").summary).toBe("summary");
+    memory.forget("chat-a");
+    expect(memory.get("chat-a")).toEqual({ exchanges: [], summary: null });
+  } finally {
+    database.close();
+  }
+});

@@ -79,6 +79,7 @@ test("doctor detects a replaced executable without exposing private data", async
   await writeFile(paths.executablePath, "original", { mode: 0o700 });
   await saveConfig(paths.configPath, {
     version: 1,
+    chatKeySalt: "x".repeat(32),
     imsgPath: "/usr/bin/true",
     installedExecutableHash: "not-the-current-hash",
     primaryRuntime: "codex",

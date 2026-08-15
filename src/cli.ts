@@ -15,6 +15,8 @@ import {
   prepareSetupConfig,
   uninstallInstallation,
 } from "./macos/setup";
+import { openS4imsgDatabase } from "./storage/database";
+import { MemoryStore } from "./storage/memory";
 
 const HELP = `s4imsg ${packageJson.version}
 
@@ -155,8 +157,19 @@ export async function runCli(args: readonly string[]): Promise<number> {
     return result.exitCode === 0 ? 0 : 1;
   }
   if (command === "forget") {
-    console.error("No conversation memory store is initialized yet.");
-    return 1;
+    const chatKey = args[1];
+    if (chatKey === undefined || !/^[A-Za-z0-9_-]{8,128}$/.test(chatKey)) {
+      console.error("Usage: s4imsg forget <chat-key>");
+      return 2;
+    }
+    const database = openS4imsgDatabase(pathsForHome(homedir()).databasePath);
+    try {
+      new MemoryStore(database).forget(chatKey);
+    } finally {
+      database.close();
+    }
+    console.log("Tagged memory for the selected chat was removed.");
+    return 0;
   }
   if (command === "uninstall") return runUninstall(args.slice(1));
 

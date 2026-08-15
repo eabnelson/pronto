@@ -1,6 +1,6 @@
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, parse } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 export const CONFIG_VERSION = 1 as const;
 export const TAG_PATTERN = /^@[A-Za-z0-9_-]{1,32}$/;
@@ -9,6 +9,7 @@ export type RuntimeKind = "codex" | "claude";
 
 export interface S4imsgConfig {
   version: typeof CONFIG_VERSION;
+  chatKeySalt: string;
   tag: string;
   primaryRuntime: RuntimeKind;
   fallbackRuntime?: RuntimeKind;
@@ -19,7 +20,10 @@ export interface S4imsgConfig {
   workingDirectory: string;
 }
 
-export type ConfigInput = Omit<S4imsgConfig, "tag" | "version"> & { tag: string };
+export type ConfigInput = Omit<S4imsgConfig, "chatKeySalt" | "tag" | "version"> & {
+  chatKeySalt?: string;
+  tag: string;
+};
 
 export function normalizeTag(value: string): string {
   const tag = value.trim();
@@ -40,6 +44,7 @@ export function createConfig(input: ConfigInput): S4imsgConfig {
 
   return {
     ...input,
+    chatKeySalt: input.chatKeySalt ?? randomBytes(32).toString("base64url"),
     tag: normalizeTag(input.tag),
     version: CONFIG_VERSION,
   };
@@ -104,6 +109,9 @@ export async function loadConfig(path: string): Promise<S4imsgConfig> {
     throw new Error("Invalid configuration fields");
   }
   if (typeof value.workingDirectory !== "string") throw new Error("Invalid working directory");
+  if (typeof value.chatKeySalt !== "string" || value.chatKeySalt.length < 32) {
+    throw new Error("Invalid chat-key salt");
+  }
 
   return createConfig({
     ...(value.fallbackRuntime === undefined
@@ -119,6 +127,7 @@ export async function loadConfig(path: string): Promise<S4imsgConfig> {
       ? { fallbackRuntimePath: value.fallbackRuntimePath }
       : {}),
     imsgPath: value.imsgPath,
+    chatKeySalt: value.chatKeySalt,
     primaryRuntime: value.primaryRuntime,
     tag: value.tag,
     workingDirectory: value.workingDirectory,
