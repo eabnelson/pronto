@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, parse } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -61,7 +61,10 @@ export async function ensurePrivateDirectory(path: string): Promise<void> {
   const kind = await existingKind(path);
   if (kind === "symlink") throw new Error(`Refusing symbolic link directory: ${path}`);
   if (kind === "other") throw new Error(`Expected a directory: ${path}`);
-  if (kind === "directory") return;
+  if (kind === "directory") {
+    await chmod(path, 0o700);
+    return;
+  }
 
   const parent = dirname(path);
   if (parent !== path && parent !== parse(path).root) await ensurePrivateDirectory(parent);

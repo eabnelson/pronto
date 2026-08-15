@@ -30,8 +30,9 @@ export class ImsgTransport {
 
   async activationFor(raw: unknown, tag: string): Promise<ActivatedRequest | null> {
     const message = normalizeMessage(raw);
-    if (message.chatId === null) return null;
-    return activatedRequest(message, tag, await this.ownerParticipated(message.chatId));
+    const candidate = activatedRequest(message, tag, true);
+    if (candidate === null) return null;
+    return (await this.ownerParticipated(candidate.chatId)) ? candidate : null;
   }
 
   async recentMessages(chatId: number, limit = 30): Promise<unknown[]> {

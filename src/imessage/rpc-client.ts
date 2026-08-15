@@ -44,7 +44,10 @@ export class NdjsonRpcClient implements ImsgRpc {
     const handlers = this.#handlers.get(method) ?? new Set();
     handlers.add(handler);
     this.#handlers.set(method, handlers);
-    return () => handlers.delete(handler);
+    return () => {
+      handlers.delete(handler);
+      if (handlers.size === 0) this.#handlers.delete(method);
+    };
   }
 
   async call(method: string, params: Record<string, unknown> = {}): Promise<unknown> {

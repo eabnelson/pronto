@@ -97,6 +97,18 @@ test("watch filters activations and surfaces a resumable overflow cursor", async
   await rpc.emit("message", {
     message: {
       chat_id: 42,
+      guid: "IN-UNTAGGED",
+      id: 10,
+      service: "iMessage",
+      text: "ordinary conversation",
+    },
+    subscription: 7,
+  });
+  expect(rpc.calls.some((call) => call.method === "messages.stats")).toBeFalse();
+
+  await rpc.emit("message", {
+    message: {
+      chat_id: 42,
       guid: "IN-1",
       id: 11,
       service: "iMessage",

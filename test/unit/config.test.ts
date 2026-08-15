@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, lstat, mkdtemp, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -80,5 +80,24 @@ describe("configuration persistence", () => {
         }),
       ),
     ).rejects.toThrow("symbolic link");
+  });
+
+  test("tightens an existing configuration directory to owner-only access", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    temporaryDirectories.push(directory);
+    const stateDirectory = join(directory, "state");
+    await mkdir(stateDirectory, { mode: 0o755 });
+
+    await saveConfig(
+      join(stateDirectory, "config.json"),
+      createConfig({
+        imsgPath: "/usr/local/bin/imsg",
+        primaryRuntime: "codex",
+        tag: "@helper",
+        workingDirectory: "/Users/example",
+      }),
+    );
+
+    expect((await lstat(stateDirectory)).mode & 0o777).toBe(0o700);
   });
 });
