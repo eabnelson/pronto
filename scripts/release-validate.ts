@@ -40,6 +40,7 @@ for (const required of [
   "SECURITY.md",
   "docs/LIVE_SMOKE.md",
   "docs/RELEASE_QUALIFICATION.md",
+  ".github/dependabot.yml",
   ".github/workflows/ci.yml",
   ".github/workflows/release.yml",
 ]) {
@@ -57,6 +58,15 @@ if (!provenance.includes("implemented clean-room")) {
 for (const file of await sourceFiles("src")) {
   if ((await read(file)).includes("@studio-four/")) {
     failures.push(`${file} imports a Studio Four package`);
+  }
+}
+
+for (const workflow of [".github/workflows/ci.yml", ".github/workflows/release.yml"]) {
+  for (const line of (await read(workflow)).split("\n")) {
+    const action = line.match(/^\s*-\s+uses:\s+([^\s#]+)/)?.[1];
+    if (action !== undefined && !action.startsWith("./") && !/@[0-9a-f]{40}$/.test(action)) {
+      failures.push(`${workflow} uses a mutable action reference: ${action}`);
+    }
   }
 }
 
