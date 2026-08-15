@@ -4,6 +4,7 @@ import { qualifyImsgStatus } from "../../src/imessage/probe";
 const requiredMethods = [
   "initialize",
   "status",
+  "chats.list",
   "messages.history",
   "messages.after",
   "messages.stats",

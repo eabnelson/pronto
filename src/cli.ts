@@ -18,6 +18,7 @@ import {
 import { openS4imsgDatabase } from "./storage/database";
 import { MemoryStore } from "./storage/memory";
 import { brokerQuery, runMcpStdio } from "./tools/mcp";
+import { S4imsgDaemon } from "./core/daemon";
 
 const HELP = `s4imsg ${packageJson.version}
 
@@ -109,13 +110,18 @@ async function runDoctor(json = false): Promise<number> {
 }
 
 async function runDaemon(): Promise<number> {
-  await loadConfig(pathsForHome(homedir()).configPath);
-  console.log("s4imsg daemon initialized");
-  await new Promise<void>((resolve) => {
-    const stop = () => resolve();
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
-  });
+  const paths = pathsForHome(homedir());
+  const config = await loadConfig(paths.configPath);
+  const daemon = new S4imsgDaemon(config, paths);
+  const stop = () => daemon.stop();
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  try {
+    await daemon.run();
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+  }
   return 0;
 }
 

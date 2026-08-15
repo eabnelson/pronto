@@ -16,7 +16,10 @@ function object(value: unknown): Record<string, unknown> {
 }
 
 export class ImsgTransport {
-  constructor(readonly rpc: ImsgRpc) {}
+  constructor(
+    readonly rpc: ImsgRpc,
+    readonly echoTracker?: { matches(chatId: number, text: string): boolean },
+  ) {}
 
   async qualify(): Promise<QualifiedImsg> {
     const status = await this.rpc.call("initialize", { protocol_version: 1 });
@@ -30,6 +33,14 @@ export class ImsgTransport {
 
   async activationFor(raw: unknown, tag: string): Promise<ActivatedRequest | null> {
     const message = normalizeMessage(raw);
+    if (
+      message.isFromMe &&
+      message.chatId !== null &&
+      message.text !== null &&
+      this.echoTracker?.matches(message.chatId, message.text) === true
+    ) {
+      return null;
+    }
     const candidate = activatedRequest(message, tag, true);
     if (candidate === null) return null;
     return (await this.ownerParticipated(candidate.chatId)) ? candidate : null;
@@ -48,6 +59,7 @@ export class ImsgTransport {
 
   async watch(input: {
     onActivation: (request: ActivatedRequest) => void | Promise<void>;
+    onMessageRowId?: (rowId: number) => void | Promise<void>;
     onOverflow: (resumeAfterRowId: number) => void | Promise<void>;
     sinceRowId?: number;
     tag: string;
@@ -60,6 +72,8 @@ export class ImsgTransport {
     const disposeMessage = rpc.on("message", async (params) => {
       const notification = object(params);
       if (notification.subscription !== subscription) return;
+      const message = normalizeMessage(notification.message);
+      if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
       const request = await this.activationFor(notification.message, input.tag);
       if (request !== null) await input.onActivation(request);
     });
@@ -106,6 +120,7 @@ export class ImsgTransport {
 
   async catchUp(input: {
     onActivation: (request: ActivatedRequest) => void | Promise<void>;
+    onMessageRowId?: (rowId: number) => void | Promise<void>;
     sinceRowId: number;
     tag: string;
   }): Promise<number> {
@@ -125,6 +140,8 @@ export class ImsgTransport {
         throw new Error("imsg returned an invalid catch-up cursor");
       }
       for (const raw of Array.isArray(result.messages) ? result.messages : []) {
+        const message = normalizeMessage(raw);
+        if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
         const request = await this.activationFor(raw, input.tag);
         if (request !== null) await input.onActivation(request);
       }

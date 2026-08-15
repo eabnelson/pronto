@@ -85,6 +85,37 @@ test("promotes accepted output only after confirmed delivery", async () => {
   }
 });
 
+test("keeps failure notices out of memory and durably suppresses their echoes", async () => {
+  const { close, journal, memory } = await stores();
+  try {
+    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "event-1", request: "question" });
+    const lease = journal.lease("event-1")!;
+    journal.accept("event-1", lease, { reply: "Unable to complete that request." }, {
+      memoryEligible: false,
+    });
+    journal.beginSend("event-1", lease, 42, "Unable to complete that request.");
+    journal.confirmDelivery("event-1", lease, "OUT-1");
+
+    expect(memory.get("chat-a").exchanges).toEqual([]);
+    expect(journal.matchesOutboundEcho(42, "Unable to complete that request.")).toBeTrue();
+    expect(journal.matchesOutboundEcho(42, "Unable to complete that request.")).toBeFalse();
+  } finally {
+    close();
+  }
+});
+
+test("advances the durable message cursor monotonically without storing messages", async () => {
+  const { close, journal } = await stores();
+  try {
+    expect(journal.cursor()).toBeUndefined();
+    journal.advanceCursor(20);
+    journal.advanceCursor(19);
+    expect(journal.cursor()).toBe(20);
+  } finally {
+    close();
+  }
+});
+
 describe("restart recovery", () => {
   test("replays only proven pre-tool work and parks uncertain state", async () => {
     const { close, journal } = await stores();

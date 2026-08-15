@@ -82,6 +82,7 @@ test("outbound echo fingerprints expire and remain bounded", () => {
 test("watch filters activations and surfaces a resumable overflow cursor", async () => {
   const rpc = new FakeRpc();
   const activations: string[] = [];
+  const rows: number[] = [];
   const overflows: number[] = [];
   const watch = await new ImsgTransport(rpc).watch({
     onActivation: (request) => {
@@ -89,6 +90,9 @@ test("watch filters activations and surfaces a resumable overflow cursor", async
     },
     onOverflow: (cursor) => {
       overflows.push(cursor);
+    },
+    onMessageRowId: (rowId) => {
+      rows.push(rowId);
     },
     sinceRowId: 10,
     tag: "@helper",
@@ -123,6 +127,7 @@ test("watch filters activations and surfaces a resumable overflow cursor", async
   });
 
   expect(activations).toEqual(["continue"]);
+  expect(rows).toEqual([10, 11]);
   expect(overflows).toEqual([11]);
   await watch.close();
   expect(rpc.calls.at(-1)).toEqual({

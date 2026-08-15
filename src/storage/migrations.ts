@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS delivery_events (
@@ -44,6 +44,31 @@ CREATE INDEX IF NOT EXISTS tagged_exchanges_chat
   ON tagged_exchanges(chat_key, id);
 `;
 
+const SCHEMA_V2 = `
+ALTER TABLE delivery_events ADD COLUMN memory_eligible INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE delivery_events ADD COLUMN outbound_fingerprint TEXT;
+ALTER TABLE delivery_events ADD COLUMN outbound_fingerprint_expires_at INTEGER;
+
+CREATE TABLE runtime_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider_guid TEXT NOT NULL,
+  runtime_kind TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  failure_code TEXT,
+  tool_activity INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(provider_guid) REFERENCES delivery_events(provider_guid)
+);
+
+CREATE INDEX runtime_attempts_event
+  ON runtime_attempts(provider_guid, id);
+
+CREATE TABLE service_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`;
+
 export function migrateDatabase(database: Database): void {
   const row = database.query("PRAGMA user_version").get() as { user_version: number };
   if (row.user_version > CURRENT_SCHEMA_VERSION) {
@@ -53,6 +78,7 @@ export function migrateDatabase(database: Database): void {
 
   database.transaction(() => {
     if (row.user_version < 1) database.exec(SCHEMA_V1);
+    if (row.user_version < 2) database.exec(SCHEMA_V2);
     database.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION}`);
   })();
 }

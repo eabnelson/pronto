@@ -1,6 +1,7 @@
 const REQUIRED_METHODS = [
   "initialize",
   "status",
+  "chats.list",
   "messages.history",
   "messages.after",
   "messages.stats",

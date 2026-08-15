@@ -8,15 +8,37 @@ export type ChainedRuntimeResult = RuntimeAttemptResult & {
   runtime: "codex" | "claude";
 };
 
+export interface RuntimeChainOptions {
+  fallbackInput?: () => RuntimeInput;
+  onResult?: (
+    runtime: "codex" | "claude",
+    result: RuntimeAttemptResult,
+  ) => void | Promise<void>;
+}
+
+function freezeInput(input: RuntimeInput): Readonly<RuntimeInput> {
+  return Object.freeze({ ...input });
+}
+
+function sameContext(primary: RuntimeInput, fallback: RuntimeInput): boolean {
+  return (
+    primary.bridgeExecutablePath === fallback.bridgeExecutablePath &&
+    primary.brokerUrl === fallback.brokerUrl &&
+    primary.prompt === fallback.prompt &&
+    primary.workingDirectory === fallback.workingDirectory
+  );
+}
+
 export class RuntimeChain {
   constructor(
     readonly primary: RuntimeAdapter,
     readonly fallback?: RuntimeAdapter,
   ) {}
 
-  async run(input: RuntimeInput): Promise<ChainedRuntimeResult> {
-    const immutableInput = Object.freeze({ ...input });
+  async run(input: RuntimeInput, options: RuntimeChainOptions = {}): Promise<ChainedRuntimeResult> {
+    const immutableInput = freezeInput(input);
     const primaryResult = await this.primary.run(immutableInput);
+    await options.onResult?.(this.primary.kind, primaryResult);
     if (
       primaryResult.status !== "operational-failure" ||
       primaryResult.toolActivity !== "none" ||
@@ -24,7 +46,13 @@ export class RuntimeChain {
     ) {
       return { ...primaryResult, runtime: this.primary.kind };
     }
-    const fallbackResult = await this.fallback.run(immutableInput);
+    const fallbackInput =
+      options.fallbackInput === undefined ? immutableInput : freezeInput(options.fallbackInput());
+    if (!sameContext(immutableInput, fallbackInput)) {
+      throw new Error("Fallback runtime context must match the primary context");
+    }
+    const fallbackResult = await this.fallback.run(fallbackInput);
+    await options.onResult?.(this.fallback.kind, fallbackResult);
     return { ...fallbackResult, runtime: this.fallback.kind };
   }
 }

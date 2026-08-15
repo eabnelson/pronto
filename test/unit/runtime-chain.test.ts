@@ -39,11 +39,16 @@ describe("operational fallback", () => {
       status: "success",
       toolActivity: "none",
     });
-    const result = await new RuntimeChain(primary, fallback).run(input);
+    const fallbackInput = { ...input, capability: "different-attempt-capability" };
+    const result = await new RuntimeChain(primary, fallback).run(input, {
+      fallbackInput: () => fallbackInput,
+    });
 
     expect(result).toMatchObject({ output: { reply: "fallback" }, runtime: "claude" });
     expect(fallback.calls).toHaveLength(1);
-    expect(fallback.calls[0]).toBe(primary.calls[0]);
+    expect(fallback.calls[0]).not.toBe(primary.calls[0]);
+    expect(fallback.calls[0]!.prompt).toBe(primary.calls[0]!.prompt);
+    expect(fallback.calls[0]!.capability).not.toBe(primary.calls[0]!.capability);
     expect(Object.isFrozen(fallback.calls[0])).toBeTrue();
   });
 

@@ -1,6 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { validSummary } from "../context/compact";
+import type { RuntimeKind } from "../config";
+import type { RuntimeAttemptResult, ToolActivity } from "../runtimes/types";
 import { promoteMemory } from "./memory";
 
 export type DeliveryState =
@@ -20,6 +23,8 @@ export interface AdmissionInput {
   providerGuid: string;
   request: string;
 }
+
+export interface QueuedEvent extends AdmissionInput {}
 
 const ACTIVE_STATES = ["admitted", "running", "ready_to_send", "sending"] as const;
 
@@ -79,28 +84,106 @@ export class DeliveryJournal {
     return result.changes === 1 ? token : null;
   }
 
-  recordToolActivity(providerGuid: string, lease: string, observed: boolean): void {
+  nextAdmitted(): QueuedEvent | null {
+    const row = this.database
+      .query(
+        `SELECT provider_guid, chat_key, chat_id, tagged_request
+         FROM delivery_events
+         WHERE state = 'admitted' AND tagged_request IS NOT NULL
+         ORDER BY created_at ASC, rowid ASC
+         LIMIT 1`,
+      )
+      .get() as
+      | {
+          chat_id: number;
+          chat_key: string;
+          provider_guid: string;
+          tagged_request: string;
+        }
+      | null;
+    return row === null
+      ? null
+      : {
+          chatId: row.chat_id,
+          chatKey: row.chat_key,
+          providerGuid: row.provider_guid,
+          request: row.tagged_request,
+        };
+  }
+
+  cursor(): number | undefined {
+    const row = this.database
+      .query("SELECT value FROM service_state WHERE key = 'message_cursor'")
+      .get() as { value: string } | null;
+    if (row === null) return undefined;
+    const value = Number(row.value);
+    return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  }
+
+  advanceCursor(rowId: number): void {
+    if (!Number.isSafeInteger(rowId) || rowId <= 0) throw new Error("Invalid message cursor");
+    this.database
+      .query(
+        `INSERT INTO service_state (key, value) VALUES ('message_cursor', ?)
+         ON CONFLICT(key) DO UPDATE SET value = CASE
+           WHEN CAST(value AS INTEGER) < CAST(excluded.value AS INTEGER) THEN excluded.value
+           ELSE value
+         END`,
+      )
+      .run(String(rowId));
+  }
+
+  recordToolActivity(
+    providerGuid: string,
+    lease: string,
+    activity: boolean | ToolActivity,
+  ): void {
+    const value =
+      activity === true || activity === "observed" ? 1 : activity === "unknown" ? 2 : 0;
     this.#requireChange(
       this.database
         .query(
           `UPDATE delivery_events
            SET tool_activity = CASE
              WHEN ? = 1 THEN 1
+             WHEN ? = 2 AND COALESCE(tool_activity, 0) != 1 THEN 2
              WHEN tool_activity IS NULL THEN 0
              ELSE tool_activity
            END,
            updated_at = ?
            WHERE provider_guid = ? AND lease_token = ? AND state = 'running'`,
         )
-        .run(observed ? 1 : 0, this.now(), providerGuid, lease).changes,
+        .run(value, value, this.now(), providerGuid, lease).changes,
       "record tool activity",
     );
+  }
+
+  recordAttempt(
+    providerGuid: string,
+    runtime: RuntimeKind,
+    result: RuntimeAttemptResult,
+  ): void {
+    this.database
+      .query(
+        `INSERT INTO runtime_attempts
+         (provider_guid, runtime_kind, outcome, failure_code, tool_activity, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        providerGuid,
+        runtime,
+        result.status,
+        result.status === "success" ? null : result.reason,
+        result.toolActivity === "observed" ? 1 : result.toolActivity === "unknown" ? 2 : 0,
+        this.now(),
+      );
   }
 
   accept(
     providerGuid: string,
     lease: string,
     output: { reply: string; summary?: string },
+    options: { memoryEligible?: boolean } = {},
   ): void {
     const reply = output.reply.trim();
     if (reply.length === 0 || reply.length > 4_000) throw new Error("Invalid runtime reply");
@@ -110,13 +193,14 @@ export class DeliveryJournal {
         .query(
           `UPDATE delivery_events
            SET state = 'ready_to_send', accepted_reply = ?, proposed_summary = ?,
-               compaction_due = ?, updated_at = ?
+               compaction_due = ?, memory_eligible = ?, updated_at = ?
            WHERE provider_guid = ? AND lease_token = ? AND state = 'running'`,
         )
         .run(
           reply,
           summary,
           output.summary !== undefined && summary === null ? 1 : 0,
+          options.memoryEligible === false ? 0 : 1,
           this.now(),
           providerGuid,
           lease,
@@ -125,14 +209,24 @@ export class DeliveryJournal {
     );
   }
 
-  beginSend(providerGuid: string, lease: string): void {
+  beginSend(providerGuid: string, lease: string, chatId?: number, text?: string): void {
+    const fingerprint =
+      chatId === undefined || text === undefined ? null : this.#fingerprint(chatId, text);
     this.#requireChange(
       this.database
         .query(
-          `UPDATE delivery_events SET state = 'sending', updated_at = ?
+          `UPDATE delivery_events
+           SET state = 'sending', outbound_fingerprint = ?,
+               outbound_fingerprint_expires_at = ?, updated_at = ?
            WHERE provider_guid = ? AND lease_token = ? AND state = 'ready_to_send'`,
         )
-        .run(this.now(), providerGuid, lease).changes,
+        .run(
+          fingerprint,
+          fingerprint === null ? null : this.now() + 24 * 60 * 60 * 1_000,
+          this.now(),
+          providerGuid,
+          lease,
+        ).changes,
       "begin send",
     );
   }
@@ -141,7 +235,7 @@ export class DeliveryJournal {
     this.database.transaction(() => {
       const event = this.database
         .query(
-          `SELECT chat_key, tagged_request, accepted_reply, proposed_summary
+          `SELECT chat_key, tagged_request, accepted_reply, proposed_summary, memory_eligible
            FROM delivery_events
            WHERE provider_guid = ? AND lease_token = ? AND state = 'sending'`,
         )
@@ -149,18 +243,21 @@ export class DeliveryJournal {
         | {
             accepted_reply: string;
             chat_key: string;
+            memory_eligible: number;
             proposed_summary: string | null;
             tagged_request: string;
           }
         | null;
       if (event === null) throw new Error("Cannot confirm delivery from the current state");
-      promoteMemory(this.database, {
-        chatKey: event.chat_key,
-        eventGuid: providerGuid,
-        reply: event.accepted_reply,
-        request: event.tagged_request,
-        ...(event.proposed_summary === null ? {} : { summary: event.proposed_summary }),
-      });
+      if (event.memory_eligible === 1) {
+        promoteMemory(this.database, {
+          chatKey: event.chat_key,
+          eventGuid: providerGuid,
+          reply: event.accepted_reply,
+          request: event.tagged_request,
+          ...(event.proposed_summary === null ? {} : { summary: event.proposed_summary }),
+        });
+      }
       this.database
         .query(
           `UPDATE delivery_events
@@ -182,6 +279,62 @@ export class DeliveryJournal {
         .run(this.now(), providerGuid, lease).changes,
       "mark delivery ambiguous",
     );
+  }
+
+  markFailed(providerGuid: string, lease: string): void {
+    this.#requireChange(
+      this.database
+        .query(
+          `UPDATE delivery_events
+           SET state = 'failed', tagged_request = NULL, accepted_reply = NULL,
+               proposed_summary = NULL, updated_at = ?
+           WHERE provider_guid = ? AND lease_token = ?
+             AND state IN ('running', 'ready_to_send', 'sending')`,
+        )
+        .run(this.now(), providerGuid, lease).changes,
+      "mark delivery failed",
+    );
+  }
+
+  markParked(providerGuid: string, lease: string): void {
+    this.#requireChange(
+      this.database
+        .query(
+          `UPDATE delivery_events SET state = 'parked', updated_at = ?
+           WHERE provider_guid = ? AND lease_token = ? AND state = 'running'`,
+        )
+        .run(this.now(), providerGuid, lease).changes,
+      "park delivery",
+    );
+  }
+
+  matchesOutboundEcho(chatId: number, text: string): boolean {
+    const fingerprint = this.#fingerprint(chatId, text);
+    return this.database.transaction(() => {
+      this.database
+        .query(
+          `UPDATE delivery_events
+           SET outbound_fingerprint = NULL, outbound_fingerprint_expires_at = NULL
+           WHERE outbound_fingerprint_expires_at <= ?`,
+        )
+        .run(this.now());
+      const row = this.database
+        .query(
+          `SELECT provider_guid FROM delivery_events
+           WHERE outbound_fingerprint = ? AND outbound_fingerprint_expires_at > ?
+           LIMIT 1`,
+        )
+        .get(fingerprint, this.now()) as { provider_guid: string } | null;
+      if (row === null) return false;
+      this.database
+        .query(
+          `UPDATE delivery_events
+           SET outbound_fingerprint = NULL, outbound_fingerprint_expires_at = NULL
+           WHERE provider_guid = ?`,
+        )
+        .run(row.provider_guid);
+      return true;
+    })();
   }
 
   state(providerGuid: string): DeliveryState | null {
@@ -222,5 +375,9 @@ export class DeliveryJournal {
 
   #requireChange(changes: number, action: string): void {
     if (changes !== 1) throw new Error(`Unable to ${action} from the current journal state`);
+  }
+
+  #fingerprint(chatId: number, text: string): string {
+    return createHash("sha256").update(`${chatId}\0${text}`).digest("base64url");
   }
 }
