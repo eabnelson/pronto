@@ -77,13 +77,14 @@ export function validateRuntimeOutput(value: unknown): RuntimeOutput | null {
   const reply = output.reply.trim();
   if (reply.length === 0 || reply.length > MAX_RUNTIME_TEXT_CHARACTERS) return null;
   let summary: string | undefined;
-  if (output.summary !== undefined) {
+  if (output.summary !== undefined && output.summary !== null) {
     if (typeof output.summary !== "string") return null;
-    summary = output.summary.trim();
-    if (summary.length === 0 || summary.length > MAX_RUNTIME_TEXT_CHARACTERS) return null;
+    const normalizedSummary = output.summary.trim();
+    if (normalizedSummary.length > MAX_RUNTIME_TEXT_CHARACTERS) return null;
+    if (normalizedSummary.length > 0) summary = normalizedSummary;
   }
   let workspaceCandidates: string[] | undefined;
-  if (output.workspaceCandidates !== undefined) {
+  if (output.workspaceCandidates !== undefined && output.workspaceCandidates !== null) {
     if (
       !Array.isArray(output.workspaceCandidates) ||
       output.workspaceCandidates.length === 0 ||
@@ -108,14 +109,18 @@ export const RUNTIME_OUTPUT_SCHEMA = {
   additionalProperties: false,
   properties: {
     reply: { maxLength: MAX_RUNTIME_TEXT_CHARACTERS, minLength: 1, type: "string" },
-    summary: { maxLength: MAX_RUNTIME_TEXT_CHARACTERS, minLength: 1, type: "string" },
+    summary: {
+      maxLength: MAX_RUNTIME_TEXT_CHARACTERS,
+      minLength: 1,
+      type: ["string", "null"],
+    },
     workspaceCandidates: {
       items: { maxLength: 4_096, minLength: 1, type: "string" },
       maxItems: MAX_WORKSPACE_CANDIDATES,
       minItems: 1,
-      type: "array",
+      type: ["array", "null"],
     },
   },
-  required: ["reply"],
+  required: ["reply", "summary", "workspaceCandidates"],
   type: "object",
 } as const;
