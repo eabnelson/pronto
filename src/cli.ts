@@ -62,7 +62,8 @@ async function runSetup(): Promise<number> {
 
   const prompt = createInterface({ input: stdin, output: stdout });
   try {
-    const tag = (await prompt.question("Trigger tag [@s4]: ")).trim() || "@s4";
+    const tag =
+      (await prompt.question("Trigger tag (with or without @) [@s4]: ")).trim() || "@s4";
     const primaryAnswer =
       available.length === 1
         ? available[0]!

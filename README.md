@@ -47,7 +47,8 @@ bun run src/cli.ts setup
 
 Setup asks for:
 
-1. A tag matching `@[A-Za-z0-9_-]{1,32}`; the default is `@s4`.
+1. A tag with or without the leading `@`; the default is `@s4`. The name must
+   contain 1-32 letters, numbers, underscores, or hyphens.
 2. A primary runtime when both Codex and Claude Code are installed.
 3. Whether to use the other runtime as a fallback.
 4. Explicit acceptance of the trust model above.

@@ -26,7 +26,8 @@ export type ConfigInput = Omit<S4imsgConfig, "chatKeySalt" | "tag" | "version"> 
 };
 
 export function normalizeTag(value: string): string {
-  const tag = value.trim();
+  const input = value.trim();
+  const tag = input.startsWith("@") ? input : `@${input}`;
   if (!TAG_PATTERN.test(tag)) {
     throw new Error("Tag must match @[A-Za-z0-9_-]{1,32}");
   }

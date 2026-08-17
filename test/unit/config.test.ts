@@ -18,12 +18,13 @@ afterEach(async () => {
 });
 
 describe("trigger tag validation", () => {
-  test("normalizes a valid tag for case-insensitive matching", () => {
+  test("adds one optional @ and normalizes tags for case-insensitive matching", () => {
+    expect(normalizeTag("Helper_1")).toBe("@helper_1");
     expect(normalizeTag("@Helper_1")).toBe("@helper_1");
   });
 
   test("rejects unbounded or ambiguous tags", () => {
-    for (const tag of ["helper", "@", "@two words", "@tool!", `@${"a".repeat(33)}`]) {
+    for (const tag of ["@", "@@helper", "@two words", "@tool!", `@${"a".repeat(33)}`]) {
       expect(() => normalizeTag(tag)).toThrow("Tag must match");
     }
   });
