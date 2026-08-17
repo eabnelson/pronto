@@ -7,6 +7,7 @@ import {
   loadConfig,
   normalizeTag,
   saveConfig,
+  UNRESTRICTED_TRUST_VERSION,
 } from "../../src/config";
 
 const temporaryDirectories: string[] = [];
@@ -38,6 +39,7 @@ describe("configuration persistence", () => {
         imsgPath: "/opt/homebrew/bin/imsg",
         primaryRuntime: "codex",
         tag: "@helper",
+        unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
         workingDirectory: "/Users/example",
       }),
     ).toThrow("Fallback runtime must differ");
@@ -52,6 +54,7 @@ describe("configuration persistence", () => {
       imsgPath: "/opt/homebrew/bin/imsg",
       primaryRuntime: "codex",
       tag: "@Helper",
+      unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
       workingDirectory: "/Users/example",
     });
 
@@ -60,6 +63,21 @@ describe("configuration persistence", () => {
     expect(await loadConfig(path)).toEqual(config);
     expect((await lstat(path)).mode & 0o777).toBe(0o600);
     expect((await lstat(join(directory, "nested"))).mode & 0o777).toBe(0o700);
+  });
+
+  test("rejects legacy configuration without unrestricted access consent", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "config.json");
+    await Bun.write(path, JSON.stringify({
+      version: 1,
+      chatKeySalt: "x".repeat(32),
+      imsgPath: "/usr/local/bin/imsg",
+      primaryRuntime: "codex",
+      tag: "@helper",
+      workingDirectory: "/Users/example",
+    }));
+    await expect(loadConfig(path)).rejects.toThrow("run s4imsg setup");
   });
 
   test("rejects a symlinked configuration directory", async () => {
@@ -77,6 +95,7 @@ describe("configuration persistence", () => {
           imsgPath: "/usr/local/bin/imsg",
           primaryRuntime: "claude",
           tag: "@helper",
+          unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
           workingDirectory: "/Users/example",
         }),
       ),
@@ -95,6 +114,7 @@ describe("configuration persistence", () => {
         imsgPath: "/usr/local/bin/imsg",
         primaryRuntime: "codex",
         tag: "@helper",
+        unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
         workingDirectory: "/Users/example",
       }),
     );
@@ -113,6 +133,7 @@ describe("configuration persistence", () => {
         imsgPath: "/usr/local/bin/imsg",
         primaryRuntime: "codex",
         tag: "@helper",
+        unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
         workingDirectory: "/Users/example",
       }),
     );

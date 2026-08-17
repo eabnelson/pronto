@@ -8,6 +8,7 @@ import { createRuntimeAdapter } from "../runtimes/factory";
 import { openS4imsgDatabase } from "../storage/database";
 import { DeliveryJournal } from "../storage/journal";
 import { MemoryStore } from "../storage/memory";
+import { WorkspaceStore } from "../storage/workspaces";
 import { ConversationBroker } from "../tools/broker";
 import { TurnCoordinator, TurnProcessor } from "./turn";
 
@@ -51,6 +52,7 @@ export class S4imsgDaemon {
           ? undefined
           : createRuntimeAdapter(this.config.fallbackRuntime, runtimePath(this.config, true));
       const memory = new MemoryStore(database);
+      const workspaces = new WorkspaceStore(database);
       const coordinator = new TurnCoordinator(
         new TurnProcessor({
           bridgeExecutablePath: this.paths.executablePath,
@@ -60,7 +62,8 @@ export class S4imsgDaemon {
           memory,
           runtimes: new RuntimeChain(primary, fallback),
           transport,
-          workingDirectory: this.config.workingDirectory,
+          defaultWorkingDirectory: this.config.workingDirectory,
+          workspaces,
         }),
         journal,
         this.config.chatKeySalt,

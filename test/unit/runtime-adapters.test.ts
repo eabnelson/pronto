@@ -68,7 +68,7 @@ const input = {
 };
 
 describe("Codex adapter", () => {
-  test("uses an ephemeral one-shot turn without overriding model or permissions", async () => {
+  test("uses an ephemeral one-shot turn with unrestricted no-prompt permissions", async () => {
     const runner = new FakeRunner();
     const { adapter, codexHome } = await codexAdapter(runner);
     runner.response.stdout = [
@@ -90,7 +90,7 @@ describe("Codex adapter", () => {
     expect(execution.args.join(" ")).not.toContain("/source/src/cli.ts");
     expect(execution.args).not.toContain("--model");
     expect(execution.args).not.toContain("--sandbox");
-    expect(execution.args.join(" ")).not.toContain("bypass");
+    expect(execution.args).toContain("--dangerously-bypass-approvals-and-sandbox");
     expect(execution.args.join(" ")).not.toContain("secret-capability");
     expect(execution.args).toContain("--profile");
     expect(execution.env).toEqual({});
@@ -131,7 +131,7 @@ describe("Codex adapter", () => {
 });
 
 describe("Claude Code adapter", () => {
-  test("loads one private MCP file while retaining user defaults", async () => {
+  test("loads one private MCP file while bypassing approval prompts", async () => {
     const runner = new FakeRunner();
     runner.response.stdout = [
       JSON.stringify({ subtype: "init", type: "system" }),
@@ -152,6 +152,7 @@ describe("Claude Code adapter", () => {
     expect(execution.args).toContain("--mcp-config");
     expect(execution.args).not.toContain("--model");
     expect(execution.args).not.toContain("--permission-mode");
+    expect(execution.args).toContain("--dangerously-skip-permissions");
     expect(execution.args.join(" ")).not.toContain("secret-capability");
     expect(runner.observedMcpConfig).toEqual({
       mcpServers: {

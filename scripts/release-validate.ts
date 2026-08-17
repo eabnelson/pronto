@@ -70,9 +70,10 @@ for (const workflow of [".github/workflows/ci.yml", ".github/workflows/release.y
   }
 }
 
-const [codexAdapter, claudeAdapter] = await Promise.all([
+const [codexAdapter, claudeAdapter, qualification] = await Promise.all([
   read("src/runtimes/codex.ts"),
   read("src/runtimes/claude.ts"),
+  read("src/runtimes/qualification.ts"),
 ]);
 for (const [name, source] of [
   ["Codex", codexAdapter],
@@ -81,6 +82,18 @@ for (const [name, source] of [
   for (const forbidden of ["--model", "--sandbox", "bypassPermissions", "--permission-mode"]) {
     if (source.includes(forbidden)) failures.push(`${name} adapter overrides ${forbidden}`);
   }
+}
+if (!codexAdapter.includes("--dangerously-bypass-approvals-and-sandbox")) {
+  failures.push("Codex adapter must use unrestricted no-prompt mode");
+}
+if (!claudeAdapter.includes("--dangerously-skip-permissions")) {
+  failures.push("Claude Code adapter must use unrestricted no-prompt mode");
+}
+if (!qualification.includes('"--dangerously-bypass-approvals-and-sandbox"')) {
+  failures.push("Codex qualification must require unrestricted no-prompt mode");
+}
+if (!qualification.includes('"--dangerously-skip-permissions"')) {
+  failures.push("Claude Code qualification must require unrestricted no-prompt mode");
 }
 
 if (failures.length > 0) {

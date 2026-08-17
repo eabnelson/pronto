@@ -112,6 +112,7 @@ export class CodexAdapter implements RuntimeAdapter {
         execution = await this.runner.run({
           args: [
             "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
             "--ephemeral",
             "--json",
             "--color",

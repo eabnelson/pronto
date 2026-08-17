@@ -82,10 +82,16 @@ export class MemoryStore {
     this.database.transaction(() => {
       this.database.query("DELETE FROM tagged_exchanges WHERE chat_key = ?").run(chatKey);
       this.database.query("DELETE FROM chat_memory WHERE chat_key = ?").run(chatKey);
+      this.database.query("DELETE FROM chat_workspaces WHERE chat_key = ?").run(chatKey);
       this.database
         .query(
           `UPDATE delivery_events
-           SET tagged_request = NULL, accepted_reply = NULL, proposed_summary = NULL
+           SET state = CASE
+                 WHEN state IN ('admitted', 'running', 'ready_to_send', 'sending') THEN 'failed'
+                 ELSE state
+               END,
+               tagged_request = NULL, accepted_reply = NULL, proposed_summary = NULL,
+               proposed_working_directory = NULL, proposed_workspace_candidates = NULL
            WHERE chat_key = ?`,
         )
         .run(chatKey);

@@ -24,7 +24,9 @@ class ProbeAdapter implements RuntimeAdapter {
 const successfulRunner = async (_executable: string, args: readonly string[]) => ({
   exitCode: 0,
   stderr: "",
-  stdout: args.includes("--help") ? "--ephemeral --json --output-schema" : "ok",
+  stdout: args.includes("--help")
+    ? "--dangerously-bypass-approvals-and-sandbox --ephemeral --json --output-schema"
+    : "ok",
 });
 
 describe("runtime qualification", () => {
@@ -56,7 +58,7 @@ describe("runtime qualification", () => {
         return {
           exitCode: args.includes("status") ? 1 : 0,
           stderr: "",
-          stdout: "--ephemeral --json --output-schema",
+          stdout: "--dangerously-bypass-approvals-and-sandbox --ephemeral --json --output-schema",
         };
       },
       workingDirectory: "/Users/example/project",
@@ -67,6 +69,22 @@ describe("runtime qualification", () => {
       status: "failed",
     }));
     expect(calls).toBe(3);
+  });
+
+  test("fails before the live probe when unrestricted mode is unavailable", async () => {
+    const adapter = new ProbeAdapter();
+    const result = await qualifyRuntime({
+      adapter,
+      bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
+      commandRunner: async () => ({
+        exitCode: 0,
+        stderr: "",
+        stdout: "--ephemeral --json --output-schema",
+      }),
+      workingDirectory: "/Users/example/project",
+    });
+    expect(result.qualified).toBeFalse();
+    expect(adapter.lastInput).toBeNull();
   });
 
   test("rejects a runtime whose effective permissions cannot create the marker", async () => {

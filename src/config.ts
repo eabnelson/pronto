@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 
 export const CONFIG_VERSION = 1 as const;
+export const UNRESTRICTED_TRUST_VERSION = 1 as const;
 export const TAG_PATTERN = /^@[A-Za-z0-9_-]{1,32}$/;
 
 export type RuntimeKind = "codex" | "claude";
@@ -18,9 +19,13 @@ export interface S4imsgConfig {
   primaryRuntimePath?: string;
   fallbackRuntimePath?: string;
   workingDirectory: string;
+  unrestrictedTrustVersion: typeof UNRESTRICTED_TRUST_VERSION;
 }
 
-export type ConfigInput = Omit<S4imsgConfig, "chatKeySalt" | "tag" | "version"> & {
+export type ConfigInput = Omit<
+  S4imsgConfig,
+  "chatKeySalt" | "tag" | "version"
+> & {
   chatKeySalt?: string;
   tag: string;
 };
@@ -35,6 +40,9 @@ export function normalizeTag(value: string): string {
 }
 
 export function createConfig(input: ConfigInput): S4imsgConfig {
+  if (input.unrestrictedTrustVersion !== UNRESTRICTED_TRUST_VERSION) {
+    throw new Error("Unrestricted access consent is missing; run s4imsg setup");
+  }
   if (input.fallbackRuntime === input.primaryRuntime) {
     throw new Error("Fallback runtime must differ from the primary runtime");
   }
@@ -118,6 +126,9 @@ export async function loadConfig(path: string): Promise<S4imsgConfig> {
     throw new Error("Invalid configuration fields");
   }
   if (typeof value.workingDirectory !== "string") throw new Error("Invalid working directory");
+  if (value.unrestrictedTrustVersion !== UNRESTRICTED_TRUST_VERSION) {
+    throw new Error("Unrestricted access consent is missing; run s4imsg setup");
+  }
   if (typeof value.chatKeySalt !== "string" || value.chatKeySalt.length < 32) {
     throw new Error("Invalid chat-key salt");
   }
@@ -140,5 +151,6 @@ export async function loadConfig(path: string): Promise<S4imsgConfig> {
     primaryRuntime: value.primaryRuntime,
     tag: value.tag,
     workingDirectory: value.workingDirectory,
+    unrestrictedTrustVersion: value.unrestrictedTrustVersion,
   });
 }

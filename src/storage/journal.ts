@@ -5,6 +5,8 @@ import { validSummary } from "../context/compact";
 import type { RuntimeKind } from "../config";
 import type { RuntimeAttemptResult, ToolActivity } from "../runtimes/types";
 import { promoteMemory } from "./memory";
+import { promoteWorkspace } from "./workspaces";
+import { MAX_RUNTIME_TEXT_CHARACTERS, MAX_WORKSPACE_CANDIDATES } from "../workspace";
 
 export type DeliveryState =
   | "admitted"
@@ -288,23 +290,35 @@ export class DeliveryJournal {
   accept(
     providerGuid: string,
     lease: string,
-    output: { reply: string; summary?: string },
+    output: {
+      reply: string;
+      summary?: string;
+      workingDirectory?: string;
+      workspaceCandidates?: readonly string[];
+    },
     options: { memoryEligible?: boolean } = {},
   ): void {
     const reply = output.reply.trim();
-    if (reply.length === 0 || reply.length > 4_000) throw new Error("Invalid runtime reply");
+    if (reply.length === 0 || reply.length > MAX_RUNTIME_TEXT_CHARACTERS) {
+      throw new Error("Invalid runtime reply");
+    }
     const summary = validSummary(output.summary);
     this.#requireChange(
       this.database
         .query(
           `UPDATE delivery_events
            SET state = 'ready_to_send', accepted_reply = ?, proposed_summary = ?,
+               proposed_working_directory = ?, proposed_workspace_candidates = ?,
                compaction_due = ?, memory_eligible = ?, updated_at = ?
            WHERE provider_guid = ? AND lease_token = ? AND state = 'running'`,
         )
         .run(
           reply,
           summary,
+          output.workingDirectory ?? null,
+          output.workspaceCandidates === undefined
+            ? null
+            : JSON.stringify(output.workspaceCandidates.slice(0, MAX_WORKSPACE_CANDIDATES)),
           output.summary !== undefined && summary === null ? 1 : 0,
           options.memoryEligible === false ? 0 : 1,
           this.now(),
@@ -341,7 +355,8 @@ export class DeliveryJournal {
     this.database.transaction(() => {
       const event = this.database
         .query(
-          `SELECT chat_key, tagged_request, accepted_reply, proposed_summary, memory_eligible
+          `SELECT chat_key, tagged_request, accepted_reply, proposed_summary, memory_eligible,
+                  proposed_working_directory, proposed_workspace_candidates
            FROM delivery_events
            WHERE provider_guid = ? AND lease_token = ? AND state = 'sending'`,
         )
@@ -351,6 +366,8 @@ export class DeliveryJournal {
             chat_key: string;
             memory_eligible: number;
             proposed_summary: string | null;
+            proposed_working_directory: string | null;
+            proposed_workspace_candidates: string | null;
             tagged_request: string;
           }
         | null;
@@ -364,11 +381,30 @@ export class DeliveryJournal {
           ...(event.proposed_summary === null ? {} : { summary: event.proposed_summary }),
         });
       }
+      let candidates: string[] | undefined;
+      if (event.proposed_workspace_candidates !== null) {
+        const parsed: unknown = JSON.parse(event.proposed_workspace_candidates);
+        if (Array.isArray(parsed) && parsed.every((value) => typeof value === "string")) {
+          candidates = parsed.slice(0, MAX_WORKSPACE_CANDIDATES);
+        }
+      }
+      if (event.proposed_working_directory !== null || candidates !== undefined) {
+        promoteWorkspace(this.database, {
+          ...(candidates === undefined ? {} : { candidates }),
+          chatKey: event.chat_key,
+          ...(event.proposed_working_directory === null
+            ? {}
+            : { workingDirectory: event.proposed_working_directory }),
+          now: this.now(),
+        });
+      }
       this.database
         .query(
           `UPDATE delivery_events
            SET state = 'delivered', outbound_guid = ?, tagged_request = NULL,
-               accepted_reply = NULL, proposed_summary = NULL, updated_at = ?
+               accepted_reply = NULL, proposed_summary = NULL,
+               proposed_working_directory = NULL, proposed_workspace_candidates = NULL,
+               updated_at = ?
            WHERE provider_guid = ? AND lease_token = ?`,
         )
         .run(outboundGuid, this.now(), providerGuid, lease);
@@ -393,7 +429,8 @@ export class DeliveryJournal {
         .query(
           `UPDATE delivery_events
            SET state = 'failed', tagged_request = NULL, accepted_reply = NULL,
-               proposed_summary = NULL, outbound_fingerprint = NULL,
+               proposed_summary = NULL, proposed_working_directory = NULL,
+               proposed_workspace_candidates = NULL, outbound_fingerprint = NULL,
                outbound_fingerprint_expires_at = NULL, updated_at = ?
            WHERE provider_guid = ? AND lease_token = ?
              AND state IN ('running', 'ready_to_send', 'sending')`,
@@ -477,6 +514,7 @@ export class DeliveryJournal {
                SELECT chat_key FROM tagged_exchanges
                UNION SELECT chat_key FROM chat_memory
                UNION SELECT chat_key FROM delivery_events
+               UNION SELECT chat_key FROM chat_workspaces
              ) ORDER BY chat_key`,
           )
           .all() as Array<{ chat_key: string }>).map((row) => row.chat_key)

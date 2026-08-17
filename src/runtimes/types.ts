@@ -1,10 +1,12 @@
 import type { RuntimeKind } from "../config";
+import { MAX_RUNTIME_TEXT_CHARACTERS, MAX_WORKSPACE_CANDIDATES } from "../workspace";
 
 export type ToolActivity = "none" | "observed" | "unknown";
 
 export interface RuntimeOutput {
   reply: string;
   summary?: string;
+  workspaceCandidates?: string[];
 }
 
 export interface RuntimeInput {
@@ -73,21 +75,46 @@ export function validateRuntimeOutput(value: unknown): RuntimeOutput | null {
   const output = value as Record<string, unknown>;
   if (typeof output.reply !== "string") return null;
   const reply = output.reply.trim();
-  if (reply.length === 0 || reply.length > 4_000) return null;
+  if (reply.length === 0 || reply.length > MAX_RUNTIME_TEXT_CHARACTERS) return null;
+  let summary: string | undefined;
   if (output.summary !== undefined) {
     if (typeof output.summary !== "string") return null;
-    const summary = output.summary.trim();
-    if (summary.length === 0 || summary.length > 4_000) return null;
-    return { reply, summary };
+    summary = output.summary.trim();
+    if (summary.length === 0 || summary.length > MAX_RUNTIME_TEXT_CHARACTERS) return null;
   }
-  return { reply };
+  let workspaceCandidates: string[] | undefined;
+  if (output.workspaceCandidates !== undefined) {
+    if (
+      !Array.isArray(output.workspaceCandidates) ||
+      output.workspaceCandidates.length === 0 ||
+      output.workspaceCandidates.length > MAX_WORKSPACE_CANDIDATES ||
+      output.workspaceCandidates.some(
+        (candidate) => typeof candidate !== "string" || candidate.length === 0 || candidate.length > 4_096,
+      )
+    ) {
+      return null;
+    }
+    workspaceCandidates = output.workspaceCandidates.map((candidate) => candidate.trim());
+    if (workspaceCandidates.some((candidate) => candidate.length === 0)) return null;
+  }
+  return {
+    reply,
+    ...(summary === undefined ? {} : { summary }),
+    ...(workspaceCandidates === undefined ? {} : { workspaceCandidates }),
+  };
 }
 
 export const RUNTIME_OUTPUT_SCHEMA = {
   additionalProperties: false,
   properties: {
-    reply: { maxLength: 4_000, minLength: 1, type: "string" },
-    summary: { maxLength: 4_000, minLength: 1, type: "string" },
+    reply: { maxLength: MAX_RUNTIME_TEXT_CHARACTERS, minLength: 1, type: "string" },
+    summary: { maxLength: MAX_RUNTIME_TEXT_CHARACTERS, minLength: 1, type: "string" },
+    workspaceCandidates: {
+      items: { maxLength: 4_096, minLength: 1, type: "string" },
+      maxItems: MAX_WORKSPACE_CANDIDATES,
+      minItems: 1,
+      type: "array",
+    },
   },
   required: ["reply"],
   type: "object",

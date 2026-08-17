@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ActivatedRequest } from "../../src/activation";
@@ -15,6 +15,7 @@ import { chatKeyForId } from "../../src/storage/chat-key";
 import { openS4imsgDatabase } from "../../src/storage/database";
 import { DeliveryJournal } from "../../src/storage/journal";
 import { MemoryStore } from "../../src/storage/memory";
+import { promoteWorkspace, WorkspaceStore } from "../../src/storage/workspaces";
 import { ConversationBroker, type CurrentChatSource } from "../../src/tools/broker";
 
 const temporaryDirectories: string[] = [];
@@ -31,7 +32,7 @@ class FakeAdapter implements RuntimeAdapter {
   onRun?: () => void;
   constructor(
     readonly kind: "codex" | "claude",
-    readonly result: RuntimeAttemptResult,
+    public result: RuntimeAttemptResult,
   ) {}
   async run(input: RuntimeInput): Promise<RuntimeAttemptResult> {
     this.inputs.push(input);
@@ -102,6 +103,7 @@ async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
   const database = openS4imsgDatabase(join(directory, "state.sqlite"));
   const journal = new DeliveryJournal(database);
   const memory = new MemoryStore(database);
+  const workspaces = new WorkspaceStore(database);
   const transport = new FakeTransport();
   const broker = new ConversationBroker(source);
   const processor = new TurnProcessor({
@@ -112,7 +114,8 @@ async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
     memory,
     runtimes: new RuntimeChain(primary, fallback),
     transport,
-    workingDirectory: directory,
+    defaultWorkingDirectory: directory,
+    workspaces,
   });
   const salt = "private-installation-salt";
   const coordinator = new TurnCoordinator(processor, journal, salt);
@@ -124,10 +127,355 @@ async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
     memory,
     salt,
     transport,
+    workspaces,
+    directory,
   };
 }
 
 describe("turn lifecycle", () => {
+  test("switches only on explicit intent and makes the folder durable after delivery", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "Working there." },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    const project = join(h.directory, "Project With Spaces");
+    await mkdir(project);
+    const canonical = await realpath(project);
+    try {
+      h.coordinator.admit({
+        ...activation,
+        providerGuid: "IN-SWITCH",
+        request: `work in "${project}" and inspect it`,
+      });
+      await h.coordinator.idle();
+      expect(primary.inputs[0]!.workingDirectory).toBe(canonical);
+      expect(h.workspaces.get(chatKeyForId(42, h.salt)).activeDirectory).toBe(canonical);
+
+      primary.result = {
+        output: { reply: "Mention handled." },
+        status: "success",
+        toolActivity: "none",
+      };
+      h.coordinator.admit({
+        ...activation,
+        providerGuid: "IN-MENTION",
+        request: `summarize files in ${h.directory}`,
+      });
+      await h.coordinator.idle();
+      expect(primary.inputs[1]!.workingDirectory).toBe(canonical);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("keeps an explicit switch temporary when delivery is ambiguous", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "Working there." },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    const project = join(h.directory, "project-a");
+    await mkdir(project);
+    h.transport.disposition = { disposition: "ambiguous" };
+    try {
+      h.coordinator.admit({
+        ...activation,
+        providerGuid: "IN-AMBIGUOUS-SWITCH",
+        request: `switch to ${project}`,
+      });
+      await h.coordinator.idle();
+      expect(primary.inputs[0]!.workingDirectory).toBe(await realpath(project));
+      expect(h.workspaces.get(chatKeyForId(42, h.salt)).activeDirectory).toBeNull();
+    } finally {
+      h.close();
+    }
+  });
+
+  test("rejects negated, relative, and multi-path switch requests", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "No switch." },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    const first = join(h.directory, "first-project");
+    const second = join(h.directory, "second-project");
+    await mkdir(first);
+    await mkdir(second);
+    try {
+      for (const [index, request] of [
+        `don't use ${first}`,
+        'use "first-project"',
+        `use ${first} and compare ${second}`,
+      ].entries()) {
+        h.coordinator.admit({
+          ...activation,
+          providerGuid: `IN-NO-SWITCH-${index}`,
+          request,
+        });
+        await h.coordinator.idle();
+        expect(primary.inputs[index]!.workingDirectory).toBe(await realpath(h.directory));
+      }
+      expect(h.workspaces.get(chatKeyForId(42, h.salt)).activeDirectory).toBeNull();
+    } finally {
+      h.close();
+    }
+  });
+
+  test("publishes numbered discovery candidates and switches on the next confirmation", async () => {
+    const h = await harness(
+      new FakeAdapter("codex", {
+        output: { reply: "I found these projects.", workspaceCandidates: [] },
+        status: "success",
+        toolActivity: "none",
+      }),
+    );
+    const primary = h.coordinator.processor.dependencies.runtimes.primary as FakeAdapter;
+    const first = join(h.directory, "first");
+    const second = join(h.directory, "second");
+    await mkdir(first);
+    await mkdir(second);
+    primary.result = {
+      output: { reply: "I found these projects.", workspaceCandidates: [first, second] },
+      status: "success",
+      toolActivity: "none",
+    };
+    try {
+      h.coordinator.admit({ ...activation, providerGuid: "IN-DISCOVER", request: "find my app" });
+      await h.coordinator.idle();
+      expect(h.transport.sends[0]!.text).toContain(`2. ${await realpath(second)}`);
+      expect(h.workspaces.get(chatKeyForId(42, h.salt)).activeDirectory).toBeNull();
+
+      primary.result = {
+        output: { reply: "Switched." },
+        status: "success",
+        toolActivity: "none",
+      };
+      h.coordinator.admit({ ...activation, providerGuid: "IN-CONFIRM", request: "2" });
+      await h.coordinator.idle();
+      expect(primary.inputs[1]!.workingDirectory).toBe(await realpath(second));
+      expect(h.workspaces.get(chatKeyForId(42, h.salt)).activeDirectory).toBe(
+        await realpath(second),
+      );
+      expect(h.workspaces.get(chatKeyForId(42, h.salt)).pendingCandidates).toEqual([]);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("does not promote undelivered candidates or expose them to another chat", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "Choose this project." },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    const candidate = join(h.directory, "candidate");
+    await mkdir(candidate);
+    primary.result = {
+      output: { reply: "Choose this project.", workspaceCandidates: [candidate] },
+      status: "success",
+      toolActivity: "none",
+    };
+    h.transport.disposition = { disposition: "ambiguous" };
+    try {
+      h.coordinator.admit({ ...activation, providerGuid: "IN-AMBIGUOUS-DISCOVERY" });
+      await h.coordinator.idle();
+      expect(h.workspaces.get(chatKeyForId(42, h.salt)).pendingCandidates).toEqual([]);
+
+      h.transport.disposition = { disposition: "confirmed", guid: "OUT-OTHER" };
+      promoteWorkspace(h.database, {
+        candidates: [await realpath(candidate)],
+        chatKey: chatKeyForId(42, h.salt),
+      });
+      primary.result = {
+        output: { reply: "Other chat stayed put." },
+        status: "success",
+        toolActivity: "none",
+      };
+      h.coordinator.admit({
+        ...activation,
+        chatId: 99,
+        providerGuid: "IN-OTHER-CHAT",
+        request: "1",
+      });
+      await h.coordinator.idle();
+      expect(primary.inputs[1]!.workingDirectory).toBe(await realpath(h.directory));
+      expect(h.workspaces.get(chatKeyForId(42, h.salt)).pendingCandidates).toEqual([
+        await realpath(candidate),
+      ]);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("persists only displayed candidates and bounds the composed reply", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "x".repeat(4_000) },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    const valid = join(h.directory, "valid-project");
+    await mkdir(valid);
+    try {
+      primary.result = {
+        output: {
+          reply: "x".repeat(4_000),
+          workspaceCandidates: [join(h.directory, "missing"), valid],
+        },
+        status: "success",
+        toolActivity: "none",
+      };
+      h.coordinator.admit({ ...activation, providerGuid: "IN-BOUNDED", request: "find it" });
+      await h.coordinator.idle();
+
+      expect(h.transport.sends[0]!.text.length).toBeLessThanOrEqual(4_000);
+      expect(h.transport.sends[0]!.text).toContain(`1. ${await realpath(valid)}`);
+      expect(h.transport.sends[0]!.text).not.toContain("missing");
+      expect(h.workspaces.get(chatKeyForId(42, h.salt)).pendingCandidates).toEqual([
+        await realpath(valid),
+      ]);
+
+      primary.result = {
+        output: {
+          reply: "No valid projects.",
+          workspaceCandidates: [join(h.directory, "still-missing")],
+        },
+        status: "success",
+        toolActivity: "none",
+      };
+      h.coordinator.admit({
+        ...activation,
+        providerGuid: "IN-INVALID-CANDIDATES",
+        request: "find it again",
+      });
+      await h.coordinator.idle();
+      expect(h.transport.sends[1]!.text).toBe("No valid projects.");
+      expect(h.workspaces.get(chatKeyForId(42, h.salt)).pendingCandidates).toEqual([]);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("promotes an explicit switch and displayed discovery candidates together", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "Switched and found another." },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    const active = join(h.directory, "active");
+    const candidate = join(h.directory, "candidate");
+    await mkdir(active);
+    await mkdir(candidate);
+    primary.result = {
+      output: { reply: "Switched and found another.", workspaceCandidates: [candidate] },
+      status: "success",
+      toolActivity: "none",
+    };
+    try {
+      h.coordinator.admit({
+        ...activation,
+        providerGuid: "IN-SWITCH-DISCOVER",
+        request: `use ${active} and find my other project`,
+      });
+      await h.coordinator.idle();
+      expect(h.workspaces.get(chatKeyForId(42, h.salt))).toEqual({
+        activeDirectory: await realpath(active),
+        pendingCandidates: [await realpath(candidate)],
+      });
+    } finally {
+      h.close();
+    }
+  });
+
+  test("keeps pending confirmation replayable across a tool-free restart", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "Switched after restart." },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    const candidate = join(h.directory, "candidate");
+    await mkdir(candidate);
+    const chatKey = chatKeyForId(42, h.salt);
+    promoteWorkspace(h.database, { candidates: [await realpath(candidate)], chatKey });
+    try {
+      h.journal.admit({
+        chatId: 42,
+        chatKey,
+        providerGuid: "IN-PENDING-RESTART",
+        request: "1",
+      });
+      const lease = h.journal.lease("IN-PENDING-RESTART")!;
+      h.journal.beginRuntimeAttempt("IN-PENDING-RESTART", lease);
+      h.journal.recordToolActivity("IN-PENDING-RESTART", lease, "none");
+
+      expect(h.coordinator.start()).toEqual({ ambiguous: 0, parked: 0, resumed: 1 });
+      await h.coordinator.idle();
+      expect(primary.inputs[0]!.workingDirectory).toBe(await realpath(candidate));
+      expect(h.workspaces.get(chatKey).activeDirectory).toBe(await realpath(candidate));
+    } finally {
+      h.close();
+    }
+  });
+
+  test("names the exact unusable workspace and does not invoke a runtime", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "must not run" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    const active = join(h.directory, "active");
+    const stale = join(h.directory, "deleted-candidate");
+    await mkdir(active);
+    const chatKey = chatKeyForId(42, h.salt);
+    promoteWorkspace(h.database, { chatKey, workingDirectory: await realpath(active) });
+    promoteWorkspace(h.database, { candidates: [stale], chatKey });
+    try {
+      h.coordinator.admit({ ...activation, providerGuid: "IN-STALE", request: "1" });
+      await h.coordinator.idle();
+      expect(primary.inputs).toHaveLength(0);
+      expect(h.transport.sends[0]!.text).toContain(stale);
+      expect(h.transport.sends[0]!.text).not.toContain(
+        `couldn't use the folder ${await realpath(active)}`,
+      );
+      expect(h.workspaces.get(chatKey)).toEqual({
+        activeDirectory: await realpath(active),
+        pendingCandidates: [],
+      });
+    } finally {
+      h.close();
+    }
+  });
+
+  test("reports a missing stored active workspace with recovery guidance", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "must not run" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    const missing = join(h.directory, "deleted-active");
+    const chatKey = chatKeyForId(42, h.salt);
+    promoteWorkspace(h.database, { chatKey, workingDirectory: missing });
+    try {
+      h.coordinator.admit({ ...activation, providerGuid: "IN-MISSING-ACTIVE" });
+      await h.coordinator.idle();
+      expect(primary.inputs).toHaveLength(0);
+      expect(h.transport.sends[0]!.text).toContain(missing);
+      expect(h.transport.sends[0]!.text).toContain("use /path/to/project");
+      expect(h.transport.sends[0]!.text).toContain("s4imsg forget");
+    } finally {
+      h.close();
+    }
+  });
+
   test("delivers one primary reply and promotes only confirmed output", async () => {
     const primary = new FakeAdapter("codex", {
       output: { reply: "Launch note ready.", summary: "Planning a Friday launch." },
@@ -165,6 +513,8 @@ describe("turn lifecycle", () => {
       toolActivity: "none",
     });
     const h = await harness(primary, fallback);
+    const project = join(h.directory, "fallback-project");
+    await mkdir(project);
     try {
       const fallbackToolActivity: { value: number | null } = { value: null };
       fallback.onRun = () => {
@@ -173,9 +523,11 @@ describe("turn lifecycle", () => {
           .get("IN-1") as { tool_activity: number | null };
         fallbackToolActivity.value = row.tool_activity;
       };
-      h.coordinator.admit(activation);
+      h.coordinator.admit({ ...activation, request: `use ${project}` });
       await h.coordinator.idle();
       expect(primary.inputs[0]!.prompt).toBe(fallback.inputs[0]!.prompt);
+      expect(primary.inputs[0]!.workingDirectory).toBe(await realpath(project));
+      expect(fallback.inputs[0]!.workingDirectory).toBe(await realpath(project));
       expect(primary.inputs[0]!.capability).not.toBe(fallback.inputs[0]!.capability);
       expect(fallbackToolActivity.value).toBe(2);
       expect(h.transport.sends).toHaveLength(1);

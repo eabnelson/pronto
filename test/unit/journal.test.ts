@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { openS4imsgDatabase } from "../../src/storage/database";
 import { DeliveryJournal } from "../../src/storage/journal";
 import { MemoryStore } from "../../src/storage/memory";
+import { WorkspaceStore } from "../../src/storage/workspaces";
 
 const temporaryDirectories: string[] = [];
 
@@ -22,6 +23,7 @@ async function stores() {
     close: () => database.close(),
     journal: new DeliveryJournal(database),
     memory: new MemoryStore(database),
+    workspaces: new WorkspaceStore(database),
   };
 }
 
@@ -53,6 +55,73 @@ test("admits a provider GUID once and bounds pending work per chat", async () =>
         .get("event-5"),
     ).toEqual({ tagged_request: null });
     expect(journal.operationalStatus().rateLimited).toBe(1);
+  } finally {
+    close();
+  }
+});
+
+test("promotes workspace transitions and candidates only after confirmed delivery", async () => {
+  const { close, journal, workspaces } = await stores();
+  try {
+    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "switch", request: "switch" });
+    const switchLease = journal.lease("switch")!;
+    journal.accept("switch", switchLease, { reply: "switched", workingDirectory: "/project-a" });
+    expect(workspaces.get("chat-a").activeDirectory).toBeNull();
+    journal.beginSend("switch", switchLease);
+    journal.confirmDelivery("switch", switchLease, "OUT-SWITCH");
+    expect(workspaces.get("chat-a").activeDirectory).toBe("/project-a");
+
+    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "discover", request: "find" });
+    const discoveryLease = journal.lease("discover")!;
+    journal.accept("discover", discoveryLease, {
+      reply: "choose",
+      workspaceCandidates: ["/one", "/two"],
+    });
+    journal.beginSend("discover", discoveryLease);
+    journal.confirmDelivery("discover", discoveryLease, "OUT-DISCOVER");
+    expect(workspaces.get("chat-a")).toEqual({
+      activeDirectory: "/project-a",
+      pendingCandidates: ["/one", "/two"],
+    });
+
+    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "both", request: "both" });
+    const bothLease = journal.lease("both")!;
+    journal.accept("both", bothLease, {
+      reply: "switched and found more",
+      workingDirectory: "/project-b",
+      workspaceCandidates: ["/three"],
+    });
+    journal.beginSend("both", bothLease);
+    journal.confirmDelivery("both", bothLease, "OUT-BOTH");
+    expect(workspaces.get("chat-a")).toEqual({
+      activeDirectory: "/project-b",
+      pendingCandidates: ["/three"],
+    });
+
+    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "consume", request: "none" });
+    const consumeLease = journal.lease("consume")!;
+    journal.accept("consume", consumeLease, { reply: "done", workspaceCandidates: [] });
+    journal.beginSend("consume", consumeLease);
+    journal.confirmDelivery("consume", consumeLease, "OUT-CONSUME");
+    expect(workspaces.get("chat-a").pendingCandidates).toEqual([]);
+  } finally {
+    close();
+  }
+});
+
+test("forget cancels in-flight delivery before it can recreate workspace state", async () => {
+  const { close, journal, memory, workspaces } = await stores();
+  try {
+    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "running", request: "switch" });
+    const lease = journal.lease("running")!;
+    journal.beginRuntimeAttempt("running", lease);
+    memory.forget("chat-a");
+
+    expect(journal.state("running")).toBe("failed");
+    expect(() =>
+      journal.accept("running", lease, { reply: "late", workingDirectory: "/late" }),
+    ).toThrow("Unable to accept runtime output");
+    expect(workspaces.get("chat-a")).toEqual({ activeDirectory: null, pendingCandidates: [] });
   } finally {
     close();
   }

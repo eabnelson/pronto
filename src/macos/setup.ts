@@ -1,14 +1,16 @@
-import { access, chmod, copyFile, readFile, rename, rm, unlink } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, readFile, realpath, rename, rm, stat, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import {
+  atomicWritePrivate,
   createConfig,
   ensurePrivateDirectory,
   loadConfig,
   saveConfig,
   type RuntimeKind,
   type S4imsgConfig,
+  UNRESTRICTED_TRUST_VERSION,
 } from "../config";
 import {
   installLaunchAgent,
@@ -18,7 +20,71 @@ import {
 } from "./launch-agent";
 import type { S4imsgPaths } from "./paths";
 
-export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant in an eligible iMessage conversation can instruct your selected local agent with its effective noninteractive permissions; untagged messages and attachments are untrusted evidence but may still influence the model. Conversation material may be sent to your selected model provider. You are responsible for informing participants.`;
+export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider. You are responsible for informing participants.`;
+
+export interface WorkspaceSelection {
+  exists: boolean;
+  path: string;
+}
+
+export interface ExistingSetupDefaults {
+  chatKeySalt: string;
+  workingDirectory: string;
+}
+
+export async function loadExistingSetupDefaults(
+  configPath: string,
+): Promise<ExistingSetupDefaults | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(configPath, "utf8"));
+    if (parsed === null || typeof parsed !== "object") {
+      throw new Error("existing configuration is not an object");
+    }
+    const value = parsed as Record<string, unknown>;
+    if (
+      typeof value.chatKeySalt !== "string" ||
+      value.chatKeySalt.length < 32 ||
+      typeof value.workingDirectory !== "string" ||
+      !isAbsolute(value.workingDirectory)
+    ) {
+      throw new Error("existing configuration is missing stable setup defaults");
+    }
+    return {
+      chatKeySalt: value.chatKeySalt,
+      workingDirectory: value.workingDirectory,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new Error(`Unable to preserve existing setup defaults: ${(error as Error).message}`);
+  }
+}
+
+export async function resolveWorkspaceSelection(
+  value: string,
+  homeDirectory: string,
+): Promise<WorkspaceSelection> {
+  const trimmed = value.trim();
+  const expanded =
+    trimmed === "~"
+      ? homeDirectory
+      : trimmed.startsWith("~/")
+        ? join(homeDirectory, trimmed.slice(2))
+        : trimmed;
+  const absolute = resolve(expanded);
+  try {
+    const metadata = await stat(absolute);
+    if (!metadata.isDirectory()) throw new Error(`Expected a directory: ${absolute}`);
+    return { exists: true, path: await realpath(absolute) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return { exists: false, path: absolute };
+  }
+}
+
+export async function createWorkspaceDirectory(path: string): Promise<string> {
+  await mkdir(path, { recursive: true });
+  return realpath(path);
+}
 
 export interface CommandDiscovery {
   imsgPath: string;
@@ -43,6 +109,7 @@ export function discoverCommands(lookup: CommandLookup = (command) => Bun.which(
 }
 
 export function prepareSetupConfig(input: {
+  chatKeySalt?: string;
   discovery: CommandDiscovery;
   fallbackRuntime?: RuntimeKind;
   primaryRuntime: RuntimeKind;
@@ -69,9 +136,11 @@ export function prepareSetupConfig(input: {
       ? {}
       : { fallbackRuntime: input.fallbackRuntime, fallbackRuntimePath: fallbackRuntimePath! }),
     imsgPath: input.discovery.imsgPath,
+    ...(input.chatKeySalt === undefined ? {} : { chatKeySalt: input.chatKeySalt }),
     primaryRuntime: input.primaryRuntime,
     primaryRuntimePath,
     tag: input.tag,
+    unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
     workingDirectory: input.workingDirectory,
   });
 }
@@ -109,6 +178,7 @@ export async function sha256File(path: string): Promise<string> {
 export interface SetupDependencies {
   buildExecutable: (outputPath: string) => Promise<void>;
   installAgent: (input: { plist: string; plistPath: string }) => Promise<void>;
+  saveConfiguration?: (path: string, config: S4imsgConfig) => Promise<void>;
 }
 
 export function sourceBuild(repositoryRoot: string): (outputPath: string) => Promise<void> {
@@ -136,7 +206,7 @@ export async function installSetup(input: {
   paths: S4imsgPaths;
   repositoryRoot?: string;
 }): Promise<S4imsgConfig> {
-  const dependencies =
+  const dependencies: SetupDependencies =
     input.dependencies ??
     ({
       buildExecutable:
@@ -154,9 +224,28 @@ export async function installSetup(input: {
     await dependencies.buildExecutable(temporaryExecutable);
     await chmod(temporaryExecutable, 0o700);
     const installedExecutableHash = await sha256File(temporaryExecutable);
-    await rename(temporaryExecutable, input.paths.executablePath);
     const config = { ...input.config, installedExecutableHash };
-    await saveConfig(input.paths.configPath, config);
+    const previousConfig = await readFile(input.paths.configPath, "utf8").catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      },
+    );
+    await (dependencies.saveConfiguration ?? saveConfig)(input.paths.configPath, config);
+    try {
+      await rename(temporaryExecutable, input.paths.executablePath);
+    } catch (error) {
+      try {
+        if (previousConfig === null) await unlink(input.paths.configPath);
+        else await atomicWritePrivate(input.paths.configPath, previousConfig);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Unable to install the executable or restore the previous configuration",
+        );
+      }
+      throw error;
+    }
     await dependencies.installAgent({
       plist: renderLaunchAgent({
         executablePath: input.paths.executablePath,

@@ -99,6 +99,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
         execution = await this.runner.run({
         args: [
           "-p",
+          "--dangerously-skip-permissions",
           "--output-format",
           "stream-json",
           "--verbose",

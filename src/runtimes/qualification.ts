@@ -7,8 +7,14 @@ import type { CommandRunner, DoctorCheck } from "../macos/setup";
 import type { RuntimeAdapter } from "./types";
 
 const REQUIRED_HELP: Record<RuntimeKind, readonly string[]> = {
-  claude: ["--mcp-config", "--json-schema", "--no-session-persistence", "stream-json"],
-  codex: ["--ephemeral", "--json", "--output-schema"],
+  claude: [
+    "--dangerously-skip-permissions",
+    "--mcp-config",
+    "--json-schema",
+    "--no-session-persistence",
+    "stream-json",
+  ],
+  codex: ["--dangerously-bypass-approvals-and-sandbox", "--ephemeral", "--json", "--output-schema"],
 };
 
 function failed(id: string, remediation: string): DoctorCheck {
@@ -89,7 +95,7 @@ export async function qualifyRuntime(input: {
     const remediation =
       result.status !== "success" && result.reason !== "permission-denial"
         ? `Repair ${adapter.kind}'s configured noninteractive environment (${result.reason}), then run setup or doctor again.`
-        : `Allow ${adapter.kind} to use its normal file tools noninteractively, then run setup or doctor again.`;
+        : `Allow ${adapter.kind} to run in unrestricted no-prompt mode, then run setup or doctor again.`;
     checks.push(
       markerMatches
         ? { id: `${adapter.kind}-effective-permissions`, status: "ok" }
