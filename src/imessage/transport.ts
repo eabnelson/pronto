@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { activatedRequest, type ActivatedRequest } from "../activation";
+import { normalizeIMessageHandle } from "../config";
 import { normalizeMessage, type NormalizedMessage } from "./message";
 import { qualifyImsgStatus, type QualifiedImsg } from "./probe";
 import { ImsgRpcError, type ImsgRpc, type WatchableImsgRpc } from "./rpc-client";
@@ -15,10 +16,27 @@ function object(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function matchesIMessageHandle(candidate: string, normalizedHandle: string): boolean {
+  try {
+    return normalizeIMessageHandle(candidate) === normalizedHandle;
+  } catch {
+    return false;
+  }
+}
+
+interface ChatEligibility {
+  identifier: string | null;
+  ownerParticipated: boolean;
+  service: string | null;
+}
+
 export class ImsgTransport {
   constructor(
     readonly rpc: ImsgRpc,
-    readonly echoTracker?: { matches(chatId: number, text: string): boolean },
+    readonly options: {
+      matchesOutboundEcho?: (chatId: number, text: string) => boolean;
+      selfChatHandle?: string;
+    } = {},
   ) {}
 
   async qualify(): Promise<QualifiedImsg> {
@@ -30,15 +48,14 @@ export class ImsgTransport {
     return (await this.#chatEligibility(chatId)).ownerParticipated;
   }
 
-  async #chatEligibility(chatId: number): Promise<{
-    ownerParticipated: boolean;
-    service: string | null;
-  }> {
+  async #chatEligibility(chatId: number): Promise<ChatEligibility> {
     const result = object(await this.rpc.call("messages.stats", { chat_id: chatId }));
     const chat = (Array.isArray(result.chats) ? result.chats : [])
       .map(object)
       .find((candidate) => candidate.chat_id === chatId);
     return {
+      identifier:
+        chat !== undefined && typeof chat.identifier === "string" ? chat.identifier : null,
       ownerParticipated:
         typeof result.sent_messages === "number" && result.sent_messages > 0,
       service: chat !== undefined && typeof chat.service === "string" ? chat.service : null,
@@ -57,25 +74,36 @@ export class ImsgTransport {
       message.isFromMe &&
       message.chatId !== null &&
       message.text !== null &&
-      this.echoTracker?.matches(message.chatId, message.text) === true
+      this.options.matchesOutboundEcho?.(message.chatId, message.text) === true
     ) {
       return null;
     }
     let candidate = activatedRequest(message, tag, true);
+    let eligibility: ChatEligibility | null = null;
     if (candidate === null && message.service === null) {
       const potentialCandidate = activatedRequest({ ...message, service: "iMessage" }, tag, true);
       if (potentialCandidate === null) return null;
-      const eligibility = await this.#chatEligibility(potentialCandidate.chatId);
+      eligibility = await this.#chatEligibility(potentialCandidate.chatId);
       if (
         !eligibility.ownerParticipated ||
         eligibility.service?.toLowerCase() !== "imessage"
       ) {
         return null;
       }
-      return potentialCandidate;
+      candidate = potentialCandidate;
     }
     if (candidate === null) return null;
-    return (await this.ownerParticipated(candidate.chatId)) ? candidate : null;
+    eligibility ??= await this.#chatEligibility(candidate.chatId);
+    if (!eligibility.ownerParticipated) return null;
+    if (
+      !message.isFromMe &&
+      eligibility.identifier !== null &&
+      this.options.selfChatHandle !== undefined &&
+      matchesIMessageHandle(eligibility.identifier, this.options.selfChatHandle)
+    ) {
+      return null;
+    }
+    return candidate;
   }
 
   async recentMessages(chatId: number, limit = 30): Promise<unknown[]> {

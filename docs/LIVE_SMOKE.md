@@ -8,8 +8,9 @@ provider and sends real iMessages; it is never run by CI.
 
 1. Confirm Messages is signed in and the owner has already sent a message in the
    test chat.
-2. Run setup and confirm it offers `~/s4imsg`, asks before reusing an existing
-   folder, and presents the unrestricted trust disclosure before the runtime probe.
+2. Run setup and confirm it asks whether self-chat handling is needed, offers
+   `~/s4imsg`, asks before reusing an existing folder, and presents the
+   unrestricted trust disclosure before the runtime probe.
 3. Confirm the probe completes without a Claude Code or Codex approval prompt.
 4. Run `~/Library/Application\ Support/s4imsg/bin/s4imsg doctor`. Resolve failed checks. A degraded
    `messages-send-automation` check is expected until this smoke succeeds.
@@ -20,6 +21,17 @@ provider and sends real iMessages; it is never run by CI.
 8. Confirm exactly one plain-text reply arrives and it contains
    `s4imsg smoke ok`.
 9. Wait one minute and confirm the sent reply did not trigger an echo-loop turn.
+
+## Self-chat mirror handling
+
+1. Re-run setup, enable self-chat handling, and enter the same country-coded
+   phone number or email used as the destination of a Messages chat with yourself.
+2. Re-grant Full Disk Access if macOS treats the rebuilt executable as a new
+   identity, then confirm `s4imsg status` reports `daemon ready`.
+3. Send one new tagged message to yourself and confirm the agent runs once and
+   sends one reply, even though Messages displays incoming and outgoing copies.
+4. In a different eligible chat, have another participant send a tagged message
+   and confirm their request still runs once.
 
 ## Per-chat working folders
 

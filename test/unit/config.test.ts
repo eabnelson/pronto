@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   createConfig,
   loadConfig,
+  normalizeIMessageHandle,
   normalizeTag,
   saveConfig,
   UNRESTRICTED_TRUST_VERSION,
@@ -31,6 +32,19 @@ describe("trigger tag validation", () => {
   });
 });
 
+describe("self-chat handle validation", () => {
+  test("normalizes phone and email handles for reliable chat matching", () => {
+    expect(normalizeIMessageHandle(" tel:+1 (414) 555-1212 ")).toBe("+14145551212");
+    expect(normalizeIMessageHandle(" Erik@Example.COM ")).toBe("erik@example.com");
+  });
+
+  test("rejects ambiguous handles", () => {
+    for (const handle of ["", "Erik", "414-555-1212", "not an @ address"]) {
+      expect(() => normalizeIMessageHandle(handle)).toThrow("iMessage phone or email");
+    }
+  });
+});
+
 describe("configuration persistence", () => {
   test("requires distinct primary and fallback runtimes", () => {
     expect(() =>
@@ -53,6 +67,7 @@ describe("configuration persistence", () => {
       fallbackRuntime: "claude",
       imsgPath: "/opt/homebrew/bin/imsg",
       primaryRuntime: "codex",
+      selfChatHandle: "Erik@Example.COM",
       tag: "@Helper",
       unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
       workingDirectory: "/Users/example",
@@ -61,8 +76,27 @@ describe("configuration persistence", () => {
     await saveConfig(path, config);
 
     expect(await loadConfig(path)).toEqual(config);
+    expect(config.selfChatHandle).toBe("erik@example.com");
     expect((await lstat(path)).mode & 0o777).toBe(0o600);
     expect((await lstat(join(directory, "nested"))).mode & 0o777).toBe(0o700);
+  });
+
+  test("rejects a non-string persisted self-chat handle", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "config.json");
+    await Bun.write(path, JSON.stringify({
+      version: 1,
+      chatKeySalt: "x".repeat(32),
+      imsgPath: "/usr/local/bin/imsg",
+      primaryRuntime: "codex",
+      selfChatHandle: 42,
+      tag: "@helper",
+      unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+      workingDirectory: "/Users/example",
+    }));
+
+    await expect(loadConfig(path)).rejects.toThrow("Invalid self-chat handle");
   });
 
   test("rejects legacy configuration without unrestricted access consent", async () => {

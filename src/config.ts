@@ -5,6 +5,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 export const CONFIG_VERSION = 1 as const;
 export const UNRESTRICTED_TRUST_VERSION = 1 as const;
 export const TAG_PATTERN = /^@[A-Za-z0-9_-]{1,32}$/;
+const EMAIL_HANDLE_PATTERN =
+  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 
 export type RuntimeKind = "codex" | "claude";
 
@@ -16,6 +18,7 @@ export interface S4imsgConfig {
   fallbackRuntime?: RuntimeKind;
   imsgPath: string;
   installedExecutableHash?: string;
+  selfChatHandle?: string;
   primaryRuntimePath?: string;
   fallbackRuntimePath?: string;
   workingDirectory: string;
@@ -39,6 +42,14 @@ export function normalizeTag(value: string): string {
   return tag.toLowerCase();
 }
 
+export function normalizeIMessageHandle(value: string): string {
+  const input = value.trim();
+  if (EMAIL_HANDLE_PATTERN.test(input)) return input.toLowerCase();
+  const phone = input.replace(/^tel:/i, "").replace(/[\s().-]/g, "");
+  if (/^\+[0-9]{7,15}$/.test(phone)) return phone;
+  throw new Error("Enter an iMessage phone or email; phone numbers must include the country code");
+}
+
 export function createConfig(input: ConfigInput): S4imsgConfig {
   if (input.unrestrictedTrustVersion !== UNRESTRICTED_TRUST_VERSION) {
     throw new Error("Unrestricted access consent is missing; run s4imsg setup");
@@ -53,6 +64,9 @@ export function createConfig(input: ConfigInput): S4imsgConfig {
 
   return {
     ...input,
+    ...(input.selfChatHandle === undefined
+      ? {}
+      : { selfChatHandle: normalizeIMessageHandle(input.selfChatHandle) }),
     chatKeySalt: input.chatKeySalt ?? randomBytes(32).toString("base64url"),
     tag: normalizeTag(input.tag),
     version: CONFIG_VERSION,
@@ -126,6 +140,9 @@ export async function loadConfig(path: string): Promise<S4imsgConfig> {
     throw new Error("Invalid configuration fields");
   }
   if (typeof value.workingDirectory !== "string") throw new Error("Invalid working directory");
+  if (value.selfChatHandle !== undefined && typeof value.selfChatHandle !== "string") {
+    throw new Error("Invalid self-chat handle");
+  }
   if (value.unrestrictedTrustVersion !== UNRESTRICTED_TRUST_VERSION) {
     throw new Error("Unrestricted access consent is missing; run s4imsg setup");
   }
@@ -145,6 +162,9 @@ export async function loadConfig(path: string): Promise<S4imsgConfig> {
       : {}),
     ...(typeof value.fallbackRuntimePath === "string"
       ? { fallbackRuntimePath: value.fallbackRuntimePath }
+      : {}),
+    ...(typeof value.selfChatHandle === "string"
+      ? { selfChatHandle: value.selfChatHandle }
       : {}),
     imsgPath: value.imsgPath,
     chatKeySalt: value.chatKeySalt,

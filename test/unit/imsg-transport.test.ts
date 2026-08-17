@@ -80,6 +80,39 @@ describe("activation routing", () => {
       new ImsgTransport(rpc).activationFor(messageWithoutService, "@helper"),
     ).rejects.toThrow("stats unavailable");
   });
+
+  test("admits one side of a configured self-chat mirror without filtering remote participants", async () => {
+    const rpc = new FakeRpc();
+    rpc.stats = {
+      chats: [{ chat_id: 42, identifier: "+14145551212", service: "iMessage" }],
+      sent_messages: 1,
+    };
+    const transport = new ImsgTransport(rpc, { selfChatHandle: "+14145551212" });
+
+    expect(
+      await transport.activationFor(
+        { ...messageWithoutService, guid: "SELF-OUT", is_from_me: true },
+        "@helper",
+      ),
+    ).toMatchObject({ providerGuid: "SELF-OUT", request: "continue" });
+    expect(
+      await transport.activationFor(
+        { ...messageWithoutService, guid: "SELF-MIRROR", is_from_me: false },
+        "@helper",
+      ),
+    ).toBeNull();
+
+    rpc.stats = {
+      chats: [{ chat_id: 42, identifier: "+14145550000", service: "iMessage" }],
+      sent_messages: 1,
+    };
+    expect(
+      await transport.activationFor(
+        { ...messageWithoutService, guid: "REMOTE-IN", is_from_me: false },
+        "@helper",
+      ),
+    ).toMatchObject({ providerGuid: "REMOTE-IN", request: "continue" });
+  });
 });
 
 describe("text delivery", () => {

@@ -5,7 +5,7 @@ import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
-import { loadConfig } from "./config";
+import { loadConfig, normalizeIMessageHandle } from "./config";
 import { parseLaunchAgentState, stopLaunchAgent } from "./macos/launch-agent";
 import { pathsForHome } from "./macos/paths";
 import {
@@ -19,6 +19,7 @@ import {
   resolveWorkspaceSelection,
   uninstallInstallation,
   runCommand,
+  usesSelfChatFromAnswer,
 } from "./macos/setup";
 import { openS4imsgDatabase } from "./storage/database";
 import { MemoryStore } from "./storage/memory";
@@ -84,6 +85,31 @@ async function runSetup(): Promise<number> {
 
     const paths = pathsForHome(homedir());
     const existing = await loadExistingSetupDefaults(paths.configPath);
+    const existingSelfChatHandle = existing?.selfChatHandle;
+    const selfChatAnswer = (await prompt.question(
+      `Use s4imsg in a chat with yourself? [${existingSelfChatHandle === undefined ? "y/N" : "Y/n"}]: `,
+    )).trim().toLowerCase();
+    const usesSelfChat = usesSelfChatFromAnswer(
+      selfChatAnswer,
+      existingSelfChatHandle !== undefined,
+    );
+    let selfChatHandle: string | undefined;
+    if (usesSelfChat) {
+      while (selfChatHandle === undefined) {
+        const answer = (await prompt.question(
+          `Your own iMessage phone or email${existingSelfChatHandle === undefined ? " (include country code for phone)" : ` [${existingSelfChatHandle}]`}: `,
+        )).trim() || existingSelfChatHandle;
+        if (answer === undefined) {
+          console.error("Enter the phone or email used by the self-chat.");
+          continue;
+        }
+        try {
+          selfChatHandle = normalizeIMessageHandle(answer);
+        } catch (error) {
+          console.error((error as Error).message);
+        }
+      }
+    }
     const defaultWorkspace = existing?.workingDirectory ?? join(homedir(), "s4imsg");
     let workspacePrompt = `Default working folder [${defaultWorkspace}]: `;
     let workspaceFallback = defaultWorkspace;
@@ -131,6 +157,7 @@ async function runSetup(): Promise<number> {
         ? { fallbackRuntime: fallbackCandidate }
         : {}),
       primaryRuntime: primaryAnswer,
+      ...(selfChatHandle === undefined ? {} : { selfChatHandle }),
       tag,
       workingDirectory,
     });
