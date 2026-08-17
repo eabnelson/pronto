@@ -1,5 +1,23 @@
 import { expect, test } from "bun:test";
-import { validateRuntimeOutput } from "../../src/runtimes/types";
+import { RUNTIME_OUTPUT_SCHEMA, validateRuntimeOutput } from "../../src/runtimes/types";
+
+test("uses a strict Codex-compatible schema while preserving optional output fields", () => {
+  expect(RUNTIME_OUTPUT_SCHEMA.required).toEqual([
+    "reply",
+    "summary",
+    "workspaceCandidates",
+  ]);
+  expect(validateRuntimeOutput({
+    reply: "Done.",
+    summary: null,
+    workspaceCandidates: null,
+  })).toEqual({ reply: "Done." });
+  expect(validateRuntimeOutput({
+    reply: "Done.",
+    summary: "   ",
+    workspaceCandidates: null,
+  })).toEqual({ reply: "Done." });
+});
 
 test("accepts bounded workspace candidates in structured runtime output", () => {
   expect(
