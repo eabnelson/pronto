@@ -9,10 +9,17 @@ class FakeRpc implements ImsgRpc {
   calls: Array<{ method: string; params: Record<string, unknown> }> = [];
   handlers = new Map<string, Set<(params: unknown) => void | Promise<void>>>();
   result: unknown = { guid: "OUT-1", ok: true };
+  stats: unknown = {
+    chats: [{ chat_id: 42, service: "iMessage" }],
+    sent_messages: 1,
+  };
 
   async call(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
     this.calls.push({ method, params });
-    if (method === "messages.stats") return { sent_messages: 1 };
+    if (method === "messages.stats") {
+      if (this.stats instanceof Error) throw this.stats;
+      return this.stats;
+    }
     if (method === "watch.subscribe") return { subscription: 7 };
     if (method === "watch.unsubscribe") return { ok: true };
     if (this.result instanceof Error) throw this.result;
@@ -30,6 +37,50 @@ class FakeRpc implements ImsgRpc {
     for (const handler of this.handlers.get(method) ?? []) await handler(params);
   }
 }
+
+describe("activation routing", () => {
+  const messageWithoutService = {
+    chat_id: 42,
+    guid: "IN-1",
+    id: 11,
+    text: "@helper continue",
+  };
+
+  test("uses the matching chat service when an imsg message omits its service", async () => {
+    const rpc = new FakeRpc();
+
+    expect(await new ImsgTransport(rpc).activationFor(messageWithoutService, "@helper")).toMatchObject({
+      chatId: 42,
+      providerGuid: "IN-1",
+      request: "continue",
+    });
+    expect(rpc.calls.map((call) => call.method)).toEqual(["messages.stats"]);
+  });
+
+  test("still rejects owner-absent, missing, or non-iMessage chat routing", async () => {
+    for (const stats of [
+      { chats: [{ chat_id: 42, service: "iMessage" }], sent_messages: 0 },
+      { chats: [{ chat_id: 42, service: "SMS" }], sent_messages: 1 },
+      { chats: [{ chat_id: 42 }], sent_messages: 1 },
+      { chats: [{ chat_id: 99, service: "iMessage" }], sent_messages: 1 },
+    ]) {
+      const rpc = new FakeRpc();
+      rpc.stats = stats;
+
+      expect(await new ImsgTransport(rpc).activationFor(messageWithoutService, "@helper")).toBeNull();
+      expect(rpc.calls.map((call) => call.method)).toEqual(["messages.stats"]);
+    }
+  });
+
+  test("surfaces routing lookup failures instead of treating them as ineligible", async () => {
+    const rpc = new FakeRpc();
+    rpc.stats = new Error("stats unavailable");
+
+    await expect(
+      new ImsgTransport(rpc).activationFor(messageWithoutService, "@helper"),
+    ).rejects.toThrow("stats unavailable");
+  });
+});
 
 describe("text delivery", () => {
   test("targets the originating chat and confirms only a GUID-bearing result", async () => {
@@ -115,7 +166,6 @@ test("watch filters activations and surfaces a resumable overflow cursor", async
       chat_id: 42,
       guid: "IN-1",
       id: 11,
-      service: "iMessage",
       text: "@helper continue",
     },
     subscription: 7,

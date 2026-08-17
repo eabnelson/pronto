@@ -27,8 +27,22 @@ export class ImsgTransport {
   }
 
   async ownerParticipated(chatId: number): Promise<boolean> {
+    return (await this.#chatEligibility(chatId)).ownerParticipated;
+  }
+
+  async #chatEligibility(chatId: number): Promise<{
+    ownerParticipated: boolean;
+    service: string | null;
+  }> {
     const result = object(await this.rpc.call("messages.stats", { chat_id: chatId }));
-    return typeof result.sent_messages === "number" && result.sent_messages > 0;
+    const chat = (Array.isArray(result.chats) ? result.chats : [])
+      .map(object)
+      .find((candidate) => candidate.chat_id === chatId);
+    return {
+      ownerParticipated:
+        typeof result.sent_messages === "number" && result.sent_messages > 0,
+      service: chat !== undefined && typeof chat.service === "string" ? chat.service : null,
+    };
   }
 
   async activationFor(raw: unknown, tag: string): Promise<ActivatedRequest | null> {
@@ -47,7 +61,19 @@ export class ImsgTransport {
     ) {
       return null;
     }
-    const candidate = activatedRequest(message, tag, true);
+    let candidate = activatedRequest(message, tag, true);
+    if (candidate === null && message.service === null) {
+      const potentialCandidate = activatedRequest({ ...message, service: "iMessage" }, tag, true);
+      if (potentialCandidate === null) return null;
+      const eligibility = await this.#chatEligibility(potentialCandidate.chatId);
+      if (
+        !eligibility.ownerParticipated ||
+        eligibility.service?.toLowerCase() !== "imessage"
+      ) {
+        return null;
+      }
+      return potentialCandidate;
+    }
     if (candidate === null) return null;
     return (await this.ownerParticipated(candidate.chatId)) ? candidate : null;
   }

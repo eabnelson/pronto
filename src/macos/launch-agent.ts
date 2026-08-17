@@ -10,6 +10,9 @@ export interface ProcessResult {
 
 export type LaunchctlRunner = (args: readonly string[]) => Promise<ProcessResult>;
 
+const BOOTOUT_POLL_INTERVAL_MS = 100;
+const BOOTOUT_POLL_ATTEMPTS = 50;
+
 export type LaunchAgentState = "running" | "loaded" | "stopped";
 
 export function parseLaunchAgentState(result: ProcessResult): LaunchAgentState {
@@ -77,14 +80,26 @@ export async function installLaunchAgent(input: {
   plistPath: string;
   runner?: LaunchctlRunner;
   uid?: number;
+  wait?: (milliseconds: number) => Promise<void>;
 }): Promise<void> {
   const runner = input.runner ?? runLaunchctl;
+  const wait = input.wait ?? Bun.sleep;
   const uid = input.uid ?? process.getuid?.();
   if (uid === undefined) throw new Error("Unable to determine the current user ID");
   const service = `gui/${uid}/${LAUNCH_AGENT_LABEL}`;
 
   await atomicWritePrivate(input.plistPath, input.plist);
   await runner(["bootout", service]);
+  for (let attempt = 0; attempt < BOOTOUT_POLL_ATTEMPTS; attempt += 1) {
+    const current = await runner(["print", service]);
+    if (current.exitCode !== 0) break;
+    if (attempt === BOOTOUT_POLL_ATTEMPTS - 1) {
+      throw new Error(
+        `launchctl bootout timed out while replacing ${LAUNCH_AGENT_LABEL}; run setup again`,
+      );
+    }
+    await wait(BOOTOUT_POLL_INTERVAL_MS);
+  }
   const bootstrap = await runner(["bootstrap", `gui/${uid}`, input.plistPath]);
   if (bootstrap.exitCode !== 0) {
     await unlink(input.plistPath).catch(() => undefined);
