@@ -10,13 +10,18 @@ create project folders per chat, select a model, or keep provider sessions alive
 
 ## Before installing
 
-The tag is not authentication. Every participant in an eligible chat can invoke
-your agent with that agent's normal noninteractive local permissions. The agent
-may read or modify files, run commands, use configured tools, and send conversation
+The tag is not authentication. Every current or future participant in an eligible chat can invoke
+your agent. `s4imsg` deliberately starts Claude Code and Codex with their approval
+and sandbox checks bypassed, so the agent can read or modify files, run commands,
+use configured tools anywhere your macOS user can access, and send conversation
 material to its model provider. Untagged chat history and attachment content are
 untrusted evidence, but can still influence the model. Only use `s4imsg` in chats
 whose participants you trust, and tell them that tagged and nearby conversation
 material may be processed by your model provider.
+
+The working folder is context, not containment. Project instructions, hooks, and
+MCP servers from a selected folder may also run with unrestricted access. Do not
+switch a chat into a repository you do not trust.
 
 ## Requirements
 
@@ -47,15 +52,26 @@ bun run src/cli.ts setup
 
 Setup asks for:
 
-1. A tag matching `@[A-Za-z0-9_-]{1,32}`; the default is `@s4`.
+1. A tag with or without the leading `@`; the default is `@s4`. The name must
+   contain 1-32 letters, numbers, underscores, or hyphens.
 2. A primary runtime when both Codex and Claude Code are installed.
 3. Whether to use the other runtime as a fallback.
-4. Explicit acceptance of the trust model above.
+4. A default working folder (`~/s4imsg` by default). Existing folders are never
+   cleared or chmodded and must be confirmed before reuse.
+5. Explicit typed acceptance of the unrestricted trust model above.
 
 Setup then performs one temporary noninteractive file-tool probe per selected
 runtime. This uses the runtime's existing account, default model, user
-configuration, hooks, tools, and permission policy. No model ID, sandbox mode, or
-approval-bypass mode is supplied by `s4imsg`.
+configuration, hooks, and tools. `s4imsg` supplies
+`--dangerously-skip-permissions` to Claude Code and
+`--dangerously-bypass-approvals-and-sandbox` to Codex so an unattended turn can
+never stall at an approval prompt.
+
+Each chat starts in the setup folder and remembers its own active folder. A tagged
+request such as `@s4 use /Users/me/Studio/my-project` switches that turn and, once
+the confirmation reply is delivered, future turns in that chat. If you describe a
+project without a path, the agent can offer numbered directory choices; reply with
+a number in the next tagged message to confirm one.
 
 After qualification, setup compiles a stable executable under
 `~/Library/Application Support/s4imsg/`, writes an owner-only configuration, and

@@ -32,7 +32,7 @@ export interface NdjsonRpcClientOptions {
 
 export class NdjsonRpcClient implements ImsgRpc {
   readonly terminated: Promise<void>;
-  readonly #child: Bun.Subprocess<"pipe", "pipe", "pipe">;
+  readonly #child: Bun.Subprocess<"pipe", "pipe", "ignore">;
   readonly #handlers = new Map<string, Set<NotificationHandler>>();
   readonly #pending = new Map<number, PendingRequest>();
   readonly #closeTimeoutMs: number;
@@ -51,7 +51,7 @@ export class NdjsonRpcClient implements ImsgRpc {
       this.#resolveTerminated = resolve;
     });
     this.#child = Bun.spawn([executablePath, "rpc"], {
-      stderr: "pipe",
+      stderr: "ignore",
       stdin: "pipe",
       stdout: "pipe",
     });

@@ -3,17 +3,20 @@
 import packageJson from "../package.json" with { type: "json" };
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import { loadConfig } from "./config";
 import { parseLaunchAgentState, stopLaunchAgent } from "./macos/launch-agent";
 import { pathsForHome } from "./macos/paths";
 import {
   TRUST_DISCLOSURE,
+  createWorkspaceDirectory,
   discoverCommands,
   inspectInstallation,
   installSetup,
+  loadExistingSetupDefaults,
   prepareSetupConfig,
+  resolveWorkspaceSelection,
   uninstallInstallation,
   runCommand,
 } from "./macos/setup";
@@ -38,7 +41,7 @@ Commands:
   status      Show listener health without conversation content
   doctor      Check local capabilities and permissions
   stop        Stop the installed listener
-  forget      Remove one chat's tagged memory
+  forget      Remove one chat's tagged memory and workspace state
   uninstall   Remove the listener while preserving data by default
 
 Options:
@@ -62,7 +65,8 @@ async function runSetup(): Promise<number> {
 
   const prompt = createInterface({ input: stdin, output: stdout });
   try {
-    const tag = (await prompt.question("Trigger tag [@s4]: ")).trim() || "@s4";
+    const tag =
+      (await prompt.question("Trigger tag (with or without @) [@s4]: ")).trim() || "@s4";
     const primaryAnswer =
       available.length === 1
         ? available[0]!
@@ -78,6 +82,36 @@ async function runSetup(): Promise<number> {
             .trim()
             .toLowerCase() === "y";
 
+    const paths = pathsForHome(homedir());
+    const existing = await loadExistingSetupDefaults(paths.configPath);
+    const defaultWorkspace = existing?.workingDirectory ?? join(homedir(), "s4imsg");
+    let workspacePrompt = `Default working folder [${defaultWorkspace}]: `;
+    let workspaceFallback = defaultWorkspace;
+    let selection;
+    while (true) {
+      const enteredPath = (await prompt.question(workspacePrompt)).trim();
+      if (enteredPath === "" && workspaceFallback === "") {
+        console.error("Enter a working folder path.");
+        continue;
+      }
+      const answer = enteredPath || workspaceFallback;
+      try {
+        selection = await resolveWorkspaceSelection(answer, homedir());
+      } catch (error) {
+        console.error((error as Error).message);
+        workspacePrompt = "Choose another working folder: ";
+        workspaceFallback = "";
+        continue;
+      }
+      if (!selection.exists) break;
+      const reuse = (await prompt.question(`Reuse existing folder ${selection.path}? [Y/n]: `))
+        .trim()
+        .toLowerCase();
+      if (reuse !== "n" && reuse !== "no") break;
+      workspacePrompt = "Choose another working folder: ";
+      workspaceFallback = "";
+    }
+
     console.log(`\n${TRUST_DISCLOSURE}\n`);
     const confirmed = (await prompt.question("Type yes to accept this trust model: "))
       .trim()
@@ -87,15 +121,18 @@ async function runSetup(): Promise<number> {
       return 1;
     }
 
-    const paths = pathsForHome(homedir());
+    const workingDirectory = selection.exists
+      ? selection.path
+      : await createWorkspaceDirectory(selection.path);
     const config = prepareSetupConfig({
+      ...(existing === null ? {} : { chatKeySalt: existing.chatKeySalt }),
       discovery,
       ...(wantsFallback && fallbackCandidate !== undefined
         ? { fallbackRuntime: fallbackCandidate }
         : {}),
       primaryRuntime: primaryAnswer,
       tag,
-      workingDirectory: homedir(),
+      workingDirectory,
     });
     const imsgRpc = new NdjsonRpcClient(discovery.imsgPath);
     try {
@@ -367,7 +404,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
     } finally {
       database.close();
     }
-    console.log("Tagged memory for the selected chat was removed.");
+    console.log("Tagged memory and workspace state for the selected chat were removed.");
     return 0;
   }
   if (command === "uninstall") return runUninstall(args.slice(1));

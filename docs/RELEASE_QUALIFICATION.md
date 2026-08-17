@@ -29,7 +29,9 @@ strings alone, determine whether setup and startup proceed.
 - `bun run release:validate`
 - Clean-room provenance and third-party notices present
 - No dependency or import from Studio Four packages
-- No model, sandbox, approval-bypass, or permission-mode override in adapters
+- No model override or inherited interactive permission mode in adapters
+- Exact unrestricted no-prompt flag present in each runtime adapter and required
+  by setup qualification
 - Synthetic duplicate, fallback, recovery, queue, privacy, and ambiguous-send
   cases pass against an on-disk SQLite database
 

@@ -22,7 +22,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:integration": "bun test ./test/integration",
-    "release:validate": "bun ./scripts/release-validate.ts"
+    "release:validate": "bun test ./test/unit/runtime-adapters.test.ts ./test/unit/runtime-qualification.test.ts && bun ./scripts/release-validate.ts"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",
