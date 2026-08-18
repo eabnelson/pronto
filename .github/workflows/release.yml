@@ -11,8 +11,14 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
+    permissions:
+      contents: read
+    outputs:
+      prerelease: ${{ steps.release-version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.14
@@ -23,10 +29,68 @@ jobs:
       - run: ./dist/s4imsg --version
       - run: ./dist/s4imsg --help
       - run: bun run release:validate
-      - run: shasum -a 256 dist/s4imsg > dist/s4imsg.sha256
+      - name: Verify tag matches package version
+        id: release-version
+        run: |
+          VERSION="$(bun -e 'import packageJson from "./package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
+          test "v$VERSION" = "$GITHUB_REF_NAME"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Verify owner qualification is complete
+        run: bun ./scripts/release-qualification.ts docs/RELEASE_QUALIFICATION.md "$GITHUB_REF_NAME"
+      - name: Create and verify checksum
+        working-directory: dist
+        run: |
+          shasum -a 256 s4imsg > s4imsg.sha256
+          shasum -a 256 -c s4imsg.sha256
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: s4imsg-macos
+          retention-days: 1
           path: |
             dist/s4imsg
             dist/s4imsg.sha256
+
+  publish:
+    needs: build
+    runs-on: macos-15
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      IS_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+    steps:
+      - name: Refuse to mutate an existing release
+        run: |
+          if gh api "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; releases and their assets are immutable."
+            echo "If a previous attempt left a draft, delete that draft explicitly before rerunning."
+            exit 1
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: s4imsg-macos
+          path: release-assets
+      - name: Verify downloaded checksum
+        working-directory: release-assets
+        run: shasum -a 256 -c s4imsg.sha256
+      - name: Create draft release
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag \
+            --prerelease="$IS_PRERELEASE" --title "s4imsg $GITHUB_REF_NAME"
+      - name: Upload and verify draft assets
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            release-assets/s4imsg release-assets/s4imsg.sha256
+
+          RELEASE_ID="$(gh api "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME" \
+            --jq 'select(.draft == true and ([.assets[].name] | sort == ["s4imsg", "s4imsg.sha256"])) | .id')"
+          test -n "$RELEASE_ID"
+      - name: Publish verified release
+        run: |
+          gh release edit "$GITHUB_REF_NAME" --draft=false
+          test "$(gh api "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME" --jq '.draft')" = "false"

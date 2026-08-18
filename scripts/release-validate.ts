@@ -25,6 +25,12 @@ const failures: string[] = [];
 
 if (packageJson.name !== "s4imsg") failures.push("package name must be s4imsg");
 if (packageJson.license !== "MIT") failures.push("package license must be MIT");
+if (packageJson.homepage !== "https://github.com/eabnelson/s4imsg#readme") {
+  failures.push("package homepage must point to the public repository");
+}
+if (packageJson.repository?.url !== "git+https://github.com/eabnelson/s4imsg.git") {
+  failures.push("package repository metadata is missing");
+}
 if ("private" in packageJson && packageJson.private === true) {
   failures.push("package must not be marked private");
 }
@@ -41,6 +47,10 @@ for (const required of [
   "docs/LIVE_SMOKE.md",
   "docs/RELEASE_QUALIFICATION.md",
   ".github/dependabot.yml",
+  ".github/ISSUE_TEMPLATE/bug_report.yml",
+  ".github/ISSUE_TEMPLATE/feature_request.yml",
+  ".github/ISSUE_TEMPLATE/config.yml",
+  ".github/PULL_REQUEST_TEMPLATE.md",
   ".github/workflows/ci.yml",
   ".github/workflows/release.yml",
 ]) {

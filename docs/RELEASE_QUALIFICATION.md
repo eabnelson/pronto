@@ -12,12 +12,14 @@ file records capability evidence, not private conversation data.
 | imsg | 0.14.1 | Protocol v1 initialize, database readiness, method qualification | Pass |
 | Codex CLI | 0.146.1 | Auth/help inspection and adapter fixtures | Pass |
 | Claude Code | 2.1.226 | Auth/help inspection and adapter fixtures | Pass |
-| Codex effective local probe | 0.146.1 | Existing configured MCP OAuth prevents turn startup | Blocked locally |
-| Claude effective local probe | 2.1.226 | Existing noninteractive policy denied temporary write | Blocked locally |
-| Messages Automation | Owner test chat | `docs/LIVE_SMOKE.md` | Pending |
-| Full tagged flow | Owner test chat | Core and multi-turn smoke | Pending |
+| Codex effective local probe | 0.146.1 | Setup noninteractive file-tool probe | Pass |
+| Claude effective local probe | 2.1.226 | Setup noninteractive file-tool probe | Pass |
+| Messages Automation | Owner self-chat, 2026-08-18 | Exactly one agent send; one expected mirrored display pair | Pass |
+| Self-chat mirror handling | Owner self-chat, 2026-08-18 | One tagged activation and one agent send | Pass |
+| Full remote tagged flow | Owner test chat | Remote-participant and multi-turn smoke | Pending |
 
-The matrix records versions tested on 2026-08-15. Capability checks, not version
+The automated matrix records versions tested on 2026-08-15 and the owner smoke
+evidence added on 2026-08-18. Capability checks, not version
 strings alone, determine whether setup and startup proceed.
 
 ## Automated release gates
@@ -38,6 +40,7 @@ strings alone, determine whether setup and startup proceed.
 ## Owner-only gate
 
 Run `docs/LIVE_SMOKE.md` after installing the exact release candidate. Replace
-the two Pending cells above with the date and Pass only after exactly-one reply,
-recent context, tagged continuity, restart suppression, and content-free logs are
-observed. Do not publish a GitHub release while either cell is Pending.
+the remaining Pending cell with the date and Pass only after a remote
+participant's exactly-one reply, recent context, tagged continuity, restart
+suppression, and content-free logs are observed. Do not publish a GitHub release
+while any cell is Pending or Blocked.
