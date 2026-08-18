@@ -184,8 +184,14 @@ async function createLandingPageHarness(options: {
   reducedMotion?: boolean;
 } = {}): Promise<LandingPageHarness> {
   const html = await read("index.html");
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
-  if (!script) throw new Error("landing page inline script not found");
+  const openMarker = "<script>";
+  const closeMarker = "</script>";
+  const scriptStart = html.indexOf(openMarker);
+  const scriptEnd = html.indexOf(closeMarker, scriptStart + openMarker.length);
+  if (scriptStart === -1 || scriptEnd <= scriptStart + openMarker.length) {
+    throw new Error("landing page inline script markers are missing or invalid");
+  }
+  const script = html.slice(scriptStart + openMarker.length, scriptEnd);
 
   const stream = new FakeElement();
   const copyButton = new FakeElement();
