@@ -8,8 +8,8 @@ provider and sends real iMessages; it is never run by CI.
 
 1. Confirm Messages is signed in and the owner has already sent a message in the
    test chat.
-2. Run setup and confirm it asks whether self-chat handling is needed, offers
-   `~/s4imsg`, asks before reusing an existing folder, and presents the
+2. Run setup and confirm it offers `~/s4imsg`, asks before reusing an existing
+   folder, and presents the
    unrestricted trust disclosure before the runtime probe.
 3. Confirm the probe completes without a Claude Code or Codex approval prompt.
 4. Run `~/Library/Application\ Support/s4imsg/bin/s4imsg doctor`. Resolve failed checks. A degraded
@@ -24,8 +24,7 @@ provider and sends real iMessages; it is never run by CI.
 
 ## Self-chat mirror handling
 
-1. Re-run setup, enable self-chat handling, and enter the same country-coded
-   phone number or email used as the destination of a Messages chat with yourself.
+1. Re-run setup; self-chat handling should require no question or address entry.
 2. Re-grant Full Disk Access if macOS treats the rebuilt executable as a new
    identity, then confirm `s4imsg status` reports `daemon ready`.
 3. Send one new tagged message to yourself and confirm the agent runs once and

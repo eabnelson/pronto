@@ -14,7 +14,6 @@ import {
   prepareSetupConfig,
   resolveWorkspaceSelection,
   uninstallInstallation,
-  usesSelfChatFromAnswer,
 } from "../../src/macos/setup";
 
 const temporaryDirectories: string[] = [];
@@ -26,14 +25,6 @@ afterEach(async () => {
 });
 
 describe("setup discovery", () => {
-  test("uses the displayed self-chat defaults on first setup and rerun", () => {
-    expect(usesSelfChatFromAnswer("", false)).toBeFalse();
-    expect(usesSelfChatFromAnswer("yes", false)).toBeTrue();
-    expect(usesSelfChatFromAnswer("", true)).toBeTrue();
-    expect(usesSelfChatFromAnswer("yep", true)).toBeTrue();
-    expect(usesSelfChatFromAnswer("no", true)).toBeFalse();
-  });
-
   test("accepts one runtime and records absolute command paths", () => {
     const commands = new Map([
       ["imsg", "/opt/homebrew/bin/imsg"],
@@ -49,7 +40,6 @@ describe("setup discovery", () => {
       prepareSetupConfig({
         discovery,
         primaryRuntime: "claude",
-        selfChatHandle: "tel:+1 (414) 555-1212",
         tag: "@Helper",
         workingDirectory: "/Users/example",
       }),
@@ -57,7 +47,6 @@ describe("setup discovery", () => {
       imsgPath: "/opt/homebrew/bin/imsg",
       primaryRuntime: "claude",
       primaryRuntimePath: "/Users/example/.local/bin/claude",
-      selfChatHandle: "+14145551212",
       tag: "@helper",
     });
   });
@@ -122,7 +111,6 @@ describe("setup discovery", () => {
     );
     expect(await loadExistingSetupDefaults(path)).toEqual({
       chatKeySalt: "s".repeat(32),
-      selfChatHandle: "erik@example.com",
       workingDirectory: "/Users/example/project",
     });
   });
@@ -143,8 +131,7 @@ describe("setup discovery", () => {
       path,
       JSON.stringify({
         chatKeySalt: "s".repeat(32),
-        selfChatHandle: "414-555-1212",
-        workingDirectory: "/Users/example/project",
+        workingDirectory: 42,
       }),
     );
     await expect(loadExistingSetupDefaults(path)).rejects.toThrow(
@@ -185,8 +172,6 @@ test("declining unrestricted consent creates no workspace or installation state"
   };
   await waitForPrompt("Trigger tag");
   child.stdin.write("\n");
-  await waitForPrompt("Use s4imsg in a chat with yourself?");
-  child.stdin.write("n\n");
   await waitForPrompt("Default working folder");
   child.stdin.write("\n");
   await waitForPrompt("Type yes to accept this trust model");

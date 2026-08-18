@@ -7,7 +7,6 @@ import {
   createConfig,
   ensurePrivateDirectory,
   loadConfig,
-  normalizeIMessageHandle,
   saveConfig,
   type RuntimeKind,
   type S4imsgConfig,
@@ -30,15 +29,7 @@ export interface WorkspaceSelection {
 
 export interface ExistingSetupDefaults {
   chatKeySalt: string;
-  selfChatHandle?: string;
   workingDirectory: string;
-}
-
-export function usesSelfChatFromAnswer(answer: string, hasExistingHandle: boolean): boolean {
-  const normalized = answer.trim().toLowerCase();
-  return hasExistingHandle
-    ? normalized !== "n" && normalized !== "no"
-    : normalized === "y" || normalized === "yes";
 }
 
 export async function loadExistingSetupDefaults(
@@ -53,7 +44,6 @@ export async function loadExistingSetupDefaults(
     if (
       typeof value.chatKeySalt !== "string" ||
       value.chatKeySalt.length < 32 ||
-      (value.selfChatHandle !== undefined && typeof value.selfChatHandle !== "string") ||
       typeof value.workingDirectory !== "string" ||
       !isAbsolute(value.workingDirectory)
     ) {
@@ -61,9 +51,6 @@ export async function loadExistingSetupDefaults(
     }
     return {
       chatKeySalt: value.chatKeySalt,
-      ...(typeof value.selfChatHandle === "string"
-        ? { selfChatHandle: normalizeIMessageHandle(value.selfChatHandle) }
-        : {}),
       workingDirectory: value.workingDirectory,
     };
   } catch (error) {
@@ -126,7 +113,6 @@ export function prepareSetupConfig(input: {
   discovery: CommandDiscovery;
   fallbackRuntime?: RuntimeKind;
   primaryRuntime: RuntimeKind;
-  selfChatHandle?: string;
   tag: string;
   workingDirectory: string;
 }): S4imsgConfig {
@@ -153,7 +139,6 @@ export function prepareSetupConfig(input: {
     ...(input.chatKeySalt === undefined ? {} : { chatKeySalt: input.chatKeySalt }),
     primaryRuntime: input.primaryRuntime,
     primaryRuntimePath,
-    ...(input.selfChatHandle === undefined ? {} : { selfChatHandle: input.selfChatHandle }),
     tag: input.tag,
     unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
     workingDirectory: input.workingDirectory,
