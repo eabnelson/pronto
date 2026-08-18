@@ -13,6 +13,7 @@ import {
   loadExistingSetupDefaults,
   prepareSetupConfig,
   resolveWorkspaceSelection,
+  setupCompletionMessage,
   uninstallInstallation,
 } from "../../src/macos/setup";
 
@@ -25,6 +26,37 @@ afterEach(async () => {
 });
 
 describe("setup discovery", () => {
+  test("gives copy-safe post-install permission and verification steps", () => {
+    const message = setupCompletionMessage(
+      {
+        executablePath: "/Users/example/Library/Application Support/s4imsg/bin/s4imsg",
+      },
+      "@helper",
+    );
+
+    expect(message).toContain("s4imsg installed");
+    expect(message).toContain("Full Disk Access");
+    expect(message).toContain("remove and re-add");
+    expect(message).toContain(
+      "'/Users/example/Library/Application Support/s4imsg/bin/s4imsg' doctor",
+    );
+    expect(message).toContain(
+      "'/Users/example/Library/Application Support/s4imsg/bin/s4imsg' status",
+    );
+    expect(message).toContain("@helper ping");
+  });
+
+  test("shell-quotes an installed path containing an apostrophe", () => {
+    const message = setupCompletionMessage(
+      { executablePath: "/Users/O'Neil/Library/Application Support/s4imsg/bin/s4imsg" },
+      "@helper",
+    );
+
+    expect(message).toContain(
+      "'/Users/O'\\''Neil/Library/Application Support/s4imsg/bin/s4imsg' doctor",
+    );
+  });
+
   test("accepts one runtime and records absolute command paths", () => {
     const commands = new Map([
       ["imsg", "/opt/homebrew/bin/imsg"],

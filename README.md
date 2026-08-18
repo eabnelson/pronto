@@ -1,5 +1,8 @@
 # s4imsg
 
+[![CI](https://github.com/eabnelson/s4imsg/actions/workflows/ci.yml/badge.svg)](https://github.com/eabnelson/s4imsg/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 `s4imsg` is a small, local macOS bridge between iMessage and the Codex or Claude
 Code CLI. Pick a tag such as `@helper`; when anyone uses it in an iMessage chat
 you have already participated in, the bridge gives one bounded, one-shot turn to
@@ -31,24 +34,26 @@ switch a chat into a repository you do not trust.
 - At least one authenticated [Codex CLI](https://github.com/openai/codex) or
   [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/getting-started)
 
-Install `imsg` with its recommended Homebrew tap:
+## Quick start
+
+Install Bun and `imsg` if you do not already have them, then clone and run setup:
 
 ```sh
-brew install steipete/tap/imsg
+brew install oven-sh/bun/bun steipete/tap/imsg
+git clone https://github.com/eabnelson/s4imsg.git
+cd s4imsg
+bun install --frozen-lockfile
+bun run setup
 ```
+
+Codex or Claude Code must already be installed and signed in before `bun run
+setup`. Setup automatically detects both CLIs, lets you choose the primary and
+optional fallback, and validates that every selected runtime can complete an
+unattended tool call before installing anything.
 
 The ordinary `imsg` read, watch, and text-send path is sufficient. `s4imsg` does
 not require disabling System Integrity Protection or enabling `imsg`'s private
 IMCore bridge.
-
-## Install from source
-
-Clone this repository, then run:
-
-```sh
-bun install --frozen-lockfile
-bun run src/cli.ts setup
-```
 
 Setup asks for:
 
@@ -75,7 +80,8 @@ a number in the next tagged message to confirm one.
 
 After qualification, setup compiles a stable executable under
 `~/Library/Application Support/s4imsg/`, writes an owner-only configuration, and
-installs the `dev.s4imsg.agent` user LaunchAgent.
+installs the `dev.s4imsg.agent` user LaunchAgent. It finishes by printing the
+exact permission, `doctor`, and `status` steps for that Mac.
 
 ## macOS permissions
 
@@ -91,12 +97,15 @@ In System Settings → Privacy & Security:
 After installation, run:
 
 ```sh
-~/Library/Application\ Support/s4imsg/bin/s4imsg doctor
+S4IMSG="$HOME/Library/Application Support/s4imsg/bin/s4imsg"
+"$S4IMSG" doctor
+"$S4IMSG" status
 ```
 
-`doctor` performs real read/watch and runtime probes. It cannot test Messages
-Automation without sending a message, so complete the
-[live test-chat checklist](docs/LIVE_SMOKE.md) once.
+Wait for `doctor` to finish; its runtime probes can take around a minute. A
+healthy listener reports `listener running`, `database ready`, and `daemon
+ready`. `doctor` cannot test Messages Automation without sending a message, so
+complete the [live test-chat checklist](docs/LIVE_SMOKE.md) once.
 
 ## Use
 
@@ -129,13 +138,14 @@ attachment metadata, and tool results are not archived by `s4imsg`.
 ## Operations
 
 ```sh
-~/Library/Application\ Support/s4imsg/bin/s4imsg status
-~/Library/Application\ Support/s4imsg/bin/s4imsg status --chats
-~/Library/Application\ Support/s4imsg/bin/s4imsg doctor
-~/Library/Application\ Support/s4imsg/bin/s4imsg stop
-~/Library/Application\ Support/s4imsg/bin/s4imsg forget <opaque-chat-key>
-~/Library/Application\ Support/s4imsg/bin/s4imsg uninstall
-~/Library/Application\ Support/s4imsg/bin/s4imsg uninstall --purge --confirm-purge
+S4IMSG="$HOME/Library/Application Support/s4imsg/bin/s4imsg"
+"$S4IMSG" status
+"$S4IMSG" status --chats
+"$S4IMSG" doctor
+"$S4IMSG" stop
+"$S4IMSG" forget <opaque-chat-key>
+"$S4IMSG" uninstall
+"$S4IMSG" uninstall --purge --confirm-purge
 ```
 
 `status` reports only operational counts, including silently rate-limited events,
@@ -163,6 +173,43 @@ bun run src/cli.ts setup
 Setup replaces the stable executable atomically and preserves configuration and
 bounded memory. macOS may treat the replacement as a new privacy identity; run
 `doctor` again and toggle stale Full Disk Access entries off and on if needed.
+
+## Troubleshooting
+
+### `daemon failed` immediately after setup
+
+macOS can retain the permission record for a previous build while denying the
+new executable. In Full Disk Access, remove the existing `s4imsg` entry, add the
+exact installed executable again, and enable it. Press Command-Shift-G in the
+file picker and paste:
+
+```text
+~/Library/Application Support/s4imsg/bin/s4imsg
+```
+
+Then restart and check the service:
+
+```sh
+/bin/launchctl kickstart -k "gui/$(id -u)/dev.s4imsg.agent"
+sleep 3
+"$HOME/Library/Application Support/s4imsg/bin/s4imsg" status
+```
+
+### No reply arrives
+
+- Confirm the message is iMessage, not SMS or RCS.
+- Confirm this Mac owner previously sent a message in that chat.
+- Run `doctor` and resolve every failed check; degraded
+  `messages-send-automation` is expected until the first real send.
+- Open Messages once and approve its Automation prompt if macOS presents one.
+- Check `~/Library/Logs/s4imsg/daemon.log`; logs contain operational states, not
+  conversation content.
+
+### A self-chat appears duplicated
+
+Messages displays one self-chat message as an incoming and outgoing pair. That
+pair is expected. Two reply pairs indicate two agent sends and should be
+reported as a bug.
 
 ## Development
 
