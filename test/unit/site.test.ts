@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 
 const repoRoot = new URL("../../", import.meta.url);
 const siteRoot = new URL("site/", repoRoot);
@@ -167,6 +168,11 @@ class FakeWindow {
     const next = this.timers.entries().next().value as [number, () => void] | undefined;
     if (!next) throw new Error("expected a scheduled timer");
     const [timer, callback] = next;
+    this.runTimer(timer, callback);
+  }
+
+  runTimer(timer: number, callback = this.timers.get(timer)): void {
+    if (!callback) throw new Error(`expected timer ${timer}`);
     this.timers.delete(timer);
     callback();
   }
@@ -198,7 +204,7 @@ async function createLandingPageHarness(options: {
   const stream = new FakeElement();
   const copyButton = new FakeElement();
   copyButton.href = "https://example.test/setup.md";
-  copyButton.textContent = "Help me set up";
+  copyButton.textContent = "Help me get set up";
   const document = new FakeDocument(stream, copyButton);
   const window = new FakeWindow(options.reducedMotion);
   const copiedText: string[] = [];
@@ -249,11 +255,47 @@ describe("public landing page", () => {
     expect(html).toContain("iMessage Codex or Claude from any conversation");
     expect(html).toContain('id="copy-prompt"');
     expect(html).toContain('href="./setup.md"');
-    expect(html).toContain(">Help me set up</a>");
+    expect(html).toContain(">Help me get set up</a>");
     expect(html).toContain("https://eabnelson.github.io/s4imsg/setup.md");
     expect(html).toContain("overflow-x: hidden");
     expect(html).toContain("overflow-y: auto");
     expect(html).not.toContain('class="mark"');
+  });
+
+  test("publishes a bubble-only social preview", async () => {
+    const html = await read("index.html");
+    const source = await read("og-image.svg");
+    const sourceBytes = new Uint8Array(
+      await Bun.file(new URL("og-image.svg", siteRoot)).arrayBuffer(),
+    );
+    const png = new Uint8Array(await Bun.file(new URL("og-image.png", siteRoot)).arrayBuffer());
+    const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+
+    expect(html).toContain(
+      '<meta property="og:image" content="https://eabnelson.github.io/s4imsg/og-image.png">',
+    );
+    expect(html).toContain('<meta property="og:image:width" content="1200">');
+    expect(html).toContain('<meta property="og:image:height" content="630">');
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
+    expect(html).toContain(
+      '<meta name="twitter:image" content="https://eabnelson.github.io/s4imsg/og-image.png">',
+    );
+    expect(source).toContain('viewBox="0 0 1200 630"');
+    expect(source).toContain("@codex");
+    expect(source).toContain("@claude");
+    expect(source).toContain("@plan");
+    expect(source).toContain("#0a84ff");
+    expect(source).toContain("#e5e5ea");
+    expect(source).not.toContain(">s4imsg<");
+    expect(createHash("sha256").update(sourceBytes).digest("hex")).toBe(
+      "7d3642d252cbf645f065dc39ef896d3329086548056fe7f2009b31fc4b05945b",
+    );
+    expect(createHash("sha256").update(png).digest("hex")).toBe(
+      "35c89432a4d86da90db84ba2600d3724e35f58f41dc7fae26456421e4fc7daaa",
+    );
+    expect([...png.slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    expect(view.getUint32(16)).toBe(1200);
+    expect(view.getUint32(20)).toBe(630);
   });
 
   test("uses Contact's send animation before the rising fade", async () => {
@@ -279,7 +321,7 @@ describe("public landing page", () => {
     expect(html).not.toContain(".bubble.outgoing::after");
   });
 
-  test("copies the exact setup prompt and shows its copied state", async () => {
+  test("copies the exact setup prompt and restores the setup label", async () => {
     const harness = await createLandingPageHarness();
 
     await harness.copyButton.dispatch("click");
@@ -288,6 +330,12 @@ describe("public landing page", () => {
     expect(harness.copyButton.textContent).toBe("Copied prompt");
     expect(harness.copyButton.dataset.copied).toBe("true");
     expect(harness.window.assignedLocations).toEqual([]);
+
+    const resetTimer = Math.max(...harness.window.timers.keys());
+    harness.window.runTimer(resetTimer);
+
+    expect(harness.copyButton.textContent).toBe("Help me get set up");
+    expect(harness.copyButton.dataset.copied).toBeUndefined();
   });
 
   test("opens the setup guide and clears copied state when clipboard access fails", async () => {

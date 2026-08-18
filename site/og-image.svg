@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <filter id="shadow" x="-20%" y="-40%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="9" stdDeviation="12" flood-color="#000000" flood-opacity="0.13"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="630" fill="#f5f5f7"/>
+
+  <g transform="translate(-36 22) rotate(-5 180 37)" filter="url(#shadow)">
+    <rect width="360" height="74" rx="37" fill="#e5e5ea"/>
+    <text x="180" y="47" fill="#1d1d1f" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="29" font-weight="600">@plan map our weekend</text>
+  </g>
+  <g transform="translate(366 38) rotate(4 206 37)" filter="url(#shadow)">
+    <rect width="412" height="74" rx="37" fill="#0a84ff"/>
+    <text x="206" y="47" fill="#ffffff" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="29" font-weight="600">@codex ship this</text>
+  </g>
+  <g transform="translate(826 -2) rotate(-3 205 37)" filter="url(#shadow)">
+    <rect width="410" height="74" rx="37" fill="#e5e5ea"/>
+    <text x="205" y="47" fill="#1d1d1f" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="600">@read pull out action items</text>
+  </g>
+
+  <g transform="translate(26 162) rotate(3 221 37)" filter="url(#shadow)">
+    <rect width="442" height="74" rx="37" fill="#0a84ff"/>
+    <text x="221" y="47" fill="#ffffff" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="600">@claude summarize the thread</text>
+  </g>
+  <g transform="translate(506 186) rotate(-5 188 37)" filter="url(#shadow)">
+    <rect width="376" height="74" rx="37" fill="#e5e5ea"/>
+    <text x="188" y="47" fill="#1d1d1f" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="600">@design make it simpler</text>
+  </g>
+  <g transform="translate(925 142) rotate(6 177 37)" filter="url(#shadow)">
+    <rect width="354" height="74" rx="37" fill="#0a84ff"/>
+    <text x="177" y="47" fill="#ffffff" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="27" font-weight="600">@dinner find a spot nearby</text>
+  </g>
+
+  <g transform="translate(-64 315) rotate(5 225 37)" filter="url(#shadow)">
+    <rect width="450" height="74" rx="37" fill="#e5e5ea"/>
+    <text x="225" y="47" fill="#1d1d1f" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="600">@research compare these</text>
+  </g>
+  <g transform="translate(410 306) rotate(-2 224 37)" filter="url(#shadow)">
+    <rect width="448" height="74" rx="37" fill="#0a84ff"/>
+    <text x="224" y="47" fill="#ffffff" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="600">@build fix the failing test</text>
+  </g>
+  <g transform="translate(897 326) rotate(-6 185 37)" filter="url(#shadow)">
+    <rect width="370" height="74" rx="37" fill="#e5e5ea"/>
+    <text x="185" y="47" fill="#1d1d1f" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="27" font-weight="600">@learn explain this simply</text>
+  </g>
+
+  <g transform="translate(12 484) rotate(-4 207 37)" filter="url(#shadow)">
+    <rect width="414" height="74" rx="37" fill="#0a84ff"/>
+    <text x="207" y="47" fill="#ffffff" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="27" font-weight="600">@travel three days in Tokyo</text>
+  </g>
+  <g transform="translate(454 468) rotate(5 196 37)" filter="url(#shadow)">
+    <rect width="392" height="74" rx="37" fill="#e5e5ea"/>
+    <text x="196" y="47" fill="#1d1d1f" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="27" font-weight="600">@coach make me a workout</text>
+  </g>
+  <g transform="translate(870 492) rotate(-3 197 37)" filter="url(#shadow)">
+    <rect width="394" height="74" rx="37" fill="#0a84ff"/>
+    <text x="197" y="47" fill="#ffffff" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="600">@ship draft the launch post</text>
+  </g>
+</svg>
