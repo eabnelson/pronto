@@ -1,0 +1,119 @@
+# Set up s4imsg for me
+
+You are my setup agent. Help me install and verify **s4imsg**, the local macOS bridge that lets an iMessage tag invoke Codex or Claude Code.
+
+Repository: <https://github.com/eabnelson/s4imsg>
+
+Work interactively and stay with me until one tagged iMessage gets exactly one agent reply. Explain what you are checking, run the terminal steps you can run, and pause only when I must choose an option or change a macOS setting.
+
+## Safety rules
+
+- This works only on macOS with Messages signed in to iMessage.
+- Do not use `sudo`, disable System Integrity Protection, or enable a private IMCore bridge.
+- Do not type `yes` for me at the trust-model prompt. Show me the warning, let me read it, and ask me to type my own answer.
+- Never paste or record real message text, phone numbers, email addresses, chat identifiers, attachment paths, credentials, or provider output.
+- Do not weaken the repository's permission, privacy, or release checks.
+
+## Walk me through this
+
+1. Check the prerequisites without changing anything:
+
+   ```sh
+   sw_vers
+   git --version
+   bun --version
+   imsg --version
+   codex --version
+   claude --version
+   ```
+
+   I need Bun 1.3.14 or newer, `imsg` 0.14 or a capability-compatible version, and at least one authenticated Codex CLI or Claude Code CLI. A missing optional runtime is fine. If Bun or `imsg` is missing and Homebrew is installed, offer:
+
+   ```sh
+   brew install oven-sh/bun/bun steipete/tap/imsg
+   ```
+
+   If neither Codex nor Claude Code is installed and authenticated, stop and help me install and sign in to the one I choose before continuing.
+
+2. Ask where I want the source checkout. Suggest `~/Developer/s4imsg`, resolve my answer to an absolute path, and use that exact path as `CHECKOUT`. Never leave the example value below unchanged.
+
+   If the chosen path does not exist or is an empty directory, create a new checkout. Run this as one shell call after replacing the first value with the absolute path I chose:
+
+   ```sh
+   CHECKOUT="/absolute/path/I/chose"
+   git clone https://github.com/eabnelson/s4imsg.git "$CHECKOUT"
+   cd "$CHECKOUT"
+   ```
+
+   If the chosen path already contains files, do not overwrite it. Reuse it only when it is a Git checkout whose origin is exactly `https://github.com/eabnelson/s4imsg.git` or `git@github.com:eabnelson/s4imsg.git` and whose worktree is clean. Run these checks and the update as one shell call after replacing the first value with the absolute path I chose:
+
+   ```sh
+   CHECKOUT="/absolute/path/I/chose"
+   cd "$CHECKOUT" || exit 1
+   ORIGIN="$(git remote get-url origin)" || exit 1
+   case "$ORIGIN" in
+     https://github.com/eabnelson/s4imsg.git|git@github.com:eabnelson/s4imsg.git) ;;
+     *) echo "Stop: the existing checkout does not have the official s4imsg origin." >&2; exit 1 ;;
+   esac
+   if [ -n "$(git status --porcelain)" ]; then
+     echo "Stop: the existing checkout has local changes." >&2
+     exit 1
+   fi
+   git pull --ff-only
+   ```
+
+   If any guard fails, stop and ask me to choose a fresh, empty directory. Only after the new clone or guarded update succeeds, install dependencies from the chosen checkout in one shell call:
+
+   ```sh
+   CHECKOUT="/absolute/path/I/chose"
+   cd "$CHECKOUT" || exit 1
+   bun install --frozen-lockfile
+   ```
+
+3. Before running setup, guide me to **System Settings → Privacy & Security → Full Disk Access** and have me enable the terminal or parent app that will run setup. This access is required for setup to inspect the local Messages database. Then start the interactive setup from the chosen checkout:
+
+   ```sh
+   CHECKOUT="/absolute/path/I/chose"
+   cd "$CHECKOUT" || exit 1
+   bun run src/cli.ts setup
+   ```
+
+   Help me choose:
+
+   - a trigger tag, with or without `@`;
+   - a primary runtime;
+   - an optional fallback runtime;
+   - a default working folder, normally `~/s4imsg`.
+
+   Explain that the working folder is context, not a security boundary. At the trust-model prompt, stop and let me personally decide whether to type `yes`.
+
+4. When setup finishes, guide me to **System Settings → Privacy & Security → Full Disk Access**. I must add and enable this exact installed executable:
+
+   ```text
+   ~/Library/Application Support/s4imsg/bin/s4imsg
+   ```
+
+   If a stale s4imsg entry already exists, have me remove it and add the exact file again. Messages may also ask me to approve Automation on the first real reply.
+
+5. Run the installed diagnostics with a safely quoted path and wait for the runtime probes to finish:
+
+   ```sh
+   S4IMSG="$HOME/Library/Application Support/s4imsg/bin/s4imsg"
+   "$S4IMSG" doctor
+   "$S4IMSG" status
+   ```
+
+   A healthy service reports `listener running`, `database ready`, and `daemon ready`. Resolve failed checks before continuing. A send-automation check may stay degraded until the first real reply.
+
+6. Ask me to send `<my-tag> ping` in an iMessage conversation where this Mac owner has already sent at least one message. Confirm that exactly one agent reply arrives. In a self-chat, Messages may display each single send as an incoming/outgoing mirrored pair; that is one send, not a duplicate.
+
+7. Run the final status check with its executable assigned in the same shell call:
+
+   ```sh
+   S4IMSG="$HOME/Library/Application Support/s4imsg/bin/s4imsg"
+   "$S4IMSG" status
+   ```
+
+   Finish with a short summary of my tag, primary and fallback runtimes, default working folder, installed executable, and whether the listener, database, and daemon are ready. Do not include conversation or participant data.
+
+If anything fails, use the repository's `README.md`, `SECURITY.md`, and `docs/LIVE_SMOKE.md` as the source of truth and keep troubleshooting with me.
