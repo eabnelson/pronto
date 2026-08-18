@@ -5,6 +5,8 @@ export interface NormalizedMessage {
   isFromMe: boolean;
   kind: "message" | "reaction" | "poll" | "unknown";
   providerGuid: string | null;
+  replyToGuid: string | null;
+  replyToText: string | null;
   rowId: number | null;
   sender: string | null;
   service: string | null;
@@ -35,10 +37,20 @@ export function normalizeMessage(value: unknown): NormalizedMessage {
       typeof raw.chat_id === "number" && Number.isSafeInteger(raw.chat_id) && raw.chat_id > 0
         ? raw.chat_id
         : null,
-    date: typeof raw.date === "string" ? raw.date : null,
+    date:
+      typeof raw.date === "string"
+        ? raw.date
+        : typeof raw.created_at === "string"
+          ? raw.created_at
+          : null,
     isFromMe: raw.is_from_me === true,
     kind,
     providerGuid: typeof raw.guid === "string" && raw.guid.length > 0 ? raw.guid : null,
+    replyToGuid:
+      typeof raw.reply_to_guid === "string" && raw.reply_to_guid.length > 0
+        ? raw.reply_to_guid
+        : null,
+    replyToText: typeof raw.reply_to_text === "string" ? raw.reply_to_text : null,
     rowId:
       typeof raw.id === "number" && Number.isSafeInteger(raw.id) && raw.id > 0
         ? raw.id

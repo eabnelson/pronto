@@ -114,6 +114,13 @@ metadata from the current chat during an active turn. Attachment bytes are never
 copied into bridge storage; a verified local attachment path may be returned so
 the agent can inspect it with its normal file tools.
 
+Messages sent to your own iMessage address appear in the local database as both
+an outgoing message and an inbound mirror. `s4imsg` automatically correlates the
+inbound mirror with its immediately preceding outgoing message and accepts only
+the outgoing copy. This requires no identity setting and stores no iMessage
+address. Ordinary one-to-one and group chats still accept tags from every
+participant.
+
 Each turn automatically includes at most 30 recent messages, 8 confirmed tagged
 exchanges, and one compact summary, all under fixed character budgets. Provider
 sessions are never resumed. Ordinary chat messages, participant rosters,

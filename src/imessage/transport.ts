@@ -15,10 +15,58 @@ function object(value: unknown): Record<string, unknown> {
     : {};
 }
 
+interface ChatEligibility {
+  ownerParticipated: boolean;
+  service: string | null;
+}
+
+function messageDateMs(value: string | null): number | null {
+  if (value === null) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isMirrorPair(message: NormalizedMessage, original: NormalizedMessage): boolean {
+  if (
+    message.chatId === null ||
+    message.rowId === null ||
+    message.text === null ||
+    original.chatId !== message.chatId ||
+    original.rowId === null ||
+    !original.isFromMe ||
+    original.text !== message.text
+  ) {
+    return false;
+  }
+  const rowDistance = message.rowId - original.rowId;
+  if (rowDistance < 1) return false;
+  const messageTime = messageDateMs(message.date);
+  const originalTime = messageDateMs(original.date);
+  return (
+    messageTime !== null &&
+    originalTime !== null &&
+    messageTime <= originalTime &&
+    originalTime - messageTime <= 1_000
+  );
+}
+
+function isCorrelatedMirror(message: NormalizedMessage, original: NormalizedMessage): boolean {
+  return (
+    message.replyToGuid !== null &&
+    message.replyToText === message.text &&
+    original.providerGuid === message.replyToGuid &&
+    isMirrorPair(message, original)
+  );
+}
+
 export class ImsgTransport {
+  readonly #recentOutgoing = new Map<string, NormalizedMessage>();
+
   constructor(
     readonly rpc: ImsgRpc,
-    readonly echoTracker?: { matches(chatId: number, text: string): boolean },
+    readonly options: {
+      matchesOutboundEcho?: (chatId: number, text: string) => boolean;
+    } = {},
   ) {}
 
   async qualify(): Promise<QualifiedImsg> {
@@ -30,10 +78,7 @@ export class ImsgTransport {
     return (await this.#chatEligibility(chatId)).ownerParticipated;
   }
 
-  async #chatEligibility(chatId: number): Promise<{
-    ownerParticipated: boolean;
-    service: string | null;
-  }> {
+  async #chatEligibility(chatId: number): Promise<ChatEligibility> {
     const result = object(await this.rpc.call("messages.stats", { chat_id: chatId }));
     const chat = (Array.isArray(result.chats) ? result.chats : [])
       .map(object)
@@ -53,29 +98,94 @@ export class ImsgTransport {
     message: NormalizedMessage,
     tag: string,
   ): Promise<ActivatedRequest | null> {
+    this.#rememberOutgoing(message);
     if (
       message.isFromMe &&
       message.chatId !== null &&
       message.text !== null &&
-      this.echoTracker?.matches(message.chatId, message.text) === true
+      this.options.matchesOutboundEcho?.(message.chatId, message.text) === true
     ) {
       return null;
     }
     let candidate = activatedRequest(message, tag, true);
+    let eligibility: ChatEligibility | null = null;
     if (candidate === null && message.service === null) {
       const potentialCandidate = activatedRequest({ ...message, service: "iMessage" }, tag, true);
       if (potentialCandidate === null) return null;
-      const eligibility = await this.#chatEligibility(potentialCandidate.chatId);
+      eligibility = await this.#chatEligibility(potentialCandidate.chatId);
       if (
         !eligibility.ownerParticipated ||
         eligibility.service?.toLowerCase() !== "imessage"
       ) {
         return null;
       }
-      return potentialCandidate;
+      candidate = potentialCandidate;
     }
     if (candidate === null) return null;
-    return (await this.ownerParticipated(candidate.chatId)) ? candidate : null;
+    eligibility ??= await this.#chatEligibility(candidate.chatId);
+    if (!eligibility.ownerParticipated) return null;
+    if (await this.#isSelfChatMirror(message)) return null;
+    return candidate;
+  }
+
+  async #isSelfChatMirror(message: NormalizedMessage): Promise<boolean> {
+    if (
+      message.isFromMe ||
+      message.chatId === null ||
+      message.rowId === null ||
+      message.text === null
+    ) {
+      return false;
+    }
+    for (const cached of this.#recentOutgoing.values()) {
+      if (isMirrorPair(message, cached)) return true;
+    }
+    const hasReplyLink = message.replyToGuid !== null && message.replyToText === message.text;
+    try {
+      const nearby = await this.#messagesNear(message.rowId);
+      return nearby.some((raw) => {
+        const original = normalizeMessage(raw);
+        return hasReplyLink
+          ? isCorrelatedMirror(message, original)
+          : isMirrorPair(message, original);
+      });
+    } catch {
+      if (!hasReplyLink) return false;
+      // Re-running an unrestricted agent is riskier than dropping this narrowly
+      // mirror-shaped event when restart-boundary correlation is unavailable.
+      console.error(
+        JSON.stringify({ component: "imsg-transport", state: "mirror-correlation-unavailable" }),
+      );
+      return true;
+    }
+  }
+
+  async #messagesNear(rowId: number): Promise<unknown[]> {
+    const result = object(
+      await this.rpc.call("messages.after", {
+        attachments: false,
+        include_reactions: true,
+        limit: 100,
+        since_rowid: Math.max(0, rowId - 101),
+      }),
+    );
+    return Array.isArray(result.messages) ? result.messages : [];
+  }
+
+  #outgoingKey(chatId: number, guid: string): string {
+    return `${chatId}:${guid}`;
+  }
+
+  #rememberOutgoing(message: NormalizedMessage): void {
+    if (!message.isFromMe || message.chatId === null || message.providerGuid === null) return;
+    const key = this.#outgoingKey(message.chatId, message.providerGuid);
+    this.#recentOutgoing.delete(key);
+    this.#recentOutgoing.set(key, message);
+    while (this.#recentOutgoing.size > 64) {
+      const oldest = this.#recentOutgoing.keys().next().value;
+      if (oldest === undefined) break;
+      this.#recentOutgoing.delete(oldest);
+    }
   }
 
   async recentMessages(chatId: number, limit = 30): Promise<unknown[]> {

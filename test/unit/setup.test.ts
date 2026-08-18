@@ -105,6 +105,7 @@ describe("setup discovery", () => {
       path,
       JSON.stringify({
         chatKeySalt: "s".repeat(32),
+        selfChatHandle: "erik@example.com",
         workingDirectory: "/Users/example/project",
       }),
     );
@@ -123,6 +124,16 @@ describe("setup discovery", () => {
       "Unable to preserve existing setup defaults",
     );
     await writeFile(path, "null");
+    await expect(loadExistingSetupDefaults(path)).rejects.toThrow(
+      "Unable to preserve existing setup defaults",
+    );
+    await writeFile(
+      path,
+      JSON.stringify({
+        chatKeySalt: "s".repeat(32),
+        workingDirectory: 42,
+      }),
+    );
     await expect(loadExistingSetupDefaults(path)).rejects.toThrow(
       "Unable to preserve existing setup defaults",
     );

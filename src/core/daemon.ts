@@ -37,7 +37,7 @@ export class S4imsgDaemon {
     const journal = new DeliveryJournal(database);
     const rpc = new NdjsonRpcClient(this.config.imsgPath);
     const transport = new ImsgTransport(rpc, {
-      matches: (chatId, text) => journal.matchesOutboundEcho(chatId, text),
+      matchesOutboundEcho: (chatId, text) => journal.matchesOutboundEcho(chatId, text),
     });
     const broker = new ConversationBroker(new ImsgCurrentChatSource(rpc));
     let brokerServer: ReturnType<ConversationBroker["listen"]> | null = null;

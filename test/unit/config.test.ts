@@ -65,6 +65,24 @@ describe("configuration persistence", () => {
     expect((await lstat(join(directory, "nested"))).mode & 0o777).toBe(0o700);
   });
 
+  test("ignores the removed manual self-chat field in an existing configuration", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "config.json");
+    await Bun.write(path, JSON.stringify({
+      version: 1,
+      chatKeySalt: "x".repeat(32),
+      imsgPath: "/usr/local/bin/imsg",
+      primaryRuntime: "codex",
+      selfChatHandle: 42,
+      tag: "@helper",
+      unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+      workingDirectory: "/Users/example",
+    }));
+
+    expect(await loadConfig(path)).not.toHaveProperty("selfChatHandle");
+  });
+
   test("rejects legacy configuration without unrestricted access consent", async () => {
     const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
     temporaryDirectories.push(directory);
