@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-const siteRoot = new URL("../../site/", import.meta.url);
+const repoRoot = new URL("../../", import.meta.url);
+const siteRoot = new URL("site/", repoRoot);
 const setupPrompt = "Help me set up s4imsg: https://eabnelson.github.io/s4imsg/setup.md";
 
 async function read(name: string): Promise<string> {
@@ -223,6 +224,24 @@ async function createLandingPageHarness(options: {
 }
 
 describe("public landing page", () => {
+  test("deploys the site directory to GitHub Pages from main", async () => {
+    const workflow = await Bun.file(
+      new URL(".github/workflows/pages.yml", repoRoot),
+    ).text();
+
+    expect(workflow).toContain("branches: [main]");
+    expect(workflow).toContain("pages: write");
+    expect(workflow).toContain("id-token: write");
+    expect(workflow).toContain("contents: read");
+    expect(workflow).not.toContain("contents: write");
+    expect(workflow).toContain("name: github-pages");
+    expect(workflow).toMatch(/^\s+path: site$/m);
+    expect(workflow).toContain("needs: verify");
+    expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
+    expect(workflow).toContain("actions/upload-pages-artifact@");
+    expect(workflow).toContain("actions/deploy-pages@");
+  });
+
   test("keeps the hero minimal and points to the setup prompt", async () => {
     const html = await read("index.html");
 

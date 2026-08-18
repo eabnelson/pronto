@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import packageJson from "../package.json" with { type: "json" };
+import { mutableActionReferences } from "./workflow-validation";
 
 const root = join(import.meta.dir, "..");
 
@@ -22,6 +23,11 @@ async function sourceFiles(directory: string): Promise<string[]> {
 }
 
 const failures: string[] = [];
+const workflowPaths = [
+  ".github/workflows/ci.yml",
+  ".github/workflows/pages.yml",
+  ".github/workflows/release.yml",
+];
 
 if (packageJson.name !== "s4imsg") failures.push("package name must be s4imsg");
 if (packageJson.license !== "MIT") failures.push("package license must be MIT");
@@ -41,8 +47,7 @@ for (const required of [
   "docs/LIVE_SMOKE.md",
   "docs/RELEASE_QUALIFICATION.md",
   ".github/dependabot.yml",
-  ".github/workflows/ci.yml",
-  ".github/workflows/release.yml",
+  ...workflowPaths,
 ]) {
   if (!(await Bun.file(join(root, required)).exists())) failures.push(`${required} is missing`);
 }
@@ -61,12 +66,9 @@ for (const file of await sourceFiles("src")) {
   }
 }
 
-for (const workflow of [".github/workflows/ci.yml", ".github/workflows/release.yml"]) {
-  for (const line of (await read(workflow)).split("\n")) {
-    const action = line.match(/^\s*-\s+uses:\s+([^\s#]+)/)?.[1];
-    if (action !== undefined && !action.startsWith("./") && !/@[0-9a-f]{40}$/.test(action)) {
-      failures.push(`${workflow} uses a mutable action reference: ${action}`);
-    }
+for (const workflow of await sourceFiles(".github/workflows")) {
+  for (const action of mutableActionReferences(await read(workflow))) {
+    failures.push(`${workflow} uses a mutable action reference: ${action}`);
   }
 }
 
