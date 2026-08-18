@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f5f5f7">
     <meta
       name="description"
-      content="Pick any tag. Message Codex or Claude from any iMessage conversation."
+      content="Pick any tag. iMessage Codex or Claude from any conversation."
     >
     <title>s4imsg — iMessage Codex or Claude Code</title>
     <style>
@@ -28,9 +28,7 @@
         margin: 0;
         overflow-x: hidden;
         overflow-y: auto;
-        background:
-          radial-gradient(circle at 50% 42%, #ffffff 0, #ffffff 13rem, transparent 38rem),
-          #f5f5f7;
+        background: #f5f5f7;
       }
 
       main {
@@ -38,41 +36,32 @@
         z-index: 2;
         display: grid;
         min-height: 100vh;
-        padding: 2rem 1rem;
-        place-items: center;
+        padding: clamp(1.5rem, 4vh, 3.5rem) 1rem 2rem;
+        align-items: start;
+        justify-items: center;
         text-align: center;
       }
 
       .hero {
         position: relative;
         width: min(100%, 58rem);
-        padding: clamp(2.5rem, 7vw, 5.5rem) 1rem;
+        padding: 0 1rem;
         isolation: isolate;
-      }
-
-      .hero::before {
-        position: absolute;
-        z-index: -1;
-        inset: -5rem -8rem;
-        border-radius: 50%;
-        background: radial-gradient(circle, rgb(255 255 255 / 97%) 0 30%, rgb(255 255 255 / 78%) 48%, transparent 72%);
-        content: "";
-        pointer-events: none;
       }
 
       h1 {
         margin: 0;
-        font-size: clamp(3.4rem, 10vw, 7.5rem);
+        font-size: clamp(3.4rem, 9vw, 6rem);
         font-weight: 740;
         letter-spacing: -0.075em;
         line-height: 0.9;
       }
 
       .subhead {
-        max-width: 30ch;
-        margin: 1.4rem auto 0;
+        max-width: 42ch;
+        margin: 1rem auto 0;
         color: #656569;
-        font-size: clamp(1.25rem, 3vw, 1.85rem);
+        font-size: clamp(1.25rem, 2.5vw, 1.6rem);
         font-weight: 470;
         letter-spacing: -0.035em;
         line-height: 1.25;
@@ -81,8 +70,8 @@
       .cta {
         display: inline-flex;
         min-width: 13rem;
-        min-height: 3.6rem;
-        margin-top: 1.75rem;
+        min-height: 3.35rem;
+        margin-top: 1.25rem;
         padding: 0 1.6rem;
         align-items: center;
         justify-content: center;
@@ -131,8 +120,17 @@
       .stream-bubble {
         position: absolute;
         left: var(--left);
-        bottom: -8rem;
+        bottom: clamp(1rem, 2.5vh, 2rem);
         max-width: min(80vw, 29rem);
+        opacity: 1;
+        white-space: nowrap;
+        animation: rise var(--duration) linear var(--delay) forwards;
+        will-change: transform, opacity;
+      }
+
+      .bubble-body {
+        display: block;
+        max-width: 100%;
         padding: 0.72rem 1rem;
         border-radius: 999px;
         box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 10%);
@@ -140,39 +138,68 @@
         font-weight: 520;
         letter-spacing: -0.018em;
         line-height: 1.25;
-        opacity: 0;
-        white-space: nowrap;
-        animation: rise var(--duration) linear var(--delay) forwards;
-        will-change: transform, opacity;
+        animation:
+          send-bubble-in 600ms
+            linear(
+              0,
+              0.099 5%,
+              0.3 10%,
+              0.511 15%,
+              0.69 20%,
+              0.823 25%,
+              0.912 30%,
+              0.967 35%,
+              0.997 40%,
+              1 45%,
+              1
+            )
+            both,
+          send-bubble-opacity 200ms ease-out both;
+        will-change: translate, scale, opacity;
       }
 
-      .stream-bubble.blue {
+      .bubble-body.blue {
+        transform-origin: right bottom;
         background: #0a84ff;
         color: white;
       }
 
-      .stream-bubble.gray {
+      .bubble-body.gray {
+        transform-origin: left bottom;
         background: #e5e5ea;
         color: #1d1d1f;
       }
 
+      @keyframes send-bubble-in {
+        from {
+          scale: 0;
+          translate: 0 80px;
+        }
+
+        to {
+          scale: 1;
+          translate: 0 0;
+        }
+      }
+
+      @keyframes send-bubble-opacity {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+
       @keyframes rise {
         0% {
-          opacity: 0;
-          transform: translate3d(0, 10vh, 0) rotate(var(--rotation));
+          opacity: 1;
+          transform: translate3d(0, 0, 0) rotate(var(--rotation));
         }
 
-        9% {
-          opacity: 0.82;
-        }
-
-        82% {
-          opacity: 0.72;
+        71% {
+          opacity: 1;
         }
 
         100% {
           opacity: 0;
-          transform: translate3d(var(--drift), -128vh, 0)
+          transform: translate3d(var(--drift), -85vh, 0)
             rotate(calc(var(--rotation) + var(--spin)));
         }
       }
@@ -183,26 +210,24 @@
           padding-left: 0;
         }
 
-        .hero::before {
-          right: -4rem;
-          left: -4rem;
-        }
-
         h1 {
           font-size: clamp(3.25rem, 17vw, 5rem);
         }
 
         .subhead {
           max-width: 23ch;
-          margin-top: 1.15rem;
+          margin-top: 1rem;
         }
 
         .cta {
-          margin-top: 1.5rem;
+          margin-top: 1.25rem;
         }
 
         .stream-bubble {
           max-width: 88vw;
+        }
+
+        .bubble-body {
           overflow: hidden;
           text-overflow: ellipsis;
         }
@@ -213,7 +238,8 @@
           transition: none;
         }
 
-        .stream-bubble {
+        .stream-bubble,
+        .bubble-body {
           animation: none;
         }
 
@@ -232,8 +258,8 @@
     <main>
       <section class="hero" aria-labelledby="headline">
         <h1 id="headline">Pick any tag</h1>
-        <p class="subhead">Message Codex or Claude from any conversation</p>
-        <a class="cta" id="copy-prompt" href="./setup.md" aria-live="polite">Help me set up s4imsg</a>
+        <p class="subhead">iMessage Codex or Claude from any conversation</p>
+        <a class="cta" id="copy-prompt" href="./setup.md" aria-live="polite">Help me set up</a>
       </section>
     </main>
 
@@ -286,29 +312,36 @@
         if (stream.childElementCount >= 18) return;
 
         const bubble = document.createElement("span");
+        const bubbleBody = document.createElement("span");
         const rotation = -16 + Math.random() * 32;
+        const color = Math.random() > 0.48 ? "blue" : "gray";
 
-        bubble.className = `stream-bubble ${Math.random() > 0.48 ? "blue" : "gray"}`;
-        bubble.textContent = promptExamples[promptIndex % promptExamples.length];
+        bubble.className = "stream-bubble";
+        bubbleBody.className = `bubble-body ${color}`;
+        bubbleBody.textContent = promptExamples[promptIndex % promptExamples.length];
         bubble.style.setProperty("--rotation", `${rotation}deg`);
+        bubble.append(bubbleBody);
         promptIndex += 1;
 
         if (staticBubble) {
           bubble.dataset.static = "true";
           bubble.style.setProperty("--top", `${5 + Math.random() * 88}vh`);
         } else {
-          const duration = 12 + Math.random() * 8;
+          const duration = (13 + Math.random() * 6) * 0.76;
           bubble.style.setProperty("--duration", `${duration}s`);
-          bubble.style.setProperty("--delay", seed ? `${-Math.random() * duration}s` : "0s");
+          bubble.style.setProperty(
+            "--delay",
+            seed ? `${-Math.random() * duration * 0.72}s` : "0s",
+          );
           bubble.style.setProperty("--drift", `${-80 + Math.random() * 160}px`);
           bubble.style.setProperty("--spin", `${-8 + Math.random() * 16}deg`);
           bubble.addEventListener(
             "animationend",
-            () => {
+            (event) => {
+              if (event.animationName !== "rise") return;
               bubble.remove();
               scheduleNextBubble();
             },
-            { once: true },
           );
         }
 

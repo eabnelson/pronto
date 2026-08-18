@@ -8,6 +8,7 @@ async function read(name: string): Promise<string> {
 }
 
 type FakeEvent = {
+  animationName?: string;
   matches?: boolean;
   preventDefault(): void;
 };
@@ -196,7 +197,7 @@ async function createLandingPageHarness(options: {
   const stream = new FakeElement();
   const copyButton = new FakeElement();
   copyButton.href = "https://example.test/setup.md";
-  copyButton.textContent = "Help me set up s4imsg";
+  copyButton.textContent = "Help me set up";
   const document = new FakeDocument(stream, copyButton);
   const window = new FakeWindow(options.reducedMotion);
   const copiedText: string[] = [];
@@ -226,17 +227,17 @@ describe("public landing page", () => {
     const html = await read("index.html");
 
     expect(html).toContain(">Pick any tag</h1>");
-    expect(html).toContain("Message Codex or Claude from any conversation");
+    expect(html).toContain("iMessage Codex or Claude from any conversation");
     expect(html).toContain('id="copy-prompt"');
     expect(html).toContain('href="./setup.md"');
-    expect(html).toContain(">Help me set up s4imsg</a>");
+    expect(html).toContain(">Help me set up</a>");
     expect(html).toContain("https://eabnelson.github.io/s4imsg/setup.md");
     expect(html).toContain("overflow-x: hidden");
     expect(html).toContain("overflow-y: auto");
     expect(html).not.toContain('class="mark"');
   });
 
-  test("streams varied tail-free message bubbles behind the hero", async () => {
+  test("uses Contact's send animation before the rising fade", async () => {
     const html = await read("index.html");
 
     expect(html).toContain('data-bubble-stream');
@@ -244,7 +245,17 @@ describe("public landing page", () => {
     expect(html).toContain("@claude");
     expect(html).toContain("@plan");
     expect(html).toContain("--rotation");
+    expect(html).toContain("@keyframes send-bubble-in");
+    expect(html).toContain("send-bubble-in 600ms");
+    expect(html).toContain("send-bubble-opacity 200ms");
+    expect(html).toContain("scale: 0");
+    expect(html).toContain("translate: 0 80px");
+    expect(html).toContain("align-items: start");
+    expect(html).toContain(
+      "opacity: 0;\n          transform: translate3d(var(--drift), -85vh, 0)",
+    );
     expect(html).not.toContain("setInterval");
+    expect(html).not.toContain(".hero::before");
     expect(html).not.toContain(".bubble.incoming::after");
     expect(html).not.toContain(".bubble.outgoing::after");
   });
@@ -283,7 +294,13 @@ describe("public landing page", () => {
 
     const finishedBubble = harness.stream.children[0];
     if (!finishedBubble) throw new Error("expected an animated bubble");
-    await finishedBubble.dispatch("animationend");
+    await finishedBubble.dispatch("animationend", { animationName: "send-bubble-in" });
+    expect(harness.stream.childElementCount).toBe(18);
+
+    await finishedBubble.dispatch("animationend", { animationName: "send-bubble-opacity" });
+    expect(harness.stream.childElementCount).toBe(18);
+
+    await finishedBubble.dispatch("animationend", { animationName: "rise" });
     expect(harness.stream.childElementCount).toBe(17);
     expect(harness.window.timers.size).toBe(1);
 
