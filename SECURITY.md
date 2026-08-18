@@ -1,5 +1,10 @@
 # Security
 
+## Supported versions
+
+Until the first stable release, security fixes are made on the latest `main`
+branch and included in the next tagged release. Older commits are not supported.
+
 ## Trust model
 
 The configured trigger tag is not authentication. Any current or future participant in an eligible
@@ -45,4 +50,7 @@ prompt injection risk, but are not authorization or process isolation.
 
 Do not include real message text, participant identifiers, chat identifiers,
 attachment paths, credentials, or provider output in a public report. Open a
-minimal private security advisory in the eventual GitHub repository.
+minimal [private GitHub security advisory](https://github.com/eabnelson/s4imsg/security/advisories/new).
+Include the affected version or commit, impact, and synthetic reproduction steps.
+You should receive an initial response within seven days. Please do not open a
+public issue until a fix and disclosure plan have been agreed.
