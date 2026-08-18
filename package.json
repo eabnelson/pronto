@@ -4,6 +4,14 @@
   "description": "A local iMessage bridge for Codex and Claude Code",
   "type": "module",
   "license": "MIT",
+  "homepage": "https://github.com/eabnelson/s4imsg#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eabnelson/s4imsg.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eabnelson/s4imsg/issues"
+  },
   "engines": {
     "bun": ">=1.3.14"
   },
@@ -19,6 +27,7 @@
   "packageManager": "bun@1.3.14",
   "scripts": {
     "build": "bun build ./src/cli.ts --compile --outfile ./dist/s4imsg",
+    "setup": "bun run ./src/cli.ts setup",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:integration": "bun test ./test/integration",

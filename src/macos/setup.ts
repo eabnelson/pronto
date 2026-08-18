@@ -32,6 +32,28 @@ export interface ExistingSetupDefaults {
   workingDirectory: string;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+export function setupCompletionMessage(
+  paths: Pick<S4imsgPaths, "executablePath">,
+  tag: string,
+): string {
+  const executable = shellQuote(paths.executablePath);
+  return `s4imsg installed.
+
+Finish setup:
+1. In System Settings > Privacy & Security > Full Disk Access, add this exact file:
+   ${paths.executablePath}
+   After an upgrade, remove and re-add a stale s4imsg entry if macOS no longer recognizes it.
+2. Wait for the checks to finish:
+   ${executable} doctor
+3. Confirm the background listener is ready:
+   ${executable} status
+4. Send ${tag} ping in an iMessage chat where this Mac owner has already sent a message.`;
+}
+
 export async function loadExistingSetupDefaults(
   configPath: string,
 ): Promise<ExistingSetupDefaults | null> {

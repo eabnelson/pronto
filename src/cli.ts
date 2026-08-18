@@ -17,6 +17,7 @@ import {
   loadExistingSetupDefaults,
   prepareSetupConfig,
   resolveWorkspaceSelection,
+  setupCompletionMessage,
   uninstallInstallation,
   runCommand,
 } from "./macos/setup";
@@ -187,9 +188,7 @@ async function runSetup(): Promise<number> {
       paths,
       ...(sourceInvocation ? { repositoryRoot: dirname(dirname(resolve(sourceEntry))) } : {}),
     });
-    console.log(
-      `s4imsg installed. Run \`"${paths.executablePath}" doctor\` to verify local permissions.`,
-    );
+    console.log(setupCompletionMessage(paths, config.tag));
     return 0;
   } finally {
     prompt.close();
