@@ -56,7 +56,7 @@ jobs:
 
   publish:
     needs: build
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
@@ -66,7 +66,12 @@ jobs:
     steps:
       - name: Refuse to mutate an existing release
         run: |
-          if gh api "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          EXISTING_RELEASE_ID="$(
+            gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
+              jq -r --arg tag "$GITHUB_REF_NAME" \
+                '.[] | select(.tag_name == $tag) | .id'
+          )"
+          if [[ -n "$EXISTING_RELEASE_ID" ]]; then
             echo "Release $GITHUB_REF_NAME already exists; releases and their assets are immutable."
             echo "If a previous attempt left a draft, delete that draft explicitly before rerunning."
             exit 1
@@ -77,7 +82,7 @@ jobs:
           path: release-assets
       - name: Verify downloaded checksum
         working-directory: release-assets
-        run: shasum -a 256 -c s4imsg.sha256
+        run: sha256sum -c s4imsg.sha256
       - name: Create draft release
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag \
@@ -87,8 +92,18 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" \
             release-assets/s4imsg release-assets/s4imsg.sha256
 
-          RELEASE_ID="$(gh api "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME" \
-            --jq 'select(.draft == true and ([.assets[].name] | sort == ["s4imsg", "s4imsg.sha256"])) | .id')"
+          RELEASE_ID="$(
+            gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
+              jq -r --arg tag "$GITHUB_REF_NAME" '
+                .[] |
+                select(
+                  .tag_name == $tag and
+                  .draft == true and
+                  ([.assets[].name] | sort) == ["s4imsg", "s4imsg.sha256"]
+                ) |
+                .id
+              '
+          )"
           test -n "$RELEASE_ID"
       - name: Publish verified release
         run: |
