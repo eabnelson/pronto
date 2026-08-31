@@ -20,6 +20,7 @@ export type DeliveryState =
   | "rate_limited";
 
 export interface AdmissionInput {
+  activationTag?: string;
   chatId: number;
   chatKey: string;
   providerGuid: string;
@@ -76,13 +77,15 @@ export class DeliveryJournal {
       this.database
         .query(
           `INSERT INTO delivery_events
-           (provider_guid, chat_key, chat_id, tagged_request, state, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (provider_guid, chat_key, chat_id, activation_tag, tagged_request, state,
+            created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.providerGuid,
           input.chatKey,
           input.chatId,
+          rateLimited ? null : input.activationTag ?? null,
           rateLimited ? null : input.request,
           rateLimited ? "rate_limited" : "admitted",
           now,
@@ -107,7 +110,7 @@ export class DeliveryJournal {
   nextRunnable(): QueuedEvent | null {
     const row = this.database
       .query(
-        `SELECT provider_guid, chat_key, chat_id, tagged_request, state,
+        `SELECT provider_guid, chat_key, chat_id, activation_tag, tagged_request, state,
                 accepted_reply, lease_token
          FROM delivery_events
          WHERE state IN ('admitted', 'ready_to_send') AND tagged_request IS NOT NULL
@@ -118,6 +121,7 @@ export class DeliveryJournal {
       | {
           chat_id: number;
           chat_key: string;
+          activation_tag: string | null;
           provider_guid: string;
           tagged_request: string;
           state: "admitted" | "ready_to_send";
@@ -131,6 +135,7 @@ export class DeliveryJournal {
       chatKey: row.chat_key,
       providerGuid: row.provider_guid,
       request: row.tagged_request,
+      ...(row.activation_tag === null ? {} : { activationTag: row.activation_tag }),
     };
     if (row.state === "admitted") return { ...event, state: "admitted" };
     if (row.accepted_reply === null || row.lease_token === null) {
@@ -401,7 +406,8 @@ export class DeliveryJournal {
       this.database
         .query(
           `UPDATE delivery_events
-           SET state = 'delivered', outbound_guid = ?, tagged_request = NULL,
+           SET state = 'delivered', outbound_guid = ?, activation_tag = NULL,
+               tagged_request = NULL,
                accepted_reply = NULL, proposed_summary = NULL,
                proposed_working_directory = NULL, proposed_workspace_candidates = NULL,
                updated_at = ?
@@ -428,7 +434,8 @@ export class DeliveryJournal {
       this.database
         .query(
           `UPDATE delivery_events
-           SET state = 'failed', tagged_request = NULL, accepted_reply = NULL,
+           SET state = 'failed', activation_tag = NULL, tagged_request = NULL,
+               accepted_reply = NULL,
                proposed_summary = NULL, proposed_working_directory = NULL,
                proposed_workspace_candidates = NULL, outbound_fingerprint = NULL,
                outbound_fingerprint_expires_at = NULL, updated_at = ?

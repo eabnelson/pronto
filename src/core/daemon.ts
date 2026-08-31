@@ -102,7 +102,7 @@ export class S4imsgDaemon {
           onMessageRowId: (rowId) => journal.advanceCursor(rowId),
           onOverflow: (cursor) => overflow?.(cursor),
           ...(sinceRowId === undefined ? {} : { sinceRowId }),
-          tag: this.config.tag,
+          tags: this.config.tags,
         });
         const outcome = await Promise.race([
           stopSignal,
@@ -119,7 +119,7 @@ export class S4imsgDaemon {
           },
           onMessageRowId: (rowId) => journal.advanceCursor(rowId),
           sinceRowId: outcome,
-          tag: this.config.tag,
+          tags: this.config.tags,
         });
         journal.advanceCursor(cursor);
       }

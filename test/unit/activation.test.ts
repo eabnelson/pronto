@@ -16,7 +16,8 @@ const baseMessage = {
 describe("activation", () => {
   test("accepts bounded tags from eligible iMessage chats", () => {
     const message = normalizeMessage(baseMessage);
-    expect(activatedRequest(message, "@helper", true)).toMatchObject({
+    expect(activatedRequest(message, ["@helper", "@plan"], true)).toMatchObject({
+      activationTag: "@helper",
       chatId: 42,
       providerGuid: "INBOUND-1",
       request: "summarize this",
@@ -25,15 +26,16 @@ describe("activation", () => {
 
   test("treats a tag-only message as a conversation-help request", () => {
     const message = normalizeMessage({ ...baseMessage, text: "@HELPER" });
-    expect(activatedRequest(message, "@helper", true)?.request).toBe(
-      "Help with this conversation.",
-    );
+    expect(activatedRequest(message, ["@helper"], true)).toMatchObject({
+      activationTag: "@helper",
+      request: "Help with this conversation.",
+    });
   });
 
   test("does not match email text or a longer tag", () => {
     for (const text of ["mail me@helper.com", "@helperbot do this"]) {
       expect(
-        activatedRequest(normalizeMessage({ ...baseMessage, text }), "@helper", true),
+        activatedRequest(normalizeMessage({ ...baseMessage, text }), ["@helper"], true),
       ).toBeNull();
     }
   });
@@ -44,9 +46,9 @@ describe("activation", () => {
       { ...baseMessage, service: undefined },
       { ...baseMessage, reaction: { type: "love" }, text: "@helper" },
     ]) {
-      expect(activatedRequest(normalizeMessage(candidate), "@helper", true)).toBeNull();
+      expect(activatedRequest(normalizeMessage(candidate), ["@helper"], true)).toBeNull();
     }
-    expect(activatedRequest(normalizeMessage(baseMessage), "@helper", false)).toBeNull();
+    expect(activatedRequest(normalizeMessage(baseMessage), ["@helper"], false)).toBeNull();
   });
 
   test("accepts tagged text with attachment metadata but not attachment-only events", () => {
@@ -54,14 +56,31 @@ describe("activation", () => {
     expect(
       activatedRequest(
         normalizeMessage({ ...baseMessage, attachments: [attachment] }),
-        "@helper",
+        ["@helper"],
         true,
       )?.attachments,
     ).toEqual([attachment]);
     expect(
       activatedRequest(
         normalizeMessage({ ...baseMessage, attachments: [attachment], text: null }),
-        "@helper",
+        ["@helper"],
+        true,
+      ),
+    ).toBeNull();
+  });
+
+  test("removes every occurrence of one matched tag and ignores ambiguous tags", () => {
+    expect(
+      activatedRequest(
+        normalizeMessage({ ...baseMessage, text: "(@HELPER) summarize @helper please" }),
+        ["@helper", "@plan"],
+        true,
+      )?.request,
+    ).toBe("summarize please");
+    expect(
+      activatedRequest(
+        normalizeMessage({ ...baseMessage, text: "@helper ask @plan what to do" }),
+        ["@helper", "@plan"],
         true,
       ),
     ).toBeNull();

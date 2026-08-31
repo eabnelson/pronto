@@ -2,6 +2,10 @@ import type { ActivatedRequest } from "../activation";
 import { assembleContext, type ContextEnvelope, type RecentMessage } from "../context/assemble";
 import { normalizeMessage } from "../imessage/message";
 import type { SendDisposition } from "../imessage/transport";
+import {
+  formatImessageReplyText,
+  imessageReplyBodyCharacterLimit,
+} from "../imessage/reply-format";
 import type { ChainedRuntimeResult, RuntimeChain } from "../runtimes/chain";
 import type { RuntimeInput } from "../runtimes/types";
 import { chatKeyForId } from "../storage/chat-key";
@@ -111,12 +115,13 @@ export async function explicitWorkspaceDirectory(request: string): Promise<strin
 function discoveryReply(
   baseReply: string,
   candidates: readonly string[],
+  maxCharacters = MAX_RUNTIME_TEXT_CHARACTERS,
 ): { candidates: string[]; reply: string } {
-  const trimmedReply = baseReply.trim();
+  const trimmedReply = baseReply.trim().slice(0, maxCharacters).trimEnd();
   const displayed = [...candidates];
   while (displayed.length > 0) {
     const suffix = `\n\n${displayed.map((path, index) => `${index + 1}. ${path}`).join("\n")}\n\nReply with a number in your next tagged message to switch.`;
-    const available = MAX_RUNTIME_TEXT_CHARACTERS - suffix.length;
+    const available = maxCharacters - suffix.length;
     if (available > 0) {
       const prefix = trimmedReply.slice(0, available).trimEnd();
       if (prefix.length > 0) return { candidates: displayed, reply: `${prefix}${suffix}` };
@@ -264,7 +269,16 @@ export class TurnProcessor {
 
       if (result.status === "success") {
         const candidates = await this.#validCandidates(result.output.workspaceCandidates);
-        const rendered = discoveryReply(result.output.reply, candidates);
+        const rendered = discoveryReply(
+          result.output.reply,
+          candidates,
+          event.activationTag === undefined
+            ? MAX_RUNTIME_TEXT_CHARACTERS
+            : imessageReplyBodyCharacterLimit(
+                event.activationTag,
+                MAX_RUNTIME_TEXT_CHARACTERS,
+              ),
+        );
         const shouldUpdateCandidates =
           rendered.candidates.length > 0 || consumePendingCandidates;
         this.dependencies.journal.accept(event.providerGuid, lease, {
@@ -339,8 +353,11 @@ export class TurnProcessor {
   }
 
   async #deliver(event: QueuedEvent, lease: string, text: string): Promise<void> {
-    this.dependencies.journal.beginSend(event.providerGuid, lease, event.chatId, text);
-    const disposition = await this.dependencies.transport.sendText(event.chatId, text);
+    const replyText = event.activationTag === undefined
+      ? text
+      : formatImessageReplyText(event.activationTag, text);
+    this.dependencies.journal.beginSend(event.providerGuid, lease, event.chatId, replyText);
+    const disposition = await this.dependencies.transport.sendText(event.chatId, replyText);
     if (disposition.disposition === "confirmed") {
       this.dependencies.journal.confirmDelivery(event.providerGuid, lease, disposition.guid);
     } else if (disposition.disposition === "ambiguous") {
@@ -368,6 +385,7 @@ export class TurnCoordinator {
 
   admit(request: ActivatedRequest): "accepted" | "duplicate" | "rate-limited" {
     const result = this.journal.admit({
+      activationTag: request.activationTag,
       chatId: request.chatId,
       chatKey: chatKeyForId(request.chatId, this.chatKeySalt),
       providerGuid: request.providerGuid,

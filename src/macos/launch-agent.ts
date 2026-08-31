@@ -121,6 +121,14 @@ export async function stopLaunchAgent(
   return runner(["bootout", `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
 }
 
+export async function restartLaunchAgent(
+  runner: LaunchctlRunner = runLaunchctl,
+  uid = process.getuid?.(),
+): Promise<ProcessResult> {
+  if (uid === undefined) throw new Error("Unable to determine the current user ID");
+  return runner(["kickstart", "-k", `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
+}
+
 export async function removeLaunchAgent(
   plistPath: string,
   runner: LaunchctlRunner = runLaunchctl,

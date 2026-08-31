@@ -6,6 +6,7 @@ import {
   installLaunchAgent,
   parseLaunchAgentState,
   renderLaunchAgent,
+  restartLaunchAgent,
   type LaunchctlRunner,
 } from "../../src/macos/launch-agent";
 
@@ -41,6 +42,17 @@ test("distinguishes a live launchd process from a merely loaded service", () => 
       stdout: "state = running\npid = 123\n",
     }),
   ).toBe("running");
+});
+
+test("restarts the stable listener after a tag change", async () => {
+  const calls: string[][] = [];
+  const result = await restartLaunchAgent(async (args) => {
+    calls.push([...args]);
+    return { exitCode: 0, stderr: "", stdout: "" };
+  }, 501);
+
+  expect(result.exitCode).toBe(0);
+  expect(calls).toEqual([["kickstart", "-k", "gui/501/dev.s4imsg.agent"]]);
 });
 
 test("installs and bootstraps one LaunchAgent", async () => {

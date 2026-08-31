@@ -59,6 +59,10 @@ test("creates the current owner-private WAL schema", async () => {
         .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chat_workspaces'")
         .get(),
     ).toEqual({ name: "chat_workspaces" });
+    expect(
+      database.query("PRAGMA table_info(delivery_events)").all()
+        .some((column) => (column as { name: string }).name === "activation_tag"),
+    ).toBeTrue();
     expect((await lstat(path)).mode & 0o777).toBe(0o600);
   } finally {
     database.close();
@@ -112,6 +116,10 @@ test("upgrades a version-two database without changing existing delivery rows", 
         .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chat_workspaces'")
         .get(),
     ).toEqual({ name: "chat_workspaces" });
+    expect(
+      database.query("PRAGMA table_info(delivery_events)").all()
+        .some((column) => (column as { name: string }).name === "activation_tag"),
+    ).toBeTrue();
   } finally {
     database.close();
   }

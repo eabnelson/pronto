@@ -90,13 +90,13 @@ export class ImsgTransport {
     };
   }
 
-  async activationFor(raw: unknown, tag: string): Promise<ActivatedRequest | null> {
-    return this.#activationForMessage(normalizeMessage(raw), tag);
+  async activationFor(raw: unknown, tags: readonly string[]): Promise<ActivatedRequest | null> {
+    return this.#activationForMessage(normalizeMessage(raw), tags);
   }
 
   async #activationForMessage(
     message: NormalizedMessage,
-    tag: string,
+    tags: readonly string[],
   ): Promise<ActivatedRequest | null> {
     this.#rememberOutgoing(message);
     if (
@@ -107,10 +107,10 @@ export class ImsgTransport {
     ) {
       return null;
     }
-    let candidate = activatedRequest(message, tag, true);
+    let candidate = activatedRequest(message, tags, true);
     let eligibility: ChatEligibility | null = null;
     if (candidate === null && message.service === null) {
-      const potentialCandidate = activatedRequest({ ...message, service: "iMessage" }, tag, true);
+      const potentialCandidate = activatedRequest({ ...message, service: "iMessage" }, tags, true);
       if (potentialCandidate === null) return null;
       eligibility = await this.#chatEligibility(potentialCandidate.chatId);
       if (
@@ -204,7 +204,7 @@ export class ImsgTransport {
     onMessageRowId?: (rowId: number) => void | Promise<void>;
     onOverflow: (resumeAfterRowId: number) => void | Promise<void>;
     sinceRowId?: number;
-    tag: string;
+    tags: readonly string[];
   }): Promise<{ close: () => Promise<void>; terminated: Promise<void> }> {
     if (!("on" in this.rpc) || typeof this.rpc.on !== "function") {
       throw new Error("imsg RPC client does not support notifications");
@@ -215,7 +215,7 @@ export class ImsgTransport {
       const notification = object(params);
       if (notification.subscription !== subscription) return;
       const message = normalizeMessage(notification.message);
-      const request = await this.#activationForMessage(message, input.tag);
+      const request = await this.#activationForMessage(message, input.tags);
       if (request !== null) await input.onActivation(request);
       if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
     });
@@ -268,7 +268,7 @@ export class ImsgTransport {
     onActivation: (request: ActivatedRequest) => void | Promise<void>;
     onMessageRowId?: (rowId: number) => void | Promise<void>;
     sinceRowId: number;
-    tag: string;
+    tags: readonly string[];
   }): Promise<number> {
     let cursor = input.sinceRowId;
     while (true) {
@@ -287,7 +287,7 @@ export class ImsgTransport {
       }
       for (const raw of Array.isArray(result.messages) ? result.messages : []) {
         const message = normalizeMessage(raw);
-        const request = await this.#activationForMessage(message, input.tag);
+        const request = await this.#activationForMessage(message, input.tags);
         if (request !== null) await input.onActivation(request);
         if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
       }

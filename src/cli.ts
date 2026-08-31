@@ -5,8 +5,12 @@ import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
-import { loadConfig } from "./config";
-import { parseLaunchAgentState, stopLaunchAgent } from "./macos/launch-agent";
+import { addTag, loadConfig, normalizeTags, removeTag, saveConfig } from "./config";
+import {
+  parseLaunchAgentState,
+  restartLaunchAgent,
+  stopLaunchAgent,
+} from "./macos/launch-agent";
 import { pathsForHome } from "./macos/paths";
 import {
   TRUST_DISCLOSURE,
@@ -41,6 +45,7 @@ Commands:
   run         Run the listener in the foreground
   status      Show listener health without conversation content
   doctor      Check local capabilities and permissions
+  tags        List, add, or remove trigger tags
   stop        Stop the installed listener
   forget      Remove one chat's tagged memory and workspace state
   uninstall   Remove the listener while preserving data by default
@@ -66,8 +71,15 @@ async function runSetup(): Promise<number> {
 
   const prompt = createInterface({ input: stdin, output: stdout });
   try {
-    const tag =
-      (await prompt.question("Trigger tag (with or without @) [@s4]: ")).trim() || "@s4";
+    const paths = pathsForHome(homedir());
+    const existing = await loadExistingSetupDefaults(paths.configPath);
+    const defaultTags = existing?.tags ?? ["@s4"];
+    const tagAnswer = (await prompt.question(
+      `Trigger tags, separated by commas [${defaultTags.join(", ")}]: `,
+    )).trim();
+    const tags = tagAnswer === ""
+      ? defaultTags
+      : normalizeTags(tagAnswer.split(",").map((tag) => tag.trim()));
     const primaryAnswer =
       available.length === 1
         ? available[0]!
@@ -83,8 +95,6 @@ async function runSetup(): Promise<number> {
             .trim()
             .toLowerCase() === "y";
 
-    const paths = pathsForHome(homedir());
-    const existing = await loadExistingSetupDefaults(paths.configPath);
     const defaultWorkspace = existing?.workingDirectory ?? join(homedir(), "s4imsg");
     let workspacePrompt = `Default working folder [${defaultWorkspace}]: `;
     let workspaceFallback = defaultWorkspace;
@@ -132,7 +142,7 @@ async function runSetup(): Promise<number> {
         ? { fallbackRuntime: fallbackCandidate }
         : {}),
       primaryRuntime: primaryAnswer,
-      tag,
+      tags,
       workingDirectory,
     });
     const imsgRpc = new NdjsonRpcClient(discovery.imsgPath);
@@ -142,7 +152,7 @@ async function runSetup(): Promise<number> {
       const watch = await transport.watch({
         onActivation: () => undefined,
         onOverflow: () => undefined,
-        tag: config.tag,
+        tags: config.tags,
       });
       await watch.close();
       printCheck({ id: "imessage-read-watch", status: "ok" });
@@ -188,7 +198,7 @@ async function runSetup(): Promise<number> {
       paths,
       ...(sourceInvocation ? { repositoryRoot: dirname(dirname(resolve(sourceEntry))) } : {}),
     });
-    console.log(setupCompletionMessage(paths, config.tag));
+    console.log(setupCompletionMessage(paths, config.tags));
     return 0;
   } finally {
     prompt.close();
@@ -212,7 +222,7 @@ async function runDoctor(json = false): Promise<number> {
       const watch = await transport.watch({
         onActivation: () => undefined,
         onOverflow: () => undefined,
-        tag: config.tag,
+        tags: config.tags,
       });
       await watch.close();
       report.checks.push({ id: "imessage-read-watch", status: "ok" });
@@ -359,6 +369,48 @@ async function runUninstall(args: readonly string[]): Promise<number> {
   return 0;
 }
 
+async function runTags(args: readonly string[]): Promise<number> {
+  const paths = pathsForHome(homedir());
+  const config = await loadConfig(paths.configPath);
+  const [action = "list", value, extra] = args;
+
+  if (action === "list") {
+    if (value !== undefined) {
+      console.error("Usage: s4imsg tags [list|add <tag>|remove <tag>]");
+      return 2;
+    }
+    for (const tag of config.tags) console.log(tag);
+    return 0;
+  }
+  if ((action !== "add" && action !== "remove") || value === undefined || extra !== undefined) {
+    console.error("Usage: s4imsg tags [list|add <tag>|remove <tag>]");
+    return 2;
+  }
+
+  let tags: string[];
+  let normalizedValue: string;
+  try {
+    normalizedValue = normalizeTags([value])[0]!;
+    tags = action === "add" ? addTag(config.tags, value) : removeTag(config.tags, value);
+  } catch (error) {
+    console.error((error as Error).message);
+    return 2;
+  }
+  if (tags.length === config.tags.length && tags.every((tag, index) => tag === config.tags[index])) {
+    console.log(`${normalizedValue} is already configured.`);
+    return 0;
+  }
+
+  await saveConfig(paths.configPath, { ...config, tags });
+  const restarted = await restartLaunchAgent();
+  if (restarted.exitCode !== 0) {
+    console.error("Tags were saved, but the listener could not restart. Run s4imsg setup to repair it.");
+    return 1;
+  }
+  console.log(`Configured tags: ${tags.join(", ")}`);
+  return 0;
+}
+
 export async function runCli(args: readonly string[]): Promise<number> {
   const [command] = args;
 
@@ -386,6 +438,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
   if (command === "run") return runDaemon();
   if (command === "doctor") return runDoctor(args.includes("--json"));
   if (command === "status") return runStatus(args.includes("--json"), args.includes("--chats"));
+  if (command === "tags" || command === "tag") return runTags(args.slice(1));
   if (command === "stop") {
     const result = await stopLaunchAgent();
     if (result.exitCode !== 0) console.error("s4imsg was not running.");

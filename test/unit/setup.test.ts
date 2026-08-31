@@ -31,7 +31,7 @@ describe("setup discovery", () => {
       {
         executablePath: "/Users/example/Library/Application Support/s4imsg/bin/s4imsg",
       },
-      "@helper",
+      ["@helper", "@plan"],
     );
 
     expect(message).toContain("s4imsg installed");
@@ -44,12 +44,14 @@ describe("setup discovery", () => {
       "'/Users/example/Library/Application Support/s4imsg/bin/s4imsg' status",
     );
     expect(message).toContain("@helper ping");
+    expect(message).toContain("@helper, @plan");
+    expect(message).toContain("tags add <tag>");
   });
 
   test("shell-quotes an installed path containing an apostrophe", () => {
     const message = setupCompletionMessage(
       { executablePath: "/Users/O'Neil/Library/Application Support/s4imsg/bin/s4imsg" },
-      "@helper",
+      ["@helper"],
     );
 
     expect(message).toContain(
@@ -72,14 +74,14 @@ describe("setup discovery", () => {
       prepareSetupConfig({
         discovery,
         primaryRuntime: "claude",
-        tag: "@Helper",
+        tags: ["@Helper", "@Plan"],
         workingDirectory: "/Users/example",
       }),
     ).toMatchObject({
       imsgPath: "/opt/homebrew/bin/imsg",
       primaryRuntime: "claude",
       primaryRuntimePath: "/Users/example/.local/bin/claude",
-      tag: "@helper",
+      tags: ["@helper", "@plan"],
     });
   });
 
@@ -92,7 +94,7 @@ describe("setup discovery", () => {
           runtimes: {},
         },
         primaryRuntime: "codex",
-        tag: "@helper",
+        tags: ["@helper"],
         workingDirectory: "/Users/example",
       }),
     ).toThrow("Codex was not found");
@@ -143,6 +145,7 @@ describe("setup discovery", () => {
     );
     expect(await loadExistingSetupDefaults(path)).toEqual({
       chatKeySalt: "s".repeat(32),
+      tags: ["@s4"],
       workingDirectory: "/Users/example/project",
     });
   });
@@ -225,13 +228,13 @@ test("doctor detects a replaced executable without exposing private data", async
   await mkdir(join(paths.appSupportDirectory, "bin"), { recursive: true, mode: 0o700 });
   await writeFile(paths.executablePath, "original", { mode: 0o700 });
   await saveConfig(paths.configPath, {
-    version: 1,
+    version: 2,
     chatKeySalt: "x".repeat(32),
     imsgPath: "/usr/bin/true",
     installedExecutableHash: "not-the-current-hash",
     primaryRuntime: "codex",
     primaryRuntimePath: "/usr/bin/true",
-    tag: "@helper",
+    tags: ["@helper"],
     workingDirectory: home,
     unrestrictedTrustVersion: 1,
   });
@@ -263,7 +266,7 @@ test("setup atomically installs a hashed executable and private configuration", 
         runtimes: { codex: "/usr/bin/true" },
       },
       primaryRuntime: "codex",
-      tag: "@helper",
+      tags: ["@helper"],
       workingDirectory: home,
     }),
     dependencies: {
@@ -300,7 +303,7 @@ test("setup leaves the installed executable and config paired when config persis
           runtimes: { codex: "/usr/bin/true" },
         },
         primaryRuntime: "codex",
-        tag: "@helper",
+        tags: ["@helper"],
         workingDirectory: home,
       }),
       dependencies: {

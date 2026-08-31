@@ -4,16 +4,20 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `s4imsg` is a small, local macOS bridge between iMessage and the Codex or Claude
-Code CLI. Pick a tag such as `@helper`; when anyone uses it in an iMessage chat
-you have already participated in, the bridge gives one bounded, one-shot turn to
-your chosen local agent and sends one plain-text reply.
+Code CLI. Create as many tags as you want, such as `@helper`, `@plan`, or
+`@research`. When anyone uses one in an iMessage chat you have already
+participated in, the bridge gives one bounded, one-shot turn to your chosen
+local agent and sends one plain-text reply.
+
+Each reply starts with the triggering tag name on its own line, so conversations
+using several tags make it clear which agent identity answered.
 
 It is an independent MIT-licensed project. It does not require Studio Four,
 create project folders per chat, select a model, or keep provider sessions alive.
 
 ## Before installing
 
-The tag is not authentication. Every current or future participant in an eligible chat can invoke
+Tags are not authentication. Every current or future participant in an eligible chat can invoke
 your agent. `s4imsg` deliberately starts Claude Code and Codex with their approval
 and sandbox checks bypassed, so the agent can read or modify files, run commands,
 use configured tools anywhere your macOS user can access, and send conversation
@@ -57,8 +61,9 @@ IMCore bridge.
 
 Setup asks for:
 
-1. A tag with or without the leading `@`; the default is `@s4`. The name must
-   contain 1-32 letters, numbers, underscores, or hyphens.
+1. One or more comma-separated tags, with or without the leading `@`; the
+   default is `@s4`. Each name must contain 1-32 letters, numbers, underscores,
+   or hyphens.
 2. A primary runtime when both Codex and Claude Code are installed.
 3. Whether to use the other runtime as a fallback.
 4. A default working folder (`~/s4imsg` by default). Existing folders are never
@@ -109,7 +114,7 @@ complete the [live test-chat checklist](docs/LIVE_SMOKE.md) once.
 
 ## Use
 
-Send a text message such as:
+Send a text message using any configured tag:
 
 ```text
 @helper summarize the decision and suggest the next step
@@ -142,11 +147,19 @@ S4IMSG="$HOME/Library/Application Support/s4imsg/bin/s4imsg"
 "$S4IMSG" status
 "$S4IMSG" status --chats
 "$S4IMSG" doctor
+"$S4IMSG" tags
+"$S4IMSG" tags add @plan
+"$S4IMSG" tags remove @plan
 "$S4IMSG" stop
 "$S4IMSG" forget <opaque-chat-key>
 "$S4IMSG" uninstall
 "$S4IMSG" uninstall --purge --confirm-purge
 ```
+
+Tag changes are normalized, deduplicated, saved atomically, and applied by
+restarting the background listener. At least one tag must remain configured. If
+one message contains two different configured tags, `s4imsg` ignores it rather
+than choosing an activation ambiguously.
 
 `status` reports only operational counts, including silently rate-limited events,
 and opaque chat keys. `forget` removes

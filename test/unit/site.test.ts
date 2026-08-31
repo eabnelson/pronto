@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 
 const repoRoot = new URL("../../", import.meta.url);
 const siteRoot = new URL("site/", repoRoot);
-const setupPrompt = "Help me set up s4imsg: https://eabnelson.github.io/s4imsg/setup.md";
+const setupPrompt =
+  "Help me set up iMessage Tags on this Mac. Follow https://studiofour.io/imessage-setup.md and stay with me until one tagged iMessage gets exactly one agent reply.";
 
 async function read(name: string): Promise<string> {
   return Bun.file(new URL(name, siteRoot)).text();
@@ -268,9 +269,9 @@ describe("public landing page", () => {
     expect(html).toContain(">Pick any tag</h1>");
     expect(html).toContain("iMessage Codex or Claude from any conversation");
     expect(html).toContain('id="copy-prompt"');
-    expect(html).toContain('href="./setup.md"');
+    expect(html).toContain('href="https://studiofour.io/imessage-setup.md"');
     expect(html).toContain(">Help me get set up</a>");
-    expect(html).toContain("https://eabnelson.github.io/s4imsg/setup.md");
+    expect(html).toContain("https://studiofour.io/imessage-setup.md");
     expect(html).toContain("overflow-x: hidden");
     expect(html).toContain("overflow-y: auto");
     expect(html).not.toContain('class="mark"');
@@ -286,13 +287,13 @@ describe("public landing page", () => {
     const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
 
     expect(html).toContain(
-      '<meta property="og:image" content="https://eabnelson.github.io/s4imsg/og-image.png">',
+      '<meta property="og:image" content="https://studiofour.io/imessage-og.png">',
     );
     expect(html).toContain('<meta property="og:image:width" content="1200">');
     expect(html).toContain('<meta property="og:image:height" content="630">');
     expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
     expect(html).toContain(
-      '<meta name="twitter:image" content="https://eabnelson.github.io/s4imsg/og-image.png">',
+      '<meta name="twitter:image" content="https://studiofour.io/imessage-og.png">',
     );
     expect(source).toContain('viewBox="0 0 1200 630"');
     expect(source).toContain("@codex");

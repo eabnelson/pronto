@@ -7,7 +7,7 @@ branch and included in the next tagged release. Older commits are not supported.
 
 ## Trust model
 
-The configured trigger tag is not authentication. Any current or future participant in an eligible
+The configured trigger tags are not authentication. Any current or future participant in an eligible
 iMessage conversation can ask the selected local agent to act. Claude Code runs
 with `--dangerously-skip-permissions`; Codex runs with
 `--dangerously-bypass-approvals-and-sandbox`. Their approval and sandbox checks
@@ -43,7 +43,7 @@ duplicate local work or sends. Use `forget` for tagged memory and the confirmed
 purge form of `uninstall` for all local bridge state and logs.
 
 Possible-side-effect runtime failures and uncertain sends are never replayed
-automatically. The trigger tag and prompt labels reduce accidental activation and
+automatically. Trigger tags and prompt labels reduce accidental activation and
 prompt injection risk, but are not authorization or process isolation.
 
 ## Reporting vulnerabilities

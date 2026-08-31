@@ -3,9 +3,12 @@ import { chmod, lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  addTag,
   createConfig,
   loadConfig,
   normalizeTag,
+  normalizeTags,
+  removeTag,
   saveConfig,
   UNRESTRICTED_TRUST_VERSION,
 } from "../../src/config";
@@ -29,6 +32,17 @@ describe("trigger tag validation", () => {
       expect(() => normalizeTag(tag)).toThrow("Tag must match");
     }
   });
+
+  test("normalizes, deduplicates, adds, and removes any number of tags", () => {
+    expect(normalizeTags(["Helper", "@PLAN", "@helper"])).toEqual([
+      "@helper",
+      "@plan",
+    ]);
+    expect(addTag(["@helper"], "Plan")).toEqual(["@helper", "@plan"]);
+    expect(addTag(["@helper"], "HELPER")).toEqual(["@helper"]);
+    expect(removeTag(["@helper", "@plan"], "HELPER")).toEqual(["@plan"]);
+    expect(() => removeTag(["@helper"], "@helper")).toThrow("last tag");
+  });
 });
 
 describe("configuration persistence", () => {
@@ -38,7 +52,7 @@ describe("configuration persistence", () => {
         fallbackRuntime: "codex",
         imsgPath: "/opt/homebrew/bin/imsg",
         primaryRuntime: "codex",
-        tag: "@helper",
+        tags: ["@helper"],
         unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
         workingDirectory: "/Users/example",
       }),
@@ -53,7 +67,7 @@ describe("configuration persistence", () => {
       fallbackRuntime: "claude",
       imsgPath: "/opt/homebrew/bin/imsg",
       primaryRuntime: "codex",
-      tag: "@Helper",
+      tags: ["@Helper", "@Plan"],
       unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
       workingDirectory: "/Users/example",
     });
@@ -80,6 +94,7 @@ describe("configuration persistence", () => {
       workingDirectory: "/Users/example",
     }));
 
+    expect(await loadConfig(path)).toMatchObject({ tags: ["@helper"], version: 2 });
     expect(await loadConfig(path)).not.toHaveProperty("selfChatHandle");
   });
 
@@ -112,7 +127,7 @@ describe("configuration persistence", () => {
         createConfig({
           imsgPath: "/usr/local/bin/imsg",
           primaryRuntime: "claude",
-          tag: "@helper",
+          tags: ["@helper"],
           unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
           workingDirectory: "/Users/example",
         }),
@@ -131,7 +146,7 @@ describe("configuration persistence", () => {
       createConfig({
         imsgPath: "/usr/local/bin/imsg",
         primaryRuntime: "codex",
-        tag: "@helper",
+        tags: ["@helper"],
         unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
         workingDirectory: "/Users/example",
       }),
@@ -150,7 +165,7 @@ describe("configuration persistence", () => {
       createConfig({
         imsgPath: "/usr/local/bin/imsg",
         primaryRuntime: "codex",
-        tag: "@helper",
+        tags: ["@helper"],
         unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
         workingDirectory: "/Users/example",
       }),

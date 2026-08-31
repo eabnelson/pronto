@@ -90,7 +90,8 @@ export class MemoryStore {
                  WHEN state IN ('admitted', 'running', 'ready_to_send', 'sending') THEN 'failed'
                  ELSE state
                END,
-               tagged_request = NULL, accepted_reply = NULL, proposed_summary = NULL,
+               activation_tag = NULL, tagged_request = NULL, accepted_reply = NULL,
+               proposed_summary = NULL,
                proposed_working_directory = NULL, proposed_workspace_candidates = NULL
            WHERE chat_key = ?`,
         )

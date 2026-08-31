@@ -63,7 +63,7 @@ describe("activation routing", () => {
   test("uses the matching chat service when an imsg message omits its service", async () => {
     const rpc = new FakeRpc();
 
-    expect(await new ImsgTransport(rpc).activationFor(messageWithoutService, "@helper")).toMatchObject({
+    expect(await new ImsgTransport(rpc).activationFor(messageWithoutService, ["@helper"])).toMatchObject({
       chatId: 42,
       providerGuid: "IN-1",
       request: "continue",
@@ -81,7 +81,7 @@ describe("activation routing", () => {
       const rpc = new FakeRpc();
       rpc.stats = stats;
 
-      expect(await new ImsgTransport(rpc).activationFor(messageWithoutService, "@helper")).toBeNull();
+      expect(await new ImsgTransport(rpc).activationFor(messageWithoutService, ["@helper"])).toBeNull();
       expect(rpc.calls.map((call) => call.method)).toEqual(["messages.stats"]);
     }
   });
@@ -91,7 +91,7 @@ describe("activation routing", () => {
     rpc.stats = new Error("stats unavailable");
 
     await expect(
-      new ImsgTransport(rpc).activationFor(messageWithoutService, "@helper"),
+      new ImsgTransport(rpc).activationFor(messageWithoutService, ["@helper"]),
     ).rejects.toThrow("stats unavailable");
   });
 
@@ -107,7 +107,7 @@ describe("activation routing", () => {
           reply_to_text: "continue",
           text: "continue",
         },
-        "@helper",
+        ["@helper"],
       ),
     ).toBeNull();
     expect(
@@ -133,7 +133,7 @@ describe("activation routing", () => {
           reply_to_text: "@helper continue",
           service: "iMessage",
         },
-        "@helper",
+        ["@helper"],
       ),
     ).toBeNull();
     expect(rpc.calls.map((call) => call.method)).toEqual(["messages.stats"]);
@@ -157,7 +157,7 @@ describe("activation routing", () => {
           is_from_me: true,
           text,
         },
-        "@helper",
+        ["@helper"],
       ),
     ).toMatchObject({ providerGuid: "SELF-OUT", request: "continue" });
     expect(
@@ -172,7 +172,7 @@ describe("activation routing", () => {
           reply_to_text: text,
           text,
         },
-        "@helper",
+        ["@helper"],
       ),
     ).toBeNull();
     expect(rpc.calls.some((call) => call.method === "messages.history")).toBeFalse();
@@ -189,7 +189,7 @@ describe("activation routing", () => {
           reply_to_text: text,
           text,
         },
-        "@helper",
+        ["@helper"],
       ),
     ).toMatchObject({ providerGuid: "REMOTE-IN", request: "continue" });
 
@@ -204,7 +204,7 @@ describe("activation routing", () => {
           reply_to_text: text,
           text,
         },
-        "@helper",
+        ["@helper"],
       ),
     ).toMatchObject({ providerGuid: "REMOTE-IN-NO-DATE", request: "continue" });
 
@@ -218,7 +218,7 @@ describe("activation routing", () => {
           is_from_me: false,
           text,
         },
-        "@helper",
+        ["@helper"],
       ),
     ).toBeNull();
   });
@@ -246,7 +246,7 @@ describe("activation routing", () => {
           service: "iMessage",
           text,
         },
-        "@helper",
+        ["@helper"],
       ),
     ).toBeNull();
     expect(
@@ -260,7 +260,7 @@ describe("activation routing", () => {
           service: "iMessage",
           text,
         },
-        "@helper",
+        ["@helper"],
       ),
     ).toBeNull();
   });
@@ -277,7 +277,7 @@ describe("activation routing", () => {
           is_from_me: false,
           service: "iMessage",
         },
-        "@helper",
+        ["@helper"],
       ),
     ).toMatchObject({ providerGuid: "IN-1", request: "continue" });
   });
@@ -347,7 +347,7 @@ test("watch filters activations and surfaces a resumable overflow cursor", async
       rows.push(rowId);
     },
     sinceRowId: 10,
-    tag: "@helper",
+    tags: ["@helper", "@plan"],
   });
 
   await rpc.emit("message", {
@@ -452,7 +452,7 @@ test("catch-up correlates a self-chat mirror even when the outgoing row predates
         activations.push(request.request);
       },
       sinceRowId: 12,
-      tag: "@helper",
+      tags: ["@helper"],
     }),
   ).toBe(13);
   expect(activations).toEqual([]);
@@ -505,7 +505,7 @@ test("catch-up correlates a restart-boundary mirror without reply metadata", asy
         activations.push(request.request);
       },
       sinceRowId: 12,
-      tag: "@helper",
+      tags: ["@helper"],
     }),
   ).toBe(13);
   expect(activations).toEqual([]);
@@ -536,7 +536,7 @@ test("correlation lookup failure suppresses a mirror-shaped restart row without 
       watchRows.push(rowId);
     },
     onOverflow: () => undefined,
-    tag: "@helper",
+    tags: ["@helper"],
   });
 
   await watchRpc.emit("message", { message: mirror, subscription: 7 });
@@ -562,7 +562,7 @@ test("correlation lookup failure suppresses a mirror-shaped restart row without 
         catchUpRows.push(rowId);
       },
       sinceRowId: 12,
-      tag: "@helper",
+      tags: ["@helper"],
     }),
   ).toBe(13);
   expect(catchUpActivations).toEqual([]);

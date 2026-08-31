@@ -7,6 +7,7 @@ import {
   createConfig,
   ensurePrivateDirectory,
   loadConfig,
+  normalizeTags,
   saveConfig,
   type RuntimeKind,
   type S4imsgConfig,
@@ -29,6 +30,7 @@ export interface WorkspaceSelection {
 
 export interface ExistingSetupDefaults {
   chatKeySalt: string;
+  tags: string[];
   workingDirectory: string;
 }
 
@@ -38,7 +40,7 @@ function shellQuote(value: string): string {
 
 export function setupCompletionMessage(
   paths: Pick<S4imsgPaths, "executablePath">,
-  tag: string,
+  tags: readonly string[],
 ): string {
   const executable = shellQuote(paths.executablePath);
   return `s4imsg installed.
@@ -51,7 +53,10 @@ Finish setup:
    ${executable} doctor
 3. Confirm the background listener is ready:
    ${executable} status
-4. Send ${tag} ping in an iMessage chat where this Mac owner has already sent a message.`;
+4. Send ${tags[0]} ping in an iMessage chat where this Mac owner has already sent a message.
+
+Configured tags: ${tags.join(", ")}
+Add or remove tags later with ${executable} tags add <tag> and ${executable} tags remove <tag>.`;
 }
 
 export async function loadExistingSetupDefaults(
@@ -63,9 +68,17 @@ export async function loadExistingSetupDefaults(
       throw new Error("existing configuration is not an object");
     }
     const value = parsed as Record<string, unknown>;
+    const tags = value.version === 1
+      ? typeof value.tag === "string" ? normalizeTags([value.tag]) : null
+      : value.version === 2
+        ? Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string")
+          ? normalizeTags(value.tags)
+          : null
+        : ["@s4"];
     if (
       typeof value.chatKeySalt !== "string" ||
       value.chatKeySalt.length < 32 ||
+      tags === null ||
       typeof value.workingDirectory !== "string" ||
       !isAbsolute(value.workingDirectory)
     ) {
@@ -73,6 +86,7 @@ export async function loadExistingSetupDefaults(
     }
     return {
       chatKeySalt: value.chatKeySalt,
+      tags,
       workingDirectory: value.workingDirectory,
     };
   } catch (error) {
@@ -135,7 +149,7 @@ export function prepareSetupConfig(input: {
   discovery: CommandDiscovery;
   fallbackRuntime?: RuntimeKind;
   primaryRuntime: RuntimeKind;
-  tag: string;
+  tags: readonly string[];
   workingDirectory: string;
 }): S4imsgConfig {
   const primaryRuntimePath = input.discovery.runtimes[input.primaryRuntime];
@@ -161,7 +175,7 @@ export function prepareSetupConfig(input: {
     ...(input.chatKeySalt === undefined ? {} : { chatKeySalt: input.chatKeySalt }),
     primaryRuntime: input.primaryRuntime,
     primaryRuntimePath,
-    tag: input.tag,
+    tags: input.tags,
     unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
     workingDirectory: input.workingDirectory,
   });

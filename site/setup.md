@@ -1,6 +1,6 @@
 # Set up s4imsg for me
 
-You are my setup agent. Help me install and verify **s4imsg**, the local macOS bridge that lets an iMessage tag invoke Codex or Claude Code.
+You are my setup agent. Help me install and verify **s4imsg**, the local macOS bridge that lets any of my iMessage tags invoke Codex or Claude Code.
 
 Repository: <https://github.com/eabnelson/s4imsg>
 
@@ -80,7 +80,7 @@ Work interactively and stay with me until one tagged iMessage gets exactly one a
 
    Help me choose:
 
-   - a trigger tag, with or without `@`;
+   - one or more comma-separated trigger tags, with or without `@`;
    - a primary runtime;
    - an optional fallback runtime;
    - a default working folder, normally `~/s4imsg`.
@@ -105,7 +105,16 @@ Work interactively and stay with me until one tagged iMessage gets exactly one a
 
    A healthy service reports `listener running`, `database ready`, and `daemon ready`. Resolve failed checks before continuing. A send-automation check may stay degraded until the first real reply.
 
-6. Ask me to send `<my-tag> ping` in an iMessage conversation where this Mac owner has already sent at least one message. Confirm that exactly one agent reply arrives. In a self-chat, Messages may display each single send as an incoming/outgoing mirrored pair; that is one send, not a duplicate.
+6. Show me how to manage tags from the installed CLI:
+
+   ```sh
+   S4IMSG="$HOME/Library/Application Support/s4imsg/bin/s4imsg"
+   "$S4IMSG" tags
+   "$S4IMSG" tags add @plan
+   "$S4IMSG" tags remove @plan
+   ```
+
+   Explain that tags are case-insensitive, duplicate tags are ignored, and at least one tag must remain. If a message contains two different configured tags, the bridge ignores it instead of choosing ambiguously. Then ask me to send `<my-tag> ping` in an iMessage conversation where this Mac owner has already sent at least one message. Confirm that exactly one agent reply arrives. In a self-chat, Messages may display each single send as an incoming/outgoing mirrored pair; that is one send, not a duplicate.
 
 7. Run the final status check with its executable assigned in the same shell call:
 
@@ -114,6 +123,6 @@ Work interactively and stay with me until one tagged iMessage gets exactly one a
    "$S4IMSG" status
    ```
 
-   Finish with a short summary of my tag, primary and fallback runtimes, default working folder, installed executable, and whether the listener, database, and daemon are ready. Do not include conversation or participant data.
+   Finish with a short summary of my tags, primary and fallback runtimes, default working folder, installed executable, and whether the listener, database, and daemon are ready. Do not include conversation or participant data.
 
 If anything fails, use the repository's `README.md`, `SECURITY.md`, and `docs/LIVE_SMOKE.md` as the source of truth and keep troubleshooting with me.

@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:f
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 
-export const CONFIG_VERSION = 1 as const;
+export const CONFIG_VERSION = 2 as const;
 export const UNRESTRICTED_TRUST_VERSION = 1 as const;
 export const TAG_PATTERN = /^@[A-Za-z0-9_-]{1,32}$/;
 
@@ -11,7 +11,7 @@ export type RuntimeKind = "codex" | "claude";
 export interface S4imsgConfig {
   version: typeof CONFIG_VERSION;
   chatKeySalt: string;
-  tag: string;
+  tags: string[];
   primaryRuntime: RuntimeKind;
   fallbackRuntime?: RuntimeKind;
   imsgPath: string;
@@ -24,10 +24,10 @@ export interface S4imsgConfig {
 
 export type ConfigInput = Omit<
   S4imsgConfig,
-  "chatKeySalt" | "tag" | "version"
+  "chatKeySalt" | "tags" | "version"
 > & {
   chatKeySalt?: string;
-  tag: string;
+  tags: readonly string[];
 };
 
 export function normalizeTag(value: string): string {
@@ -37,6 +37,27 @@ export function normalizeTag(value: string): string {
     throw new Error("Tag must match @[A-Za-z0-9_-]{1,32}");
   }
   return tag.toLowerCase();
+}
+
+export function normalizeTags(values: readonly string[]): string[] {
+  const tags = [...new Set(values.map(normalizeTag))];
+  if (tags.length === 0) {
+    throw new Error("Configure at least one tag");
+  }
+  return tags;
+}
+
+export function addTag(tags: readonly string[], value: string): string[] {
+  return normalizeTags([...tags, value]);
+}
+
+export function removeTag(tags: readonly string[], value: string): string[] {
+  const tag = normalizeTag(value);
+  if (!tags.includes(tag)) throw new Error(`Tag is not configured: ${tag}`);
+  if (tags.length === 1) {
+    throw new Error("Cannot remove the last tag; add another tag first");
+  }
+  return tags.filter((candidate) => candidate !== tag);
 }
 
 export function createConfig(input: ConfigInput): S4imsgConfig {
@@ -54,7 +75,7 @@ export function createConfig(input: ConfigInput): S4imsgConfig {
   return {
     ...input,
     chatKeySalt: input.chatKeySalt ?? randomBytes(32).toString("base64url"),
-    tag: normalizeTag(input.tag),
+    tags: normalizeTags(input.tags),
     version: CONFIG_VERSION,
   };
 }
@@ -117,14 +138,22 @@ export async function loadConfig(path: string): Promise<S4imsgConfig> {
   const raw: unknown = JSON.parse(await readFile(path, "utf8"));
   if (raw === null || typeof raw !== "object") throw new Error("Invalid configuration");
   const value = raw as Record<string, unknown>;
-  if (value.version !== CONFIG_VERSION) throw new Error("Unsupported configuration version");
+  if (value.version !== 1 && value.version !== CONFIG_VERSION) {
+    throw new Error("Unsupported configuration version");
+  }
   if (!isRuntime(value.primaryRuntime)) throw new Error("Invalid primary runtime");
   if (value.fallbackRuntime !== undefined && !isRuntime(value.fallbackRuntime)) {
     throw new Error("Invalid fallback runtime");
   }
-  if (typeof value.tag !== "string" || typeof value.imsgPath !== "string") {
+  if (typeof value.imsgPath !== "string") {
     throw new Error("Invalid configuration fields");
   }
+  const tags = value.version === 1
+    ? typeof value.tag === "string" ? [value.tag] : null
+    : Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string")
+      ? value.tags
+      : null;
+  if (tags === null) throw new Error("Invalid configuration tags");
   if (typeof value.workingDirectory !== "string") throw new Error("Invalid working directory");
   if (value.unrestrictedTrustVersion !== UNRESTRICTED_TRUST_VERSION) {
     throw new Error("Unrestricted access consent is missing; run s4imsg setup");
@@ -149,7 +178,7 @@ export async function loadConfig(path: string): Promise<S4imsgConfig> {
     imsgPath: value.imsgPath,
     chatKeySalt: value.chatKeySalt,
     primaryRuntime: value.primaryRuntime,
-    tag: value.tag,
+    tags,
     workingDirectory: value.workingDirectory,
     unrestrictedTrustVersion: value.unrestrictedTrustVersion,
   });
