@@ -322,6 +322,42 @@
         "@build turn this idea into a prototype",
         "@travel plan three days in Tokyo",
         "@read pull out the action items",
+        "@brainstorm give me ten wild ideas",
+        "@write make this sound more human",
+        "@decide make a pros and cons list",
+        "@gift find something they'll actually love",
+        "@movie pick the perfect Friday night film",
+        "@music make a playlist for this mood",
+        "@recipe use what's already in my fridge",
+        "@home plan a cozy weekend reset",
+        "@style help me pack one great outfit",
+        "@career sharpen my next big move",
+        "@meeting turn this into clear next steps",
+        "@party plan a tiny unforgettable dinner",
+        "@photo pick the strongest shots",
+        "@garden tell me what to plant this month",
+        "@study quiz me until this sticks",
+        "@translate keep the tone but make it clear",
+        "@book find my next can't-put-it-down read",
+        "@date plan something surprising nearby",
+        "@kids invent a bedtime story with dragons",
+        "@shop compare these without the marketing",
+        "@debug explain why this keeps breaking",
+        "@focus organize my chaotic afternoon",
+        "@journal spot the pattern I'm missing",
+        "@history give me the fascinating backstory",
+        "@science fact-check this claim",
+        "@launch give this idea a memorable name",
+        "@roadtrip build the scenic route",
+        "@cleanup turn this mess into a checklist",
+        "@newsletter make this worth opening",
+        "@pitch make this impossible to ignore",
+        "@celebrate plan a small win properly",
+        "@explore find a rabbit hole worth following",
+        "@budget make this plan fit my real life",
+        "@host create a menu everyone can eat",
+        "@workout make this fun enough to repeat",
+        "@surprise give me an idea I wouldn't expect",
       ];
 
       const stream = document.querySelector("[data-bubble-stream]");
@@ -360,7 +396,7 @@
       }
 
       function scheduleNextBubble(delay = 850) {
-        if (reducedMotion || document.hidden || streamTimer || stream.childElementCount >= 18) {
+        if (reducedMotion || document.hidden || streamTimer) {
           return;
         }
 
@@ -372,7 +408,9 @@
       }
 
       function createBubble({ seed = false, staticBubble = false } = {}) {
-        if (stream.childElementCount >= 18) return;
+        if (!staticBubble && stream.childElementCount >= 18) {
+          stream.children[0]?.remove();
+        }
 
         const bubble = document.createElement("span");
         const bubbleBody = document.createElement("span");

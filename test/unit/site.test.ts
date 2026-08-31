@@ -369,7 +369,7 @@ describe("public landing page", () => {
     expect(harness.window.assignedLocations).toEqual([harness.copyButton.href]);
   });
 
-  test("runs a bounded animated stream and pauses and resumes while hidden", async () => {
+  test("runs a continuous bounded stream and pauses and resumes while hidden", async () => {
     const harness = await createLandingPageHarness();
 
     expect(harness.stream.childElementCount).toBe(12);
@@ -377,12 +377,18 @@ describe("public landing page", () => {
 
     while (harness.stream.childElementCount < 18) harness.window.runNextTimer();
     expect(harness.stream.childElementCount).toBe(18);
-    expect(harness.window.timers.size).toBe(0);
+    expect(harness.window.timers.size).toBe(1);
     expect(
       harness.stream.children.every((bubble) =>
         bubble.style.properties.has("--mobile-fade-duration"),
       ),
     ).toBe(true);
+
+    const oldestBubble = harness.stream.children[0];
+    harness.window.runNextTimer();
+    expect(harness.stream.childElementCount).toBe(18);
+    expect(harness.stream.children.includes(oldestBubble!)).toBe(false);
+    expect(harness.window.timers.size).toBe(1);
 
     const finishedBubble = harness.stream.children[0];
     if (!finishedBubble) throw new Error("expected an animated bubble");
@@ -405,7 +411,7 @@ describe("public landing page", () => {
     expect(harness.window.timers.size).toBe(1);
     harness.window.runNextTimer();
     expect(harness.stream.childElementCount).toBe(18);
-    expect(harness.window.timers.size).toBe(0);
+    expect(harness.window.timers.size).toBe(1);
   });
 
   test("removes bubbles after the mobile rise animation finishes", async () => {
