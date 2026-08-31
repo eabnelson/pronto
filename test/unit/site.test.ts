@@ -60,6 +60,10 @@ class FakeStyle {
   setProperty(name: string, value: string): void {
     this.properties.set(name, value);
   }
+
+  getPropertyValue(name: string): string {
+    return this.properties.get(name) ?? "";
+  }
 }
 
 class FakeElement extends FakeEventTarget {
@@ -68,6 +72,8 @@ class FakeElement extends FakeEventTarget {
   readonly style = new FakeStyle();
   className = "";
   href = "";
+  offsetHeight = 40;
+  offsetTop = 780;
   offsetWidth = 220;
   parent: FakeElement | undefined;
   textContent = "";
@@ -75,6 +81,10 @@ class FakeElement extends FakeEventTarget {
 
   get childElementCount(): number {
     return this.children.length;
+  }
+
+  getBoundingClientRect(): { bottom: number } {
+    return { bottom: this.offsetTop + this.offsetHeight };
   }
 
   append(child: FakeElement): void {
@@ -134,10 +144,11 @@ class FakeDocument extends FakeEventTarget {
   }
 }
 
-class FakeWindow {
+class FakeWindow extends FakeEventTarget {
   readonly assignedLocations: string[] = [];
   readonly motionPreference: FakeMediaQueryList;
   readonly timers = new Map<number, () => void>();
+  innerHeight = 844;
   innerWidth = 1200;
   private nextTimer = 1;
 
@@ -146,6 +157,7 @@ class FakeWindow {
   };
 
   constructor(reducedMotion = false) {
+    super();
     this.motionPreference = new FakeMediaQueryList(reducedMotion);
   }
 
@@ -204,6 +216,8 @@ async function createLandingPageHarness(options: {
   const stream = new FakeElement();
   const copyButton = new FakeElement();
   copyButton.href = "https://example.test/setup.md";
+  copyButton.offsetHeight = 54;
+  copyButton.offsetTop = 180;
   copyButton.textContent = "Help me get set up";
   const document = new FakeDocument(stream, copyButton);
   const window = new FakeWindow(options.reducedMotion);
@@ -316,8 +330,11 @@ describe("public landing page", () => {
       "opacity: 0;\n          transform: translate3d(var(--drift), -85vh, 0)",
     );
     expect(html).toContain("@keyframes rise-mobile");
-    expect(html).toContain("animation-name: rise-mobile");
-    expect(html).toContain("68% {\n          opacity: 0;");
+    expect(html).toContain("@keyframes fade-before-cta");
+    expect(html).toContain("animation-name: rise-mobile, fade-before-cta");
+    expect(html).toContain('copyButton.getBoundingClientRect().bottom');
+    expect(html).toContain('bubble.style.setProperty(\n          "--mobile-fade-duration"');
+    expect(html).not.toContain("68% {\n          opacity: 0;");
     expect(html).not.toContain("setInterval");
     expect(html).not.toContain(".hero::before");
     expect(html).not.toContain(".bubble.incoming::after");
@@ -361,6 +378,11 @@ describe("public landing page", () => {
     while (harness.stream.childElementCount < 18) harness.window.runNextTimer();
     expect(harness.stream.childElementCount).toBe(18);
     expect(harness.window.timers.size).toBe(0);
+    expect(
+      harness.stream.children.every((bubble) =>
+        bubble.style.properties.has("--mobile-fade-duration"),
+      ),
+    ).toBe(true);
 
     const finishedBubble = harness.stream.children[0];
     if (!finishedBubble) throw new Error("expected an animated bubble");
@@ -395,6 +417,23 @@ describe("public landing page", () => {
 
     expect(harness.stream.childElementCount).toBe(11);
     expect(harness.window.timers.size).toBe(1);
+  });
+
+  test("anchors the mobile fade endpoint to the setup button position", async () => {
+    const harness = await createLandingPageHarness();
+    const bubble = harness.stream.children[0];
+    if (!bubble) throw new Error("expected an animated bubble");
+    const initialFadeDuration = Number.parseFloat(
+      bubble.style.properties.get("--mobile-fade-duration") ?? "",
+    );
+
+    harness.copyButton.offsetTop += 120;
+    await harness.window.dispatch("resize");
+
+    const updatedFadeDuration = Number.parseFloat(
+      bubble.style.properties.get("--mobile-fade-duration") ?? "",
+    );
+    expect(updatedFadeDuration).toBeLessThan(initialFadeDuration);
   });
 
   test("responds to live reduced-motion changes", async () => {
