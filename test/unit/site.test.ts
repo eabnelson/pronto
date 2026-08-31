@@ -317,7 +317,7 @@ describe("public landing page", () => {
     );
     expect(html).toContain("@keyframes rise-mobile");
     expect(html).toContain("animation-name: rise-mobile");
-    expect(html).toContain("48% {\n          opacity: 0;");
+    expect(html).toContain("68% {\n          opacity: 0;");
     expect(html).not.toContain("setInterval");
     expect(html).not.toContain(".hero::before");
     expect(html).not.toContain(".bubble.incoming::after");
