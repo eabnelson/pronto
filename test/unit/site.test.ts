@@ -370,10 +370,11 @@ describe("public landing page", () => {
     expect(harness.window.assignedLocations).toEqual([harness.copyButton.href]);
   });
 
-  test("runs a continuous bounded stream and pauses and resumes while hidden", async () => {
+  test("starts immediately, stays continuous, and pauses and resumes while hidden", async () => {
     const harness = await createLandingPageHarness();
 
-    expect(harness.stream.childElementCount).toBe(12);
+    expect(harness.stream.childElementCount).toBe(13);
+    expect(harness.stream.children.at(-1)?.style.properties.get("--delay")).toBe("0s");
     expect(harness.window.timers.size).toBe(1);
 
     while (harness.stream.childElementCount < 18) harness.window.runNextTimer();
@@ -409,6 +410,7 @@ describe("public landing page", () => {
 
     harness.document.hidden = false;
     await harness.document.dispatch("visibilitychange");
+    expect(harness.stream.childElementCount).toBe(18);
     expect(harness.window.timers.size).toBe(1);
     harness.window.runNextTimer();
     expect(harness.stream.childElementCount).toBe(18);
@@ -422,7 +424,7 @@ describe("public landing page", () => {
 
     await finishedBubble.dispatch("animationend", { animationName: "rise-mobile" });
 
-    expect(harness.stream.childElementCount).toBe(11);
+    expect(harness.stream.childElementCount).toBe(12);
     expect(harness.window.timers.size).toBe(1);
   });
 
@@ -452,16 +454,17 @@ describe("public landing page", () => {
     expect(harness.stream.children.every((bubble) => bubble.dataset.static === "true")).toBe(true);
 
     await harness.motionPreference.change(false);
-    expect(harness.stream.childElementCount).toBe(12);
+    expect(harness.stream.childElementCount).toBe(13);
     expect(harness.window.timers.size).toBe(1);
     expect(harness.stream.children.every((bubble) => bubble.dataset.static === undefined)).toBe(true);
     expect(
-      harness.stream.children.every(
+      harness.stream.children.slice(0, 12).every(
         (bubble) =>
           bubble.style.properties.has("--duration") &&
           bubble.style.properties.get("--delay")?.startsWith("-") === true,
       ),
     ).toBe(true);
+    expect(harness.stream.children.at(-1)?.style.properties.get("--delay")).toBe("0s");
   });
 
   test("provides a complete agent-readable setup handoff", async () => {

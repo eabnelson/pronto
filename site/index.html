@@ -459,6 +459,7 @@
         }
 
         for (let index = 0; index < 12; index += 1) createBubble({ seed: true });
+        createBubble();
         scheduleNextBubble();
       }
 
@@ -478,6 +479,7 @@
           window.clearTimeout(streamTimer);
           streamTimer = undefined;
         } else {
+          createBubble();
           scheduleNextBubble();
         }
       });
