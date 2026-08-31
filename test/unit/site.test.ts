@@ -315,6 +315,9 @@ describe("public landing page", () => {
     expect(html).toContain(
       "opacity: 0;\n          transform: translate3d(var(--drift), -85vh, 0)",
     );
+    expect(html).toContain("@keyframes rise-mobile");
+    expect(html).toContain("animation-name: rise-mobile");
+    expect(html).toContain("48% {\n          opacity: 0;");
     expect(html).not.toContain("setInterval");
     expect(html).not.toContain(".hero::before");
     expect(html).not.toContain(".bubble.incoming::after");
@@ -381,6 +384,17 @@ describe("public landing page", () => {
     harness.window.runNextTimer();
     expect(harness.stream.childElementCount).toBe(18);
     expect(harness.window.timers.size).toBe(0);
+  });
+
+  test("removes bubbles after the mobile rise animation finishes", async () => {
+    const harness = await createLandingPageHarness();
+    const finishedBubble = harness.stream.children[0];
+    if (!finishedBubble) throw new Error("expected an animated bubble");
+
+    await finishedBubble.dispatch("animationend", { animationName: "rise-mobile" });
+
+    expect(harness.stream.childElementCount).toBe(11);
+    expect(harness.window.timers.size).toBe(1);
   });
 
   test("responds to live reduced-motion changes", async () => {

@@ -220,6 +220,27 @@
         }
       }
 
+      @keyframes rise-mobile {
+        0% {
+          opacity: 1;
+          transform: translate3d(0, 0, 0) rotate(var(--rotation));
+        }
+
+        32% {
+          opacity: 1;
+        }
+
+        48% {
+          opacity: 0;
+        }
+
+        100% {
+          opacity: 0;
+          transform: translate3d(var(--drift), -85vh, 0)
+            rotate(calc(var(--rotation) + var(--spin)));
+        }
+      }
+
       @media (max-width: 620px) {
         .hero {
           padding-right: 0;
@@ -241,6 +262,7 @@
 
         .stream-bubble {
           max-width: 88vw;
+          animation-name: rise-mobile;
         }
 
         .bubble-body {
@@ -356,7 +378,7 @@
           bubble.addEventListener(
             "animationend",
             (event) => {
-              if (event.animationName !== "rise") return;
+              if (event.animationName !== "rise" && event.animationName !== "rise-mobile") return;
               bubble.remove();
               scheduleNextBubble();
             },
