@@ -141,8 +141,11 @@
         max-width: min(80vw, 29rem);
         opacity: 1;
         white-space: nowrap;
-        animation: rise var(--duration) linear var(--delay) forwards;
         will-change: transform, opacity;
+      }
+
+      .stream-bubble[data-fallback="true"] {
+        animation: rise var(--duration) linear var(--delay) infinite both;
       }
 
       .bubble-body {
@@ -155,23 +158,8 @@
         font-weight: 520;
         letter-spacing: -0.018em;
         line-height: 1.25;
-        animation:
-          send-bubble-in 600ms
-            linear(
-              0,
-              0.099 5%,
-              0.3 10%,
-              0.511 15%,
-              0.69 20%,
-              0.823 25%,
-              0.912 30%,
-              0.967 35%,
-              0.997 40%,
-              1 45%,
-              1
-            )
-            both,
-          send-bubble-opacity 200ms ease-out both;
+        opacity: 0;
+        animation: send-bubble-cycle var(--duration) linear var(--delay) infinite both;
         will-change: translate, scale, opacity;
       }
 
@@ -187,21 +175,36 @@
         color: #1d1d1f;
       }
 
-      @keyframes send-bubble-in {
-        from {
+      @keyframes send-bubble-cycle {
+        0% {
+          opacity: 0;
           scale: 0;
           translate: 0 80px;
+          animation-timing-function: linear(
+            0,
+            0.099 5%,
+            0.3 10%,
+            0.511 15%,
+            0.69 20%,
+            0.823 25%,
+            0.912 30%,
+            0.967 35%,
+            0.997 40%,
+            1 45%,
+            1
+          );
         }
 
-        to {
+        1.7% {
+          opacity: 1;
+        }
+
+        5%,
+        100% {
+          opacity: 1;
           scale: 1;
           translate: 0 0;
         }
-      }
-
-      @keyframes send-bubble-opacity {
-        from { opacity: 0; }
-        to { opacity: 1; }
       }
 
       @keyframes rise {
@@ -218,28 +221,6 @@
           opacity: 0;
           transform: translate3d(var(--drift), -85vh, 0)
             rotate(calc(var(--rotation) + var(--spin)));
-        }
-      }
-
-      @keyframes rise-mobile {
-        from {
-          transform: translate3d(0, 0, 0) rotate(var(--rotation));
-        }
-
-        to {
-          transform: translate3d(var(--drift), -85vh, 0)
-            rotate(calc(var(--rotation) + var(--spin)));
-        }
-      }
-
-      @keyframes fade-before-cta {
-        0%,
-        72% {
-          opacity: 1;
-        }
-
-        100% {
-          opacity: 0;
         }
       }
 
@@ -264,11 +245,6 @@
 
         .stream-bubble {
           max-width: 88vw;
-          animation-name: rise-mobile, fade-before-cta;
-          animation-duration: var(--duration), var(--mobile-fade-duration);
-          animation-delay: var(--delay), var(--delay);
-          animation-timing-function: linear, linear;
-          animation-fill-mode: forwards, forwards;
         }
 
         .bubble-body {
@@ -292,6 +268,10 @@
           bottom: auto;
           opacity: 0.22;
           transform: rotate(var(--rotation));
+        }
+
+        .stream-bubble[data-static="true"] .bubble-body {
+          opacity: 1;
         }
       }
     </style>
@@ -365,11 +345,16 @@
       const copyButton = document.querySelector("#copy-prompt");
       const defaultCopyLabel = "Help me get set up";
       const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const bubbleCount = 12;
+      const streamDuration = 16.8;
+      const mobileBreakpoint = 620;
+      const mobileFadeDistance = 100;
       let reducedMotion = motionPreference.matches;
       let promptIndex = 0;
-      let streamTimer;
+      let layoutWidth = window.innerWidth;
       let copyResetTimer;
       let copyAttempt = 0;
+      const bubbleAnimations = new Map();
 
       function positionBubble(bubble) {
         const gutter = 12;
@@ -378,40 +363,66 @@
         bubble.style.setProperty("--left", `${left}px`);
       }
 
-      function updateBubbleFadeTarget(bubble) {
-        const duration = Number.parseFloat(bubble.style.getPropertyValue("--duration"));
-        if (!Number.isFinite(duration)) return;
-
-        const buttonBottom = copyButton.getBoundingClientRect().bottom;
-        const distanceToButton = Math.max(0, bubble.offsetTop - buttonBottom);
-        const riseDistance = window.innerHeight * 0.85;
-        const fadeEndProgress = Math.min(1, distanceToButton / riseDistance);
-        bubble.style.setProperty(
-          "--mobile-fade-duration",
-          `${duration * fadeEndProgress}s`,
-        );
+      function stopBubbleAnimations() {
+        for (const animation of bubbleAnimations.values()) animation.cancel();
+        bubbleAnimations.clear();
       }
 
-      function updateBubbleFadeTargets() {
-        for (const bubble of stream.children) updateBubbleFadeTarget(bubble);
-      }
-
-      function scheduleNextBubble(delay = 850) {
-        if (reducedMotion || document.hidden || streamTimer) {
+      function animateBubble(bubble) {
+        if (typeof bubble.animate !== "function") {
+          bubble.dataset.fallback = "true";
           return;
         }
 
-        streamTimer = window.setTimeout(() => {
-          streamTimer = undefined;
-          createBubble();
-          scheduleNextBubble();
-        }, delay);
+        const rotation = Number.parseFloat(bubble.style.getPropertyValue("--rotation"));
+        const drift = Number.parseFloat(bubble.style.getPropertyValue("--drift"));
+        const spin = Number.parseFloat(bubble.style.getPropertyValue("--spin"));
+        const delay = Number.parseFloat(bubble.style.getPropertyValue("--delay"));
+        const mobile = window.innerWidth <= mobileBreakpoint;
+        let fadeStart = 0.71;
+        let fadeEnd = 1;
+
+        if (mobile) {
+          const buttonBottom = copyButton.getBoundingClientRect().bottom;
+          const riseDistance = window.innerHeight * 0.85;
+          const bubbleTop =
+            bubble.getBoundingClientRect().top ||
+            window.innerHeight - Math.max(16, window.innerHeight * 0.025) - bubble.offsetHeight;
+          fadeEnd = Math.min(
+            0.98,
+            Math.max(0.08, (bubbleTop - buttonBottom) / riseDistance),
+          );
+          fadeStart = Math.max(
+            0,
+            Math.min(
+              fadeEnd - 0.02,
+              (bubbleTop - buttonBottom - mobileFadeDistance) / riseDistance,
+            ),
+          );
+        }
+
+        function frame(offset, opacity) {
+          return {
+            offset,
+            opacity,
+            transform: `translate3d(${drift * offset}px, ${-85 * offset}vh, 0) rotate(${rotation + spin * offset}deg)`,
+          };
+        }
+
+        const keyframes = [frame(0, 1), frame(fadeStart, 1), frame(fadeEnd, 0)];
+        if (fadeEnd < 1) keyframes.push(frame(1, 0));
+
+        const animation = bubble.animate(keyframes, {
+          delay: delay * 1_000,
+          duration: streamDuration * 1_000,
+          easing: "linear",
+          fill: "both",
+          iterations: Number.POSITIVE_INFINITY,
+        });
+        bubbleAnimations.set(bubble, animation);
       }
 
-      function createBubble({ seed = false, staticBubble = false } = {}) {
-        if (!staticBubble && stream.childElementCount >= 18) {
-          stream.children[0]?.remove();
-        }
+      function createBubble({ streamIndex, staticBubble = false } = {}) {
 
         const bubble = document.createElement("span");
         const bubbleBody = document.createElement("span");
@@ -429,27 +440,24 @@
           bubble.dataset.static = "true";
           bubble.style.setProperty("--top", `${5 + Math.random() * 88}vh`);
         } else {
-          const duration = (13 + Math.random() * 6) * 0.76;
-          bubble.style.setProperty("--duration", `${duration}s`);
+          const delay = ((streamIndex ?? 0) * streamDuration) / bubbleCount;
+          bubble.style.setProperty("--duration", `${streamDuration}s`);
           bubble.style.setProperty(
             "--delay",
-            seed ? `${-Math.random() * duration * 0.72}s` : "0s",
+            streamIndex === 0 ? "0s" : `${delay}s`,
           );
           bubble.style.setProperty("--drift", `${-80 + Math.random() * 160}px`);
           bubble.style.setProperty("--spin", `${-8 + Math.random() * 16}deg`);
-          bubble.addEventListener(
-            "animationend",
-            (event) => {
-              if (event.animationName !== "rise" && event.animationName !== "rise-mobile") return;
-              bubble.remove();
-              scheduleNextBubble();
-            },
-          );
+          bubbleBody.addEventListener("animationiteration", () => {
+            bubbleBody.textContent = promptExamples[promptIndex % promptExamples.length];
+            promptIndex += 1;
+            positionBubble(bubble);
+          });
         }
 
         stream.append(bubble);
         positionBubble(bubble);
-        updateBubbleFadeTarget(bubble);
+        if (!staticBubble) animateBubble(bubble);
       }
 
       function initializeBubbleStream() {
@@ -458,31 +466,27 @@
           return;
         }
 
-        for (let index = 0; index < 12; index += 1) createBubble({ seed: true });
-        createBubble();
-        scheduleNextBubble();
+        for (let index = 0; index < bubbleCount; index += 1) {
+          createBubble({ streamIndex: index });
+        }
       }
 
       function resetBubbleStream(nextReducedMotion) {
-        window.clearTimeout(streamTimer);
-        streamTimer = undefined;
+        stopBubbleAnimations();
         stream.replaceChildren();
         reducedMotion = nextReducedMotion;
+        layoutWidth = window.innerWidth;
         initializeBubbleStream();
+      }
+
+      function handleResize() {
+        if (window.innerWidth === layoutWidth) return;
+        resetBubbleStream(reducedMotion);
       }
 
       initializeBubbleStream();
       motionPreference.addEventListener("change", (event) => resetBubbleStream(event.matches));
-      window.addEventListener("resize", updateBubbleFadeTargets);
-      document.addEventListener("visibilitychange", () => {
-        if (document.hidden) {
-          window.clearTimeout(streamTimer);
-          streamTimer = undefined;
-        } else {
-          createBubble();
-          scheduleNextBubble();
-        }
-      });
+      window.addEventListener("resize", handleResize);
 
       async function copySetupPrompt(event) {
         event.preventDefault();

@@ -68,6 +68,11 @@ class FakeStyle {
 }
 
 class FakeElement extends FakeEventTarget {
+  readonly animations: Array<{
+    canceled: boolean;
+    keyframes: Array<Record<string, number | string>>;
+    options: Record<string, number | string>;
+  }> = [];
   readonly children: FakeElement[] = [];
   readonly dataset: Record<string, string> = {};
   readonly style = new FakeStyle();
@@ -84,8 +89,25 @@ class FakeElement extends FakeEventTarget {
     return this.children.length;
   }
 
-  getBoundingClientRect(): { bottom: number } {
-    return { bottom: this.offsetTop + this.offsetHeight };
+  getBoundingClientRect(): { bottom: number; top: number } {
+    return { bottom: this.offsetTop + this.offsetHeight, top: this.offsetTop };
+  }
+
+  animate(
+    keyframes: Array<Record<string, number | string>>,
+    options: Record<string, number | string>,
+  ): { cancel(): void } {
+    const animation = {
+      canceled: false,
+      keyframes,
+      options,
+    };
+    this.animations.push(animation);
+    return {
+      cancel: () => {
+        animation.canceled = true;
+      },
+    };
   }
 
   append(child: FakeElement): void {
@@ -202,6 +224,7 @@ type LandingPageHarness = {
 
 async function createLandingPageHarness(options: {
   clipboardRejects?: boolean;
+  innerWidth?: number;
   reducedMotion?: boolean;
 } = {}): Promise<LandingPageHarness> {
   const html = await read("index.html");
@@ -222,6 +245,7 @@ async function createLandingPageHarness(options: {
   copyButton.textContent = "Help me get set up";
   const document = new FakeDocument(stream, copyButton);
   const window = new FakeWindow(options.reducedMotion);
+  window.innerWidth = options.innerWidth ?? window.innerWidth;
   const copiedText: string[] = [];
   const navigator = {
     clipboard: {
@@ -313,7 +337,7 @@ describe("public landing page", () => {
     expect(view.getUint32(20)).toBe(630);
   });
 
-  test("uses Contact's send animation before the rising fade", async () => {
+  test("uses Contact's send animation with a shared rising fade timeline", async () => {
     const html = await read("index.html");
 
     expect(html).toContain('data-bubble-stream');
@@ -321,20 +345,16 @@ describe("public landing page", () => {
     expect(html).toContain("@claude");
     expect(html).toContain("@plan");
     expect(html).toContain("--rotation");
-    expect(html).toContain("@keyframes send-bubble-in");
-    expect(html).toContain("send-bubble-in 600ms");
-    expect(html).toContain("send-bubble-opacity 200ms");
+    expect(html).toContain("@keyframes send-bubble-cycle");
+    expect(html).toContain("send-bubble-cycle var(--duration)");
     expect(html).toContain("scale: 0");
     expect(html).toContain("translate: 0 80px");
     expect(html).toContain("align-items: start");
-    expect(html).toContain(
-      "opacity: 0;\n          transform: translate3d(var(--drift), -85vh, 0)",
-    );
-    expect(html).toContain("@keyframes rise-mobile");
-    expect(html).toContain("@keyframes fade-before-cta");
-    expect(html).toContain("animation-name: rise-mobile, fade-before-cta");
+    expect(html).toContain("bubble.animate(keyframes");
+    expect(html).toContain("iterations: Number.POSITIVE_INFINITY");
+    expect(html).toContain("transform: `translate3d(");
     expect(html).toContain('copyButton.getBoundingClientRect().bottom');
-    expect(html).toContain('bubble.style.setProperty(\n          "--mobile-fade-duration"');
+    expect(html).toContain("if (window.innerWidth === layoutWidth) return");
     expect(html).not.toContain("68% {\n          opacity: 0;");
     expect(html).not.toContain("setInterval");
     expect(html).not.toContain(".hero::before");
@@ -370,79 +390,72 @@ describe("public landing page", () => {
     expect(harness.window.assignedLocations).toEqual([harness.copyButton.href]);
   });
 
-  test("starts immediately, stays continuous, and pauses and resumes while hidden", async () => {
+  test("starts one bubble immediately and keeps a continuous staggered stream", async () => {
     const harness = await createLandingPageHarness();
 
-    expect(harness.stream.childElementCount).toBe(13);
-    expect(harness.stream.children.at(-1)?.style.properties.get("--delay")).toBe("0s");
-    expect(harness.window.timers.size).toBe(1);
-
-    while (harness.stream.childElementCount < 18) harness.window.runNextTimer();
-    expect(harness.stream.childElementCount).toBe(18);
-    expect(harness.window.timers.size).toBe(1);
-    expect(
-      harness.stream.children.every((bubble) =>
-        bubble.style.properties.has("--mobile-fade-duration"),
-      ),
-    ).toBe(true);
-
-    const oldestBubble = harness.stream.children[0];
-    harness.window.runNextTimer();
-    expect(harness.stream.childElementCount).toBe(18);
-    expect(harness.stream.children.includes(oldestBubble!)).toBe(false);
-    expect(harness.window.timers.size).toBe(1);
-
-    const finishedBubble = harness.stream.children[0];
-    if (!finishedBubble) throw new Error("expected an animated bubble");
-    await finishedBubble.dispatch("animationend", { animationName: "send-bubble-in" });
-    expect(harness.stream.childElementCount).toBe(18);
-
-    await finishedBubble.dispatch("animationend", { animationName: "send-bubble-opacity" });
-    expect(harness.stream.childElementCount).toBe(18);
-
-    await finishedBubble.dispatch("animationend", { animationName: "rise" });
-    expect(harness.stream.childElementCount).toBe(17);
-    expect(harness.window.timers.size).toBe(1);
+    expect(harness.stream.childElementCount).toBe(12);
+    const delays = harness.stream.children.map((bubble) =>
+      Number.parseFloat(bubble.style.properties.get("--delay") ?? ""),
+    );
+    expect(delays.filter((delay) => delay <= 0)).toHaveLength(1);
+    expect(delays).toEqual([...delays].sort((left, right) => left - right));
+    const intervals = delays.slice(1).map((delay, index) => delay - delays[index]!);
+    expect(Math.min(...intervals)).toBeGreaterThanOrEqual(1.25);
+    expect(harness.window.timers.size).toBe(0);
+    expect(harness.stream.children.every((bubble) => bubble.animations.length === 1)).toBe(
+      true,
+    );
 
     harness.document.hidden = true;
     await harness.document.dispatch("visibilitychange");
+    expect(harness.stream.childElementCount).toBe(12);
     expect(harness.window.timers.size).toBe(0);
-
-    harness.document.hidden = false;
-    await harness.document.dispatch("visibilitychange");
-    expect(harness.stream.childElementCount).toBe(18);
-    expect(harness.window.timers.size).toBe(1);
-    harness.window.runNextTimer();
-    expect(harness.stream.childElementCount).toBe(18);
-    expect(harness.window.timers.size).toBe(1);
   });
 
-  test("removes bubbles after the mobile rise animation finishes", async () => {
+  test("advances inspiration without replacing the looping bubble", async () => {
     const harness = await createLandingPageHarness();
-    const finishedBubble = harness.stream.children[0];
-    if (!finishedBubble) throw new Error("expected an animated bubble");
+    const bubble = harness.stream.children[0];
+    const bubbleBody = bubble?.children[0];
+    if (!bubble || !bubbleBody) throw new Error("expected an animated bubble");
+    const initialText = bubbleBody.textContent;
 
-    await finishedBubble.dispatch("animationend", { animationName: "rise-mobile" });
+    await bubbleBody.dispatch("animationiteration");
 
     expect(harness.stream.childElementCount).toBe(12);
-    expect(harness.window.timers.size).toBe(1);
+    expect(harness.stream.children[0]).toBe(bubble);
+    expect(bubbleBody.textContent).not.toBe(initialText);
   });
 
   test("anchors the mobile fade endpoint to the setup button position", async () => {
-    const harness = await createLandingPageHarness();
+    const harness = await createLandingPageHarness({ innerWidth: 390 });
     const bubble = harness.stream.children[0];
     if (!bubble) throw new Error("expected an animated bubble");
-    const initialFadeDuration = Number.parseFloat(
-      bubble.style.properties.get("--mobile-fade-duration") ?? "",
+    const animation = bubble.animations[0];
+    if (!animation) throw new Error("expected a bubble animation");
+    const fadeFrame = animation.keyframes.find(
+      (frame) => frame.opacity === 0 && Number(frame.offset) < 1,
     );
+    const expectedFadeEnd =
+      (bubble.offsetTop - harness.copyButton.getBoundingClientRect().bottom) /
+      (harness.window.innerHeight * 0.85);
 
-    harness.copyButton.offsetTop += 120;
+    expect(Number(fadeFrame?.offset)).toBeCloseTo(expectedFadeEnd);
+    expect(animation.keyframes[0]?.transform).toContain("translate3d");
+    expect(animation.options.duration).toBe(16_800);
+    expect(animation.options.iterations).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  test("does not restart bubbles during a height-only mobile resize", async () => {
+    const harness = await createLandingPageHarness({ innerWidth: 390 });
+    const bubbles = [...harness.stream.children];
+
     await harness.window.dispatch("resize");
 
-    const updatedFadeDuration = Number.parseFloat(
-      bubble.style.properties.get("--mobile-fade-duration") ?? "",
-    );
-    expect(updatedFadeDuration).toBeLessThan(initialFadeDuration);
+    expect(harness.stream.children).toEqual(bubbles);
+    expect(bubbles.every((bubble) => bubble.animations.length === 1)).toBe(true);
+    expect(
+      bubbles.every((bubble) => bubble.animations.every((animation) => !animation.canceled)),
+    ).toBe(true);
   });
 
   test("responds to live reduced-motion changes", async () => {
@@ -454,17 +467,17 @@ describe("public landing page", () => {
     expect(harness.stream.children.every((bubble) => bubble.dataset.static === "true")).toBe(true);
 
     await harness.motionPreference.change(false);
-    expect(harness.stream.childElementCount).toBe(13);
-    expect(harness.window.timers.size).toBe(1);
+    expect(harness.stream.childElementCount).toBe(12);
+    expect(harness.window.timers.size).toBe(0);
     expect(harness.stream.children.every((bubble) => bubble.dataset.static === undefined)).toBe(true);
     expect(
-      harness.stream.children.slice(0, 12).every(
+      harness.stream.children.every(
         (bubble) =>
           bubble.style.properties.has("--duration") &&
-          bubble.style.properties.get("--delay")?.startsWith("-") === true,
+          Number.parseFloat(bubble.style.properties.get("--delay") ?? "") >= 0,
       ),
     ).toBe(true);
-    expect(harness.stream.children.at(-1)?.style.properties.get("--delay")).toBe("0s");
+    expect(harness.stream.children[0]?.style.properties.get("--delay")).toBe("0s");
   });
 
   test("provides a complete agent-readable setup handoff", async () => {
