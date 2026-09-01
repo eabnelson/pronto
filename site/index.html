@@ -158,7 +158,8 @@
         font-weight: 520;
         letter-spacing: -0.018em;
         line-height: 1.25;
-        animation: bubble-cycle-signal var(--duration) linear var(--delay) infinite;
+        animation: send-bubble-cycle var(--duration) linear var(--delay) infinite both;
+        will-change: transform, opacity;
       }
 
       .bubble-body.blue {
@@ -173,13 +174,17 @@
         color: #1d1d1f;
       }
 
-      @keyframes bubble-cycle-signal {
-        from {
-          --bubble-cycle: 0;
+      @keyframes send-bubble-cycle {
+        0% {
+          opacity: 0;
+          transform: translate3d(0, 18px, 0) scale(0.82);
+          animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        to {
-          --bubble-cycle: 1;
+        4%,
+        100% {
+          opacity: 1;
+          transform: translate3d(0, 0, 0) scale(1);
         }
       }
 
@@ -322,8 +327,7 @@
       const streamDuration = 16.8;
       const mobileBreakpoint = 620;
       const mobileFadeDistance = 100;
-      const entranceOpacityEnd = 0.017;
-      const entranceEnd = 0.05;
+      const entranceEnd = 0.04;
       let reducedMotion = motionPreference.matches;
       let promptIndex = 0;
       let layoutWidth = window.innerWidth;
@@ -379,30 +383,19 @@
           );
         }
 
-        function frame(offset, opacity, scale = 1, entranceLift = 0) {
+        function frame(offset, opacity) {
           return {
             offset,
             opacity,
-            transform: `translate3d(${drift * offset}px, ${-85 * offset}vh, 0) translateY(${entranceLift}px) rotate(${rotation + spin * offset}deg) scale(${scale})`,
+            transform: `translate3d(${drift * offset}px, ${-85 * offset}vh, 0) rotate(${rotation + spin * offset}deg)`,
           };
         }
 
         const keyframes = [
-          {
-            ...frame(0, 0, 0, 80),
-            easing:
-              "linear(0, 0.099 5%, 0.3 10%, 0.511 15%, 0.69 20%, 0.823 25%, 0.912 30%, 0.967 35%, 0.997 40%, 1 45%, 1)",
-          },
-          {
-            ...frame(entranceOpacityEnd, 1, 0.967, 2.64),
-            easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
-          },
-          frame(entranceEnd, 1),
+          frame(0, 1),
+          frame(fadeStart, 1),
           frame(fadeEnd, 0),
         ];
-        if (fadeStart > entranceEnd) {
-          keyframes.splice(keyframes.length - 1, 0, frame(fadeStart, 1));
-        }
         if (fadeEnd < 1) keyframes.push(frame(1, 0));
 
         const animation = bubble.animate(keyframes, {
@@ -426,7 +419,6 @@
         bubbleBody.className = `bubble-body ${color}`;
         bubbleBody.textContent = promptExamples[promptIndex % promptExamples.length];
         bubble.style.setProperty("--rotation", `${rotation}deg`);
-        bubble.style.transformOrigin = color === "blue" ? "right bottom" : "left bottom";
         bubble.append(bubbleBody);
         promptIndex += 1;
 

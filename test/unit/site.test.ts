@@ -337,7 +337,7 @@ describe("public landing page", () => {
     expect(view.getUint32(20)).toBe(630);
   });
 
-  test("uses Contact's send animation with a shared rising fade timeline", async () => {
+  test("keeps the send entrance separate from the rising fade timeline", async () => {
     const html = await read("index.html");
 
     expect(html).toContain('data-bubble-stream');
@@ -345,10 +345,11 @@ describe("public landing page", () => {
     expect(html).toContain("@claude");
     expect(html).toContain("@plan");
     expect(html).toContain("--rotation");
-    expect(html).toContain("@keyframes bubble-cycle-signal");
-    expect(html).toContain("bubble-cycle-signal var(--duration)");
-    expect(html).toContain("frame(0, 0, 0, 80)");
-    expect(html).toContain("translateY(${entranceLift}px)");
+    expect(html).toContain("@keyframes send-bubble-cycle");
+    expect(html).toContain("send-bubble-cycle var(--duration)");
+    expect(html).toContain("transform: translate3d(0, 18px, 0) scale(0.82)");
+    expect(html).toContain("frame(0, 1)");
+    expect(html).not.toContain("translateY(${entranceLift}px)");
     expect(html).toContain("align-items: start");
     expect(html).toContain("bubble.animate(keyframes");
     expect(html).toContain("iterations: Number.POSITIVE_INFINITY");
@@ -406,17 +407,19 @@ describe("public landing page", () => {
       true,
     );
     for (const bubble of harness.stream.children) {
-      const keyframes = bubble.animations[0]?.keyframes;
+      const animation = bubble.animations[0];
+      const keyframes = animation?.keyframes;
+      expect(animation?.options.easing).toBe("linear");
       expect(keyframes?.[0]).toMatchObject({
-        opacity: 0,
-        transform: expect.stringContaining("scale(0)"),
+        opacity: 1,
+        transform: expect.stringContaining("translate3d"),
       });
-      expect(keyframes).toContainEqual(
-        expect.objectContaining({
-          opacity: 1,
-          transform: expect.stringContaining("scale(1)"),
-        }),
-      );
+      for (const frame of keyframes ?? []) {
+        expect(frame.easing).toBeUndefined();
+        const transform = String(frame.transform ?? "");
+        expect(transform).not.toContain("translateY");
+        expect(transform).not.toContain("scale");
+      }
     }
 
     harness.document.hidden = true;
