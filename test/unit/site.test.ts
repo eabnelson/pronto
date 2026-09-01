@@ -345,10 +345,10 @@ describe("public landing page", () => {
     expect(html).toContain("@claude");
     expect(html).toContain("@plan");
     expect(html).toContain("--rotation");
-    expect(html).toContain("@keyframes send-bubble-cycle");
-    expect(html).toContain("send-bubble-cycle var(--duration)");
-    expect(html).toContain("scale: 0");
-    expect(html).toContain("translate: 0 80px");
+    expect(html).toContain("@keyframes bubble-cycle-signal");
+    expect(html).toContain("bubble-cycle-signal var(--duration)");
+    expect(html).toContain("frame(0, 0, 0, 80)");
+    expect(html).toContain("translateY(${entranceLift}px)");
     expect(html).toContain("align-items: start");
     expect(html).toContain("bubble.animate(keyframes");
     expect(html).toContain("iterations: Number.POSITIVE_INFINITY");
@@ -405,6 +405,19 @@ describe("public landing page", () => {
     expect(harness.stream.children.every((bubble) => bubble.animations.length === 1)).toBe(
       true,
     );
+    for (const bubble of harness.stream.children) {
+      const keyframes = bubble.animations[0]?.keyframes;
+      expect(keyframes?.[0]).toMatchObject({
+        opacity: 0,
+        transform: expect.stringContaining("scale(0)"),
+      });
+      expect(keyframes).toContainEqual(
+        expect.objectContaining({
+          opacity: 1,
+          transform: expect.stringContaining("scale(1)"),
+        }),
+      );
+    }
 
     harness.document.hidden = true;
     await harness.document.dispatch("visibilitychange");
@@ -433,7 +446,8 @@ describe("public landing page", () => {
     const animation = bubble.animations[0];
     if (!animation) throw new Error("expected a bubble animation");
     const fadeFrame = animation.keyframes.find(
-      (frame) => frame.opacity === 0 && Number(frame.offset) < 1,
+      (frame) =>
+        frame.opacity === 0 && Number(frame.offset) > 0.05 && Number(frame.offset) < 1,
     );
     const expectedFadeEnd =
       (bubble.offsetTop - harness.copyButton.getBoundingClientRect().bottom) /

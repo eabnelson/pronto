@@ -158,9 +158,7 @@
         font-weight: 520;
         letter-spacing: -0.018em;
         line-height: 1.25;
-        opacity: 0;
-        animation: send-bubble-cycle var(--duration) linear var(--delay) infinite both;
-        will-change: translate, scale, opacity;
+        animation: bubble-cycle-signal var(--duration) linear var(--delay) infinite;
       }
 
       .bubble-body.blue {
@@ -175,35 +173,13 @@
         color: #1d1d1f;
       }
 
-      @keyframes send-bubble-cycle {
-        0% {
-          opacity: 0;
-          scale: 0;
-          translate: 0 80px;
-          animation-timing-function: linear(
-            0,
-            0.099 5%,
-            0.3 10%,
-            0.511 15%,
-            0.69 20%,
-            0.823 25%,
-            0.912 30%,
-            0.967 35%,
-            0.997 40%,
-            1 45%,
-            1
-          );
+      @keyframes bubble-cycle-signal {
+        from {
+          --bubble-cycle: 0;
         }
 
-        1.7% {
-          opacity: 1;
-        }
-
-        5%,
-        100% {
-          opacity: 1;
-          scale: 1;
-          translate: 0 0;
+        to {
+          --bubble-cycle: 1;
         }
       }
 
@@ -270,9 +246,6 @@
           transform: rotate(var(--rotation));
         }
 
-        .stream-bubble[data-static="true"] .bubble-body {
-          opacity: 1;
-        }
       }
     </style>
   </head>
@@ -349,6 +322,8 @@
       const streamDuration = 16.8;
       const mobileBreakpoint = 620;
       const mobileFadeDistance = 100;
+      const entranceOpacityEnd = 0.017;
+      const entranceEnd = 0.05;
       let reducedMotion = motionPreference.matches;
       let promptIndex = 0;
       let layoutWidth = window.innerWidth;
@@ -390,10 +365,13 @@
             window.innerHeight - Math.max(16, window.innerHeight * 0.025) - bubble.offsetHeight;
           fadeEnd = Math.min(
             0.98,
-            Math.max(0.08, (bubbleTop - buttonBottom) / riseDistance),
+            Math.max(
+              entranceEnd + 0.02,
+              (bubbleTop - buttonBottom) / riseDistance,
+            ),
           );
           fadeStart = Math.max(
-            0,
+            entranceEnd,
             Math.min(
               fadeEnd - 0.02,
               (bubbleTop - buttonBottom - mobileFadeDistance) / riseDistance,
@@ -401,15 +379,30 @@
           );
         }
 
-        function frame(offset, opacity) {
+        function frame(offset, opacity, scale = 1, entranceLift = 0) {
           return {
             offset,
             opacity,
-            transform: `translate3d(${drift * offset}px, ${-85 * offset}vh, 0) rotate(${rotation + spin * offset}deg)`,
+            transform: `translate3d(${drift * offset}px, ${-85 * offset}vh, 0) translateY(${entranceLift}px) rotate(${rotation + spin * offset}deg) scale(${scale})`,
           };
         }
 
-        const keyframes = [frame(0, 1), frame(fadeStart, 1), frame(fadeEnd, 0)];
+        const keyframes = [
+          {
+            ...frame(0, 0, 0, 80),
+            easing:
+              "linear(0, 0.099 5%, 0.3 10%, 0.511 15%, 0.69 20%, 0.823 25%, 0.912 30%, 0.967 35%, 0.997 40%, 1 45%, 1)",
+          },
+          {
+            ...frame(entranceOpacityEnd, 1, 0.967, 2.64),
+            easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+          },
+          frame(entranceEnd, 1),
+          frame(fadeEnd, 0),
+        ];
+        if (fadeStart > entranceEnd) {
+          keyframes.splice(keyframes.length - 1, 0, frame(fadeStart, 1));
+        }
         if (fadeEnd < 1) keyframes.push(frame(1, 0));
 
         const animation = bubble.animate(keyframes, {
@@ -433,6 +426,7 @@
         bubbleBody.className = `bubble-body ${color}`;
         bubbleBody.textContent = promptExamples[promptIndex % promptExamples.length];
         bubble.style.setProperty("--rotation", `${rotation}deg`);
+        bubble.style.transformOrigin = color === "blue" ? "right bottom" : "left bottom";
         bubble.append(bubbleBody);
         promptIndex += 1;
 
