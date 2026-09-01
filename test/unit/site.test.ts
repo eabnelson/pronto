@@ -291,7 +291,7 @@ describe("public landing page", () => {
     const html = await read("index.html");
 
     expect(html).toContain(">Pick any tag</h1>");
-    expect(html).toContain("iMessage Codex or Claude from any conversation");
+    expect(html).toContain("iMessage your agent from any conversation");
     expect(html).toContain('id="copy-prompt"');
     expect(html).toContain('href="https://studiofour.io/imessage-setup.md"');
     expect(html).toContain(">Help me get set up</a>");
