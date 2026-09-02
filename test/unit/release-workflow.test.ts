@@ -53,7 +53,8 @@ describe("release workflow", () => {
       "dist/pronto-imessage-*.tgz",
       "sha256sum -c pronto-imessage.sha256",
       "workflow_dispatch:",
-      "ref: ${{ inputs.release_tag || github.ref }}",
+      "ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}",
+      'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
     ]) {
       expect(releaseWorkflowViolations(workflow.replace(control, "removed-control")))
         .not.toEqual([]);
@@ -79,7 +80,11 @@ describe("release workflow", () => {
 
     expect(workflow).toContain("release_tag:");
     expect(workflow).toContain("RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}");
-    expect(workflow).toContain("ref: ${{ inputs.release_tag || github.ref }}");
+    expect(workflow).toContain(
+      "ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}",
+    );
+    expect(workflow).toContain("Verify recovery checkout is the immutable tag");
+    expect(workflow).toContain('git rev-parse "refs/tags/$RELEASE_TAG^{commit}"');
     expect(workflow).toContain('test "v$VERSION" = "$RELEASE_TAG"');
     expect(workflow).toContain('echo "release-tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"');
     expect(workflow).toContain("RELEASE_TAG: ${{ needs.build.outputs.release-tag }}");

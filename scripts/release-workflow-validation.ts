@@ -8,7 +8,14 @@ const REQUIRED_CONTROLS = [
   ["dist/pronto-imessage-*.tgz", "package release artifact"],
   ["sha256sum -c pronto-imessage.sha256", "downloaded package checksum verification"],
   ["workflow_dispatch:", "manual immutable-tag recovery"],
-  ["ref: ${{ inputs.release_tag || github.ref }}", "tag-pinned recovery checkout"],
+  [
+    "ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}",
+    "tag-pinned recovery checkout",
+  ],
+  [
+    'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
+    "peeled recovery tag verification",
+  ],
 ] as const;
 
 const ORDERED_STEPS = [
