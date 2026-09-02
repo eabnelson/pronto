@@ -14,6 +14,8 @@ jobs:
     permissions:
       contents: read
     outputs:
+      package-file: ${{ steps.release-version.outputs.package-file }}
+      package-version: ${{ steps.release-version.outputs.package-version }}
       prerelease: ${{ steps.release-version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -38,7 +40,11 @@ jobs:
         id: release-version
         run: |
           VERSION="$(bun -e 'import packageJson from "./package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
+          PACKAGE_VERSION="$(bun -e 'import packageJson from "./packages/messages/package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
           test "v$VERSION" = "$GITHUB_REF_NAME"
+          test "$VERSION" = "$PACKAGE_VERSION"
+          echo "package-file=pronto-imessage-$PACKAGE_VERSION.tgz" >> "$GITHUB_OUTPUT"
+          echo "package-version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *-* ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
@@ -47,12 +53,16 @@ jobs:
       - name: Verify owner qualification is complete
         run: bun ./scripts/release-qualification.ts docs/RELEASE_QUALIFICATION.md "$GITHUB_REF_NAME"
       - name: Create and verify checksum
-        working-directory: dist
         run: |
+          npm pack ./packages/messages --pack-destination ./dist
+          test -f "dist/${{ steps.release-version.outputs.package-file }}"
+          cd dist
           shasum -a 256 pronto > pronto.sha256
           shasum -a 256 -c pronto.sha256
           shasum -a 256 s4imsg > s4imsg.sha256
           shasum -a 256 -c s4imsg.sha256
+          shasum -a 256 "${{ steps.release-version.outputs.package-file }}" > pronto-imessage.sha256
+          shasum -a 256 -c pronto-imessage.sha256
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pronto-macos
@@ -62,16 +72,22 @@ jobs:
             dist/pronto.sha256
             dist/s4imsg
             dist/s4imsg.sha256
+            dist/pronto-imessage-*.tgz
+            dist/pronto-imessage.sha256
 
   publish:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
       IS_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      PACKAGE_FILE: ${{ needs.build.outputs.package-file }}
+      PACKAGE_VERSION: ${{ needs.build.outputs.package-version }}
     steps:
       - name: Refuse to mutate an existing release
         run: |
@@ -89,11 +105,16 @@ jobs:
         with:
           name: pronto-macos
           path: release-assets
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.1
+          registry-url: https://registry.npmjs.org
       - name: Verify downloaded checksum
         working-directory: release-assets
         run: |
           sha256sum -c pronto.sha256
           sha256sum -c s4imsg.sha256
+          sha256sum -c pronto-imessage.sha256
       - name: Create draft release
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag \
@@ -102,21 +123,32 @@ jobs:
         run: |
           gh release upload "$GITHUB_REF_NAME" \
             release-assets/pronto release-assets/pronto.sha256 \
-            release-assets/s4imsg release-assets/s4imsg.sha256
+            release-assets/s4imsg release-assets/s4imsg.sha256 \
+            "release-assets/$PACKAGE_FILE" release-assets/pronto-imessage.sha256
 
           RELEASE_ID="$(
             gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
-              jq -r --arg tag "$GITHUB_REF_NAME" '
+              jq -r --arg tag "$GITHUB_REF_NAME" --arg package "$PACKAGE_FILE" '
                 .[] |
                 select(
                   .tag_name == $tag and
                   .draft == true and
-                  ([.assets[].name] | sort) == ["pronto", "pronto.sha256", "s4imsg", "s4imsg.sha256"]
+                  ([.assets[].name] | sort) == (["pronto", "pronto.sha256", "pronto-imessage.sha256", $package, "s4imsg", "s4imsg.sha256"] | sort)
                 ) |
                 .id
               '
           )"
           test -n "$RELEASE_ID"
+      - name: Publish and verify pronto-imessage
+        run: |
+          LOCAL_SHASUM="$(sha1sum "release-assets/$PACKAGE_FILE" | awk '{print $1}')"
+          REMOTE_SHASUM="$(npm view "pronto-imessage@$PACKAGE_VERSION" dist.shasum 2>/dev/null || true)"
+          if [[ -n "$REMOTE_SHASUM" ]]; then
+            test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"
+          else
+            npm publish "release-assets/$PACKAGE_FILE" --provenance --access public
+          fi
+          test "$(npm view "pronto-imessage@$PACKAGE_VERSION" version)" = "$PACKAGE_VERSION"
       - name: Publish verified release
         run: |
           gh release edit "$GITHUB_REF_NAME" --draft=false

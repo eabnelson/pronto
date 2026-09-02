@@ -4,6 +4,7 @@ import { join } from "node:path";
 import packageJson from "../package.json" with { type: "json" };
 import messagesPackageJson from "../packages/messages/package.json" with { type: "json" };
 import { providerOwnershipViolations } from "./provider-ownership";
+import { releaseWorkflowViolations } from "./release-workflow-validation";
 import { mutableActionReferences } from "./workflow-validation";
 
 const root = join(import.meta.dir, "..");
@@ -137,6 +138,8 @@ const [codexAdapter, claudeAdapter, qualification] = await Promise.all([
   read("packages/cli/src/runtimes/claude.ts"),
   read("packages/cli/src/runtimes/qualification.ts"),
 ]);
+const releaseWorkflow = await read(".github/workflows/release.yml");
+failures.push(...releaseWorkflowViolations(releaseWorkflow));
 for (const [name, source] of [
   ["Codex", codexAdapter],
   ["Claude Code", claudeAdapter],

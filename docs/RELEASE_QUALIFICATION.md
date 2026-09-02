@@ -33,6 +33,8 @@ strings alone, determine whether setup and startup proceed.
 - Packed `pronto-imessage` imports successfully under Node.js 22.23.1 and Bun 1.3.14
 - Compiled `pronto` version/help and legacy `s4imsg` version smoke checks
 - Clean-room provenance and third-party notices present
+- `pronto-imessage` is packed, checksummed, attached to the immutable GitHub
+  release, and published to npm with provenance only after this matrix passes
 - No dependency or import from Studio Four packages
 - No model override or inherited interactive permission mode in adapters
 - Exact unrestricted no-prompt flag present in each runtime adapter and required
