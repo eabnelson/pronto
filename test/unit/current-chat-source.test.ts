@@ -79,6 +79,7 @@ test("queries details, rich history, and materialized attachments through public
       status: "ready",
     }),
     reply: async () => ({ providerMessageId: "reply", status: "confirmed" }),
+    resolveConversation: async () => null,
     subscribe: async () => ({
       close: async () => undefined,
       terminated: new Promise<void>(() => undefined),

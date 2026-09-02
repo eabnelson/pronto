@@ -5,6 +5,7 @@ import {
   type RpcNotification,
 } from "./internal/rpc.js";
 import { createHash } from "node:crypto";
+import { isAbsolute } from "node:path";
 import {
   databasePath,
   normalizeConversationFacts,
@@ -33,6 +34,7 @@ import type {
   MessagesQualification,
   MessagesRecoveryOutcome,
   MessagesRecoveryReason,
+  ResolvedConversation,
   MessagesSubscription,
   ProntoMessages,
 } from "./types.js";
@@ -56,7 +58,15 @@ export type {
   MessagesSubscription,
   ProntoMessages,
   MaterializedAttachment,
+  ResolvedConversation,
 } from "./types.js";
+
+const CHAT_CATALOG_LIMITS = [128, 512, 2_048, 4_096] as const;
+
+function safeProviderCoordinate(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 1_024 &&
+    !/[\u0000-\u001f]/u.test(value);
+}
 
 function messageDateMs(value: string | null): number | null {
   if (value === null) return null;
@@ -481,6 +491,9 @@ class ProntoMessagesClient implements ProntoMessages {
   }
 
   async reply(input: Parameters<ProntoMessages["reply"]>[0]): Promise<DeliveryOutcome> {
+    if (input.filePath !== undefined && !isAbsolute(input.filePath)) {
+      return { retryable: false, status: "failed" };
+    }
     const conversation = await this.#scoped.conversation(input.conversation, true).catch((error) => {
       if (error instanceof ConversationReferenceExpiredError) {
         return null;
@@ -491,6 +504,7 @@ class ProntoMessagesClient implements ProntoMessages {
     try {
       const result = record(await this.#rpc.request("send", {
         chat_id: conversation.chatId,
+        ...(input.filePath === undefined ? {} : { file: input.filePath }),
         text: input.text,
       }));
       if (result.ok !== true) return { retryable: false, status: "failed" };
@@ -505,6 +519,41 @@ class ProntoMessagesClient implements ProntoMessages {
         ? { status: "ambiguous" }
         : { retryable: data.retry_safe === true, status: "failed" };
     }
+  }
+
+  async resolveConversation(
+    input: Parameters<ProntoMessages["resolveConversation"]>[0],
+  ): Promise<ResolvedConversation | null> {
+    if (!safeProviderCoordinate(input.accountId) || !safeProviderCoordinate(input.conversationId)) {
+      return null;
+    }
+    const qualification = await this.qualify();
+    const chat = await this.#findExactChat({
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+    });
+    if (chat === null || typeof chat.id !== "number") return null;
+    const history = record(await this.#rpc.request("messages.history", {
+      attachments: false,
+      chat_id: chat.id,
+      limit: 1,
+    }));
+    const messages = history.messages;
+    if (!Array.isArray(messages) || messages.length !== 1) return null;
+    const stats = await this.#rpc.request("messages.stats", { chat_id: chat.id });
+    const facts = normalizeConversationFacts(stats, chat.id, messages[0], chat);
+    if (
+      facts.routing?.accountId !== input.accountId ||
+      facts.routing.conversationId !== input.conversationId
+    ) return null;
+    return {
+      conversation: this.#scoped.issueConversation(
+        chat.id,
+        qualification.databaseGeneration,
+        facts,
+      ),
+      facts,
+    };
   }
 
   async #deliver(
@@ -532,7 +581,18 @@ class ProntoMessagesClient implements ProntoMessages {
       { chat_id: chatId },
       budget === undefined ? 30_000 : this.#providerTimeout(budget),
     ));
-    const event = normalizeEvent(rawMessage, normalizeConversationFacts(stats, chatId));
+    const conversationId = rawMessage.chat_guid;
+    const hasRoutingCandidate = safeProviderCoordinate(conversationId) &&
+      typeof rawMessage.is_group === "boolean" && Array.isArray(rawMessage.participants);
+    const chat = hasRoutingCandidate
+      ? await within(async () => await this.#findExactChat({
+          chatId,
+          conversationId,
+          timeoutMs: budget === undefined ? 30_000 : this.#providerTimeout(budget),
+        }))
+      : null;
+    const facts = normalizeConversationFacts(stats, chatId, rawMessage, chat);
+    const event = normalizeEvent(rawMessage, facts);
     if (event === null) return;
     const normalizedEvent: MessagesEvent = {
       ...event,
@@ -588,6 +648,31 @@ class ProntoMessagesClient implements ProntoMessages {
       }
       throw error;
     }
+  }
+
+  async #findExactChat(input: {
+    readonly accountId?: string;
+    readonly chatId?: number;
+    readonly conversationId: string;
+    readonly timeoutMs?: number;
+  }): Promise<Record<string, unknown> | null> {
+    for (const limit of CHAT_CATALOG_LIMITS) {
+      const response = record(await this.#rpc.request(
+        "chats.list",
+        { limit },
+        input.timeoutMs ?? 10_000,
+      ));
+      if (!Array.isArray(response.chats)) return null;
+      const matches = response.chats.map(record).filter((chat) =>
+        chat.guid === input.conversationId &&
+        (input.chatId === undefined || chat.id === input.chatId) &&
+        (input.accountId === undefined || chat.account_id === input.accountId)
+      );
+      if (matches.length > 1) return null;
+      if (matches.length === 1) return matches[0]!;
+      if (response.chats.length < limit) return null;
+    }
+    return null;
   }
 
   async #catchUp(

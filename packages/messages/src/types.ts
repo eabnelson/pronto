@@ -15,7 +15,21 @@ export interface AttachmentReference {
 
 export interface ConversationFacts {
   readonly ownerParticipated: boolean;
+  readonly routing?: {
+    readonly accountId: string;
+    readonly accountLogin: string;
+    readonly conversationId: string;
+    readonly destinationHandle: string;
+    readonly isGroup: boolean;
+    readonly label: string | null;
+    readonly participants: readonly string[];
+  };
   readonly service: string | null;
+}
+
+export interface ResolvedConversation {
+  readonly conversation: ConversationReference;
+  readonly facts: ConversationFacts;
 }
 
 export interface MessagesAttachment {
@@ -171,8 +185,13 @@ export interface ProntoMessages {
   qualify(): Promise<MessagesQualification>;
   reply(input: {
     readonly conversation: ConversationReference;
+    readonly filePath?: string;
     readonly text: string;
   }): Promise<DeliveryOutcome>;
+  resolveConversation(input: {
+    readonly accountId: string;
+    readonly conversationId: string;
+  }): Promise<ResolvedConversation | null>;
   subscribe(input: {
     readonly onEvent: (event: MessagesEvent) => void | Promise<void>;
     readonly onOverflow?: (resumeAfterRowId: number) => void | Promise<void>;

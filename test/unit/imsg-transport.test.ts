@@ -83,6 +83,9 @@ class FakeMessages implements ProntoMessages {
     this.replyInput = input;
     return this.replyOutcome;
   }
+  async resolveConversation(): ReturnType<ProntoMessages["resolveConversation"]> {
+    return null;
+  }
   async subscribe(
     input: Parameters<ProntoMessages["subscribe"]>[0],
   ): Promise<MessagesSubscription> {
