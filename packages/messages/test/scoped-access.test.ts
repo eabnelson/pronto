@@ -39,6 +39,7 @@ async function scopedClient(input: {
   readonly event: Record<string, unknown>;
   readonly forwardPages?: Readonly<Record<string, unknown>>;
   readonly recent?: readonly Record<string, unknown>[];
+  readonly recentOmitsHasMore?: boolean;
   readonly referenceKey?: string;
   readonly rpcLogPath?: string;
   readonly rpcParamsLogPath?: string;
@@ -74,10 +75,9 @@ for await (const chunk of Bun.stdin.stream()) {
       chats: [{ chat_id: 42, service: "iMessage" }],
       sent_messages: 1,
     };
-    else if (request.method === "messages.history") result = {
-      has_more: false,
-      messages: scenario.recent ?? [],
-    };
+    else if (request.method === "messages.history") result = scenario.recentOmitsHasMore
+      ? { messages: scenario.recent ?? [] }
+      : { has_more: false, messages: scenario.recent ?? [] };
     else if (request.method === "messages.after") {
       const key = String(request.params.since_rowid);
       result = scenario.forwardPages?.[key] ?? {
@@ -277,6 +277,7 @@ test("recent history omits the unsupported imsg reaction parameter", async () =>
     databasePath,
     event: observedEvent,
     recent: [reaction],
+    recentOmitsHasMore: true,
     rpcParamsLogPath,
   });
   const observed = await nextEvent(messages);
@@ -293,6 +294,7 @@ test("recent history omits the unsupported imsg reaction parameter", async () =>
   expect(request).toMatchObject({ method: "messages.history" });
   expect(request.params).not.toHaveProperty("include_reactions");
   expect(page.messages[0]?.message.kind).toBe("reaction");
+  expect(page.hasMore).toBeFalse();
   await messages.close();
 });
 

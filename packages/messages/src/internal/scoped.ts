@@ -475,10 +475,12 @@ export class ScopedMessagesAccess {
     }
     events.sort((left, right) => left.message.rowId - right.message.rowId);
     const nextRowId = result.next_rowid;
-    if (typeof result.has_more !== "boolean") {
+    const hasMore = method === "messages.history" && result.has_more === undefined
+      ? false
+      : result.has_more;
+    if (typeof hasMore !== "boolean") {
       throw new Error("messages_history_response_invalid");
     }
-    const hasMore = result.has_more;
     if (
       hasMore && (!nonNegativeInteger(nextRowId) || nextRowId <= cursor)
     ) throw new Error("messages_history_cursor_invalid");
