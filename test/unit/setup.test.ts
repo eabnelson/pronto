@@ -9,6 +9,7 @@ import {
   completeSetupCutover,
   createWorkspaceDirectory,
   discoverCommands,
+  fullDiskAccessInstructions,
   installSetup,
   inspectInstallation,
   loadExistingSetupDefaults,
@@ -56,6 +57,19 @@ describe("setup discovery", () => {
     expect(message).toContain(
       "'/Users/O'\\''Neil/Library/Application Support/pronto/bin/pronto' status",
     );
+  });
+
+  test("explains how to refresh Full Disk Access after replacing the executable", () => {
+    const message = fullDiskAccessInstructions(
+      "/Users/example/Library/Application Support/pronto/bin/pronto",
+    );
+
+    expect(message).toContain(
+      "/Users/example/Library/Application Support/pronto/bin/pronto",
+    );
+    expect(message).toContain("remove the existing pronto row");
+    expect(message).toContain("add this exact file again");
+    expect(message).toContain("Toggling the existing row off and on is not enough");
   });
 
   test("accepts one runtime and records absolute command paths", () => {

@@ -21,6 +21,7 @@ import {
   completeSetupCutover,
   createWorkspaceDirectory,
   discoverCommands,
+  fullDiskAccessInstructions,
   inspectInstallation,
   installSetup,
   loadExistingSetupDefaults,
@@ -222,7 +223,7 @@ async function runSetup(): Promise<number> {
         }
       },
       qualify: async () => {
-        console.log(`Before setup can finish, grant Full Disk Access to this exact file:\n${paths.executablePath}`);
+        console.log(fullDiskAccessInstructions(paths.executablePath));
         await prompt.question("After granting access, press Enter to qualify the installed Pronto executable: ");
         await qualifyInstalledExecutable(paths.executablePath, runCommand, async () => {
           const state = await launchAgentStateForLabel({ label: LAUNCH_AGENT_LABEL });

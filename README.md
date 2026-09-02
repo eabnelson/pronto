@@ -192,7 +192,9 @@ bun run packages/cli/src/cli.ts setup
 
 Setup replaces the stable executable atomically and preserves configuration and
 bounded memory. macOS may treat the replacement as a new privacy identity; run
-`doctor` again and toggle stale Full Disk Access entries off and on if needed.
+`doctor` again after setup. If Pronto already appears in Full Disk Access,
+remove that entry and add the exact installed executable again; toggling the
+existing entry off and on does not refresh the replaced identity.
 
 ## Troubleshooting
 

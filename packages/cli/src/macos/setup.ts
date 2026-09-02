@@ -60,6 +60,12 @@ Configured tags: ${tags.join(", ")}
 Add or remove tags later with ${executable} tags add <tag> and ${executable} tags remove <tag>.`;
 }
 
+export function fullDiskAccessInstructions(executablePath: string): string {
+  return `Before setup can finish, grant Full Disk Access to this exact file:
+${executablePath}
+If Pronto already appears in Full Disk Access, remove the existing pronto row and add this exact file again. Toggling the existing row off and on is not enough after the executable has been replaced.`;
+}
+
 export async function loadExistingSetupDefaults(
   configPath: string,
 ): Promise<ExistingSetupDefaults | null> {
