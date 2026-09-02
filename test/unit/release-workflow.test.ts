@@ -60,6 +60,7 @@ describe("release workflow", () => {
       'npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public',
       "NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
       "id-token: write",
+      "for ATTEMPT in {1..12}; do",
       "dist/pronto-imessage-*.tgz",
       "sha256sum -c pronto-imessage.sha256",
       "workflow_dispatch:",
