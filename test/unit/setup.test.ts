@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { access, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { saveConfig } from "../../src/config";
-import { legacyPathsForHome, pathsForHome } from "../../src/macos/paths";
+import { saveConfig } from "../../packages/cli/src/config";
+import { legacyPathsForHome, pathsForHome } from "../../packages/cli/src/macos/paths";
 import {
   TRUST_DISCLOSURE,
   completeSetupCutover,
@@ -18,7 +18,7 @@ import {
   resolveWorkspaceSelection,
   setupCompletionMessage,
   uninstallInstallation,
-} from "../../src/macos/setup";
+} from "../../packages/cli/src/macos/setup";
 
 const temporaryDirectories: string[] = [];
 
@@ -198,7 +198,7 @@ test("declining unrestricted consent creates no workspace or installation state"
   }
 
   const repositoryRoot = join(import.meta.dir, "../..");
-  const child = Bun.spawn([process.execPath, join(repositoryRoot, "src/cli.ts"), "setup"], {
+  const child = Bun.spawn([process.execPath, join(repositoryRoot, "packages/cli/src/cli.ts"), "setup"], {
     cwd: repositoryRoot,
     env: { ...process.env, HOME: home, PATH: bin },
     stdin: "pipe",

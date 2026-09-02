@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   ImsgRpcError,
   type ImsgRpc,
-} from "../../src/imessage/rpc-client";
-import { ImsgTransport, OutboundEchoTracker } from "../../src/imessage/transport";
+} from "../../packages/cli/src/imessage/rpc-client";
+import { ImsgTransport, OutboundEchoTracker } from "../../packages/cli/src/imessage/transport";
+import type { MessagesEvent, ProntoMessages } from "pronto-imessage";
 
 class FakeRpc implements ImsgRpc {
   after: unknown = { has_more: false, messages: [], next_rowid: 0 };
@@ -284,6 +285,65 @@ describe("activation routing", () => {
 });
 
 describe("text delivery", () => {
+  test("standalone activation and reply consume the public Messages interface", async () => {
+    const rpc = new FakeRpc();
+    const replies: Array<{ chatId: number; text: string }> = [];
+    const event: MessagesEvent = {
+      conversation: { chatId: 42, provider: "apple-messages", version: 1 },
+      conversationFacts: { ownerParticipated: true, service: "iMessage" },
+      message: {
+        attachments: [],
+        fromMe: false,
+        kind: "message",
+        occurredAt: "2026-09-01T12:00:00.000Z",
+        providerMessageId: "IN-MODULE",
+        replyToProviderMessageId: null,
+        replyToText: null,
+        rowId: 101,
+        sender: null,
+        selfChatMirror: false,
+        service: "iMessage",
+        text: "@helper continue",
+      },
+      provider: "apple-messages",
+      version: 1,
+    };
+    const messages: ProntoMessages = {
+      close: async () => undefined,
+      qualify: async () => ({
+        degradedCapabilities: [],
+        providerVersion: "0.14.1",
+        status: "ready",
+      }),
+      reply: async (input) => {
+        replies.push({ chatId: input.conversation.chatId, text: input.text });
+        return { providerMessageId: "OUT-MODULE", status: "confirmed" };
+      },
+      subscribe: async (input) => {
+        await input.onEvent(event);
+        return { close: async () => undefined, terminated: new Promise<void>(() => undefined) };
+      },
+    };
+    const transport = new ImsgTransport(rpc, { messages });
+    const activations: string[] = [];
+
+    const watch = await transport.watch({
+      onActivation: (request) => {
+        activations.push(request.providerGuid);
+      },
+      onOverflow: () => undefined,
+      tags: ["@helper"],
+    });
+    expect(activations).toEqual(["IN-MODULE"]);
+    expect(await transport.sendText(42, "hello back")).toEqual({
+      disposition: "confirmed",
+      guid: "OUT-MODULE",
+    });
+    expect(replies).toEqual([{ chatId: 42, text: "hello back" }]);
+    expect(rpc.calls).toEqual([]);
+    await watch.close();
+  });
+
   test("targets the originating chat and confirms only a GUID-bearing result", async () => {
     const rpc = new FakeRpc();
     const result = await new ImsgTransport(rpc).sendText(42, "hello");

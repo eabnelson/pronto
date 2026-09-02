@@ -2,8 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { access, lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openProntoDatabase } from "../../src/storage/database";
-import { CURRENT_SCHEMA_VERSION } from "../../src/storage/migrations";
+import { openProntoDatabase } from "../../packages/cli/src/storage/database";
+import { CURRENT_SCHEMA_VERSION } from "../../packages/cli/src/storage/migrations";
 import { Database } from "bun:sqlite";
 
 const temporaryDirectories: string[] = [];

@@ -2,21 +2,21 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ActivatedRequest } from "../../src/activation";
-import { FAILURE_NOTICE, TurnCoordinator, TurnProcessor } from "../../src/core/turn";
-import type { SendDisposition } from "../../src/imessage/transport";
-import { RuntimeChain } from "../../src/runtimes/chain";
+import type { ActivatedRequest } from "../../packages/cli/src/activation";
+import { FAILURE_NOTICE, TurnCoordinator, TurnProcessor } from "../../packages/cli/src/core/turn";
+import type { SendDisposition } from "../../packages/cli/src/imessage/transport";
+import { RuntimeChain } from "../../packages/cli/src/runtimes/chain";
 import type {
   RuntimeAdapter,
   RuntimeAttemptResult,
   RuntimeInput,
-} from "../../src/runtimes/types";
-import { chatKeyForId } from "../../src/storage/chat-key";
-import { openProntoDatabase } from "../../src/storage/database";
-import { DeliveryJournal } from "../../src/storage/journal";
-import { MemoryStore } from "../../src/storage/memory";
-import { promoteWorkspace, WorkspaceStore } from "../../src/storage/workspaces";
-import { ConversationBroker, type CurrentChatSource } from "../../src/tools/broker";
+} from "../../packages/cli/src/runtimes/types";
+import { chatKeyForId } from "../../packages/cli/src/storage/chat-key";
+import { openProntoDatabase } from "../../packages/cli/src/storage/database";
+import { DeliveryJournal } from "../../packages/cli/src/storage/journal";
+import { MemoryStore } from "../../packages/cli/src/storage/memory";
+import { promoteWorkspace, WorkspaceStore } from "../../packages/cli/src/storage/workspaces";
+import { ConversationBroker, type CurrentChatSource } from "../../packages/cli/src/tools/broker";
 
 const temporaryDirectories: string[] = [];
 

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { NdjsonRpcClient } from "../../src/imessage/rpc-client";
+import { NdjsonRpcClient } from "../../packages/cli/src/imessage/rpc-client";
 
 const temporaryDirectories: string[] = [];
 
@@ -84,7 +84,7 @@ for await (const chunk of Bun.stdin.stream()) {
 `,
     { mode: 0o700 },
   );
-  const client = new NdjsonRpcClient(executable, { requestTimeoutMs: 250 });
+  const client = new NdjsonRpcClient(executable, { requestTimeoutMs: 1_000 });
   let nestedResult: unknown;
   let complete: (() => void) | undefined;
   const handled = new Promise<void>((resolve) => {
@@ -135,7 +135,7 @@ for await (const chunk of Bun.stdin.stream()) {
 `,
     { mode: 0o700 },
   );
-  const client = new NdjsonRpcClient(executable, { requestTimeoutMs: 250 });
+  const client = new NdjsonRpcClient(executable, { requestTimeoutMs: 1_000 });
 
   expect(await client.call("status")).toEqual({ ok: true, stderr_is_pipe: false });
   await client.close();

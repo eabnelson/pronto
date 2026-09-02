@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
-import type { RuntimeAdapter, RuntimeInput } from "../../src/runtimes/types";
-import { qualifyRuntime } from "../../src/runtimes/qualification";
+import type { RuntimeAdapter, RuntimeInput } from "../../packages/cli/src/runtimes/types";
+import { qualifyRuntime } from "../../packages/cli/src/runtimes/qualification";
 
 class ProbeAdapter implements RuntimeAdapter {
   readonly executablePath = "/usr/local/bin/codex";

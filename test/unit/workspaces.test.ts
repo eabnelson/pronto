@@ -2,12 +2,12 @@ import { afterEach, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openProntoDatabase } from "../../src/storage/database";
+import { openProntoDatabase } from "../../packages/cli/src/storage/database";
 import {
   canonicalExistingDirectory,
   promoteWorkspace,
   WorkspaceStore,
-} from "../../src/storage/workspaces";
+} from "../../packages/cli/src/storage/workspaces";
 
 const temporaryDirectories: string[] = [];
 

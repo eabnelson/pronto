@@ -2,10 +2,10 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openProntoDatabase } from "../../src/storage/database";
-import { MemoryStore } from "../../src/storage/memory";
-import { chatKeyForId } from "../../src/storage/chat-key";
-import { DeliveryJournal } from "../../src/storage/journal";
+import { openProntoDatabase } from "../../packages/cli/src/storage/database";
+import { MemoryStore } from "../../packages/cli/src/storage/memory";
+import { chatKeyForId } from "../../packages/cli/src/storage/chat-key";
+import { DeliveryJournal } from "../../packages/cli/src/storage/journal";
 
 const temporaryDirectories: string[] = [];
 

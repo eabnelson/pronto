@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConfig, saveConfig, UNRESTRICTED_TRUST_VERSION } from "../../src/config";
-import { pathsForHome } from "../../src/macos/paths";
-import { renderCompatibilityLauncher } from "../../src/compatibility";
+import { createConfig, saveConfig, UNRESTRICTED_TRUST_VERSION } from "../../packages/cli/src/config";
+import { pathsForHome } from "../../packages/cli/src/macos/paths";
+import { renderCompatibilityLauncher } from "../../packages/cli/src/compatibility";
 
 const temporaryDirectories: string[] = [];
 
@@ -16,7 +16,7 @@ afterEach(async () => {
 
 describe("Pronto CLI", () => {
   test("reports the package version from source", async () => {
-    const process = Bun.spawn(["bun", "src/cli.ts", "--version"], {
+    const process = Bun.spawn(["bun", "packages/cli/src/cli.ts", "--version"], {
       cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
       stderr: "pipe",
       stdout: "pipe",
@@ -32,7 +32,7 @@ describe("Pronto CLI", () => {
   });
 
   test("the legacy command explains the rename and delegates safe commands", async () => {
-    const process = Bun.spawn(["bun", "src/legacy-cli.ts", "--version"], {
+    const process = Bun.spawn(["bun", "packages/cli/src/legacy-cli.ts", "--version"], {
       cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
       stderr: "pipe",
       stdout: "pipe",
@@ -50,7 +50,7 @@ describe("Pronto CLI", () => {
   });
 
   test("the legacy command refuses to start a second foreground listener", async () => {
-    const process = Bun.spawn(["bun", "src/legacy-cli.ts", "run"], {
+    const process = Bun.spawn(["bun", "packages/cli/src/legacy-cli.ts", "run"], {
       cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
       stderr: "pipe",
       stdout: "pipe",
@@ -66,7 +66,7 @@ describe("Pronto CLI", () => {
   });
 
   test("the legacy command refuses to install itself as Pronto", async () => {
-    const process = Bun.spawn(["bun", "src/legacy-cli.ts", "setup"], {
+    const process = Bun.spawn(["bun", "packages/cli/src/legacy-cli.ts", "setup"], {
       cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
       stderr: "pipe",
       stdout: "pipe",
@@ -112,7 +112,7 @@ describe("Pronto CLI", () => {
         workingDirectory: home,
       }),
     );
-    const process = Bun.spawn(["bun", "src/cli.ts", "tags"], {
+    const process = Bun.spawn(["bun", "packages/cli/src/cli.ts", "tags"], {
       cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
       env: { ...Bun.env, HOME: home },
       stderr: "pipe",

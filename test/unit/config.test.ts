@@ -11,7 +11,7 @@ import {
   removeTag,
   saveConfig,
   UNRESTRICTED_TRUST_VERSION,
-} from "../../src/config";
+} from "../../packages/cli/src/config";
 
 const temporaryDirectories: string[] = [];
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { ImsgCurrentChatSource } from "../../src/imessage/current-chat-source";
-import type { ImsgRpc } from "../../src/imessage/rpc-client";
+import { ImsgCurrentChatSource } from "../../packages/cli/src/imessage/current-chat-source";
+import type { ImsgRpc } from "../../packages/cli/src/imessage/rpc-client";
 
 class FakeRpc implements ImsgRpc {
   async call(method: string): Promise<unknown> {

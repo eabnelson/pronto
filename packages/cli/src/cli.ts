@@ -39,6 +39,7 @@ import { NdjsonRpcClient } from "./imessage/rpc-client";
 import { ImsgTransport } from "./imessage/transport";
 import { DeliveryJournal } from "./storage/journal";
 import { LAUNCH_AGENT_LABEL } from "./macos/paths";
+import { createProntoMessages } from "pronto-imessage";
 import {
   PRONTO_ATTEMPT_CAPABILITY_ENV,
   PRONTO_BROKER_URL_ENV,
@@ -156,8 +157,9 @@ async function runSetup(): Promise<number> {
       workingDirectory,
     });
     const imsgRpc = new NdjsonRpcClient(discovery.imsgPath);
+    const messages = createProntoMessages({ imsgPath: discovery.imsgPath });
     try {
-      const transport = new ImsgTransport(imsgRpc);
+      const transport = new ImsgTransport(imsgRpc, { messages });
       const imsg = await transport.qualify();
       const watch = await transport.watch({
         onActivation: () => undefined,
@@ -179,6 +181,7 @@ async function runSetup(): Promise<number> {
       return 1;
     } finally {
       await imsgRpc.close().catch(() => undefined);
+      await messages.close().catch(() => undefined);
     }
     console.log("Qualifying each selected runtime with one temporary, noninteractive file-tool probe...");
     const sourceEntry = process.argv[1];
@@ -209,7 +212,9 @@ async function runSetup(): Promise<number> {
         await installSetup({
           config,
           paths,
-          ...(sourceInvocation ? { repositoryRoot: dirname(dirname(resolve(sourceEntry))) } : {}),
+          ...(sourceInvocation
+            ? { repositoryRoot: resolve(dirname(resolve(sourceEntry)), "../../..") }
+            : {}),
         });
       },
       migration,
@@ -238,8 +243,9 @@ async function runDoctor(json = false): Promise<number> {
   if (report.healthy) {
     const config = await loadConfig(paths.configPath);
     const rpc = new NdjsonRpcClient(config.imsgPath);
+    const messages = createProntoMessages({ imsgPath: config.imsgPath });
     try {
-      const transport = new ImsgTransport(rpc);
+      const transport = new ImsgTransport(rpc, { messages });
       const imsg = await transport.qualify();
       const watch = await transport.watch({
         onActivation: () => undefined,
@@ -268,6 +274,7 @@ async function runDoctor(json = false): Promise<number> {
       });
     } finally {
       await rpc.close().catch(() => undefined);
+      await messages.close().catch(() => undefined);
     }
 
     for (const [kind, executablePath] of [

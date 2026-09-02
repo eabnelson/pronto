@@ -544,7 +544,7 @@ export function sourceBuild(repositoryRoot: string): (outputPath: string) => Pro
   return async (outputPath) => {
     const result = await runCommand(Bun.which("bun") ?? "bun", [
       "build",
-      join(repositoryRoot, "src", "cli.ts"),
+      join(repositoryRoot, "packages", "cli", "src", "cli.ts"),
       "--compile",
       "--outfile",
       outputPath,

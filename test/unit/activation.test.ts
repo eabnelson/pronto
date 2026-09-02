@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { activatedRequest } from "../../src/activation";
-import { normalizeMessage } from "../../src/imessage/message";
+import { activatedRequest } from "../../packages/cli/src/activation";
+import { normalizeMessage } from "../../packages/cli/src/imessage/message";
 
 const baseMessage = {
   chat_id: 42,

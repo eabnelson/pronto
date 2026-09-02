@@ -57,7 +57,7 @@ provider and sends real iMessages; it is never run by CI.
 
 1. Run `~/Library/Application\ Support/pronto/bin/pronto status --chats`; confirm it prints only opaque `c_...` keys and
    counts, never handles or message text.
-2. Stop and restart through `bun run src/cli.ts setup`, then send one new tagged
+2. Stop and restart through `bun run packages/cli/src/cli.ts setup`, then send one new tagged
    request. Confirm no old request is replayed.
 3. Run `~/Library/Application\ Support/pronto/bin/pronto forget <opaque-chat-key>`, then confirm the prior tagged fact is no
    longer available unless it is still present in recent Messages history.

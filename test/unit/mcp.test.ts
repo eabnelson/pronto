@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { handleMcpRequest, TOOL_DEFINITIONS } from "../../src/tools/mcp";
+import { handleMcpRequest, TOOL_DEFINITIONS } from "../../packages/cli/src/tools/mcp";
 
 test("advertises only deterministic read-only current-chat tools", async () => {
   expect(TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual([

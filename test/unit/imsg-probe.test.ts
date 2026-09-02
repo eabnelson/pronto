@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { qualifyImsgStatus } from "../../src/imessage/probe";
+import { qualifyImsgStatus } from "../../packages/cli/src/imessage/probe";
 
 const requiredMethods = [
   "initialize",

@@ -11,6 +11,7 @@ import { MemoryStore } from "../storage/memory";
 import { WorkspaceStore } from "../storage/workspaces";
 import { ConversationBroker } from "../tools/broker";
 import { TurnCoordinator, TurnProcessor } from "./turn";
+import { createProntoMessages } from "pronto-imessage";
 
 function runtimePath(config: ProntoConfig, fallback = false): string {
   const path = fallback ? config.fallbackRuntimePath : config.primaryRuntimePath;
@@ -36,8 +37,10 @@ export class ProntoDaemon {
     const database = openProntoDatabase(this.paths.databasePath);
     const journal = new DeliveryJournal(database);
     const rpc = new NdjsonRpcClient(this.config.imsgPath);
+    const messages = createProntoMessages({ imsgPath: this.config.imsgPath });
     const transport = new ImsgTransport(rpc, {
       matchesOutboundEcho: (chatId, text) => journal.matchesOutboundEcho(chatId, text),
+      messages,
     });
     const broker = new ConversationBroker(new ImsgCurrentChatSource(rpc));
     let brokerServer: ReturnType<ConversationBroker["listen"]> | null = null;
@@ -133,6 +136,7 @@ export class ProntoDaemon {
       await activeWatch?.close().catch(() => undefined);
       brokerServer?.close();
       await rpc.close().catch(() => undefined);
+      await messages.close().catch(() => undefined);
       database.close();
     }
   }

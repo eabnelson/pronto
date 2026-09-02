@@ -2,14 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeAdapter } from "../../src/runtimes/claude";
-import { CodexAdapter } from "../../src/runtimes/codex";
+import { ClaudeAdapter } from "../../packages/cli/src/runtimes/claude";
+import { CodexAdapter } from "../../packages/cli/src/runtimes/codex";
 import type {
   ProcessExecution,
   ProcessRunner,
   ProcessSpec,
-} from "../../src/runtimes/process";
-import { ProcessSpawnError } from "../../src/runtimes/process";
+} from "../../packages/cli/src/runtimes/process";
+import { ProcessSpawnError } from "../../packages/cli/src/runtimes/process";
 
 class FakeRunner implements ProcessRunner {
   codexHome: string | null = null;

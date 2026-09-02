@@ -501,7 +501,7 @@ describe("public landing page", () => {
     const setup = await read("setup.md");
 
     expect(setup).toContain("https://github.com/eabnelson/pronto.git");
-    expect(setup).toContain("bun run src/cli.ts setup");
+    expect(setup).toContain("bun run packages/cli/src/cli.ts setup");
     expect(setup).toContain("Full Disk Access");
     expect(setup).toContain("doctor");
     expect(setup).toContain("status");
@@ -511,7 +511,7 @@ describe("public landing page", () => {
 
   test("grants setup and installed executables Full Disk Access at the right times", async () => {
     const setup = await read("setup.md");
-    const setupCommand = setup.indexOf("bun run src/cli.ts setup");
+    const setupCommand = setup.indexOf("bun run packages/cli/src/cli.ts setup");
     const setupPermission = setup.indexOf("terminal or parent app that will run setup");
     const installedPermission = setup.indexOf("exact installed executable");
 

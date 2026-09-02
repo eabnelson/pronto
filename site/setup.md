@@ -75,7 +75,7 @@ Work interactively and stay with me until one tagged iMessage gets exactly one a
    ```sh
    CHECKOUT="/absolute/path/I/chose"
    cd "$CHECKOUT" || exit 1
-   bun run src/cli.ts setup
+   bun run packages/cli/src/cli.ts setup
    ```
 
    Help me choose:

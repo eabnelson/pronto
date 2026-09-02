@@ -11,7 +11,7 @@ import {
   restartLaunchAgent,
   stopLaunchAgentForLabel,
   type LaunchctlRunner,
-} from "../../src/macos/launch-agent";
+} from "../../packages/cli/src/macos/launch-agent";
 
 const temporaryDirectories: string[] = [];
 

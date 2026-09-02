@@ -15,6 +15,12 @@ using several tags make it clear which agent identity answered.
 It is an independent MIT-licensed project. It does not require Studio Four,
 create project folders per chat, select a model, or keep provider sessions alive.
 
+The repository is a small workspace. [`pronto-imessage`](packages/messages) is
+the reusable Apple Messages module, and the standalone [`pronto`](packages/cli)
+CLI consumes that package through the same public interface available to other
+products. Pronto owns provider mechanics; consumers own activation,
+authorization, and product-specific state.
+
 ## Before installing
 
 Tags are not authentication. Every current or future participant in an eligible chat can invoke
@@ -85,8 +91,9 @@ a number in the next tagged message to confirm one.
 
 After qualification, setup compiles a stable executable under
 `~/Library/Application Support/pronto/`, writes an owner-only configuration, and
-installs the `dev.pronto.agent` user LaunchAgent. It finishes by printing the
-exact permission, `doctor`, and `status` steps for that Mac.
+installs the `dev.pronto.agent` user LaunchAgent. It asks the owner to grant Full
+Disk Access to that exact installed executable, verifies the installed identity,
+and reports success only after the new listener is healthy.
 
 ## macOS permissions
 
@@ -180,7 +187,7 @@ From the source checkout:
 ```sh
 git pull --ff-only
 bun install --frozen-lockfile
-bun run src/cli.ts setup
+bun run packages/cli/src/cli.ts setup
 ```
 
 Setup replaces the stable executable atomically and preserves configuration and

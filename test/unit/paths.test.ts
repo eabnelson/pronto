@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { legacyPathsForHome, pathsForHome } from "../../src/macos/paths";
+import { legacyPathsForHome, pathsForHome } from "../../packages/cli/src/macos/paths";
 
 test("derives one owner-scoped service layout", () => {
   expect(pathsForHome("/Users/example")).toEqual({

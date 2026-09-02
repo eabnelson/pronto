@@ -3,6 +3,7 @@ import { activatedRequest, type ActivatedRequest } from "../activation";
 import { normalizeMessage, type NormalizedMessage } from "./message";
 import { qualifyImsgStatus, type QualifiedImsg } from "./probe";
 import { ImsgRpcError, type ImsgRpc, type WatchableImsgRpc } from "./rpc-client";
+import type { MessagesEvent, ProntoMessages } from "pronto-imessage";
 
 export type SendDisposition =
   | { disposition: "confirmed"; guid: string }
@@ -13,6 +14,28 @@ function object(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function fromMessagesEvent(event: MessagesEvent): NormalizedMessage {
+  return {
+    attachments: event.message.attachments.map((attachment) => ({
+      attachment_id: attachment.providerAttachmentId,
+      mime_type: attachment.mimeType,
+      name: attachment.name,
+      total_bytes: attachment.sizeBytes,
+    })),
+    chatId: event.conversation.chatId,
+    date: event.message.occurredAt,
+    isFromMe: event.message.fromMe,
+    kind: event.message.kind,
+    providerGuid: event.message.providerMessageId,
+    replyToGuid: event.message.replyToProviderMessageId,
+    replyToText: event.message.replyToText,
+    rowId: event.message.rowId,
+    sender: event.message.sender,
+    service: event.message.service,
+    text: event.message.text,
+  };
 }
 
 interface ChatEligibility {
@@ -66,10 +89,18 @@ export class ImsgTransport {
     readonly rpc: ImsgRpc,
     readonly options: {
       matchesOutboundEcho?: (chatId: number, text: string) => boolean;
+      messages?: ProntoMessages;
     } = {},
   ) {}
 
   async qualify(): Promise<QualifiedImsg> {
+    if (this.options.messages !== undefined) {
+      const qualification = await this.options.messages.qualify();
+      return {
+        degraded: [...qualification.degradedCapabilities],
+        version: qualification.providerVersion,
+      };
+    }
     const status = await this.rpc.call("initialize", { protocol_version: 1 });
     return qualifyImsgStatus(status);
   }
@@ -97,6 +128,8 @@ export class ImsgTransport {
   async #activationForMessage(
     message: NormalizedMessage,
     tags: readonly string[],
+    observedEligibility?: ChatEligibility,
+    observedSelfChatMirror?: boolean,
   ): Promise<ActivatedRequest | null> {
     this.#rememberOutgoing(message);
     if (
@@ -108,11 +141,11 @@ export class ImsgTransport {
       return null;
     }
     let candidate = activatedRequest(message, tags, true);
-    let eligibility: ChatEligibility | null = null;
+    let eligibility: ChatEligibility | null = observedEligibility ?? null;
     if (candidate === null && message.service === null) {
       const potentialCandidate = activatedRequest({ ...message, service: "iMessage" }, tags, true);
       if (potentialCandidate === null) return null;
-      eligibility = await this.#chatEligibility(potentialCandidate.chatId);
+      eligibility ??= await this.#chatEligibility(potentialCandidate.chatId);
       if (
         !eligibility.ownerParticipated ||
         eligibility.service?.toLowerCase() !== "imessage"
@@ -124,7 +157,8 @@ export class ImsgTransport {
     if (candidate === null) return null;
     eligibility ??= await this.#chatEligibility(candidate.chatId);
     if (!eligibility.ownerParticipated) return null;
-    if (await this.#isSelfChatMirror(message)) return null;
+    if (observedSelfChatMirror === true) return null;
+    if (observedSelfChatMirror === undefined && await this.#isSelfChatMirror(message)) return null;
     return candidate;
   }
 
@@ -206,6 +240,23 @@ export class ImsgTransport {
     sinceRowId?: number;
     tags: readonly string[];
   }): Promise<{ close: () => Promise<void>; terminated: Promise<void> }> {
+    if (this.options.messages !== undefined) {
+      return await this.options.messages.subscribe({
+        onEvent: async (event) => {
+          const message = fromMessagesEvent(event);
+          const request = await this.#activationForMessage(
+            message,
+            input.tags,
+            event.conversationFacts,
+            event.message.selfChatMirror,
+          );
+          if (request !== null) await input.onActivation(request);
+          await input.onMessageRowId?.(message.rowId!);
+        },
+        onOverflow: input.onOverflow,
+        ...(input.sinceRowId === undefined ? {} : { sinceRowId: input.sinceRowId }),
+      });
+    }
     if (!("on" in this.rpc) || typeof this.rpc.on !== "function") {
       throw new Error("imsg RPC client does not support notifications");
     }
@@ -298,6 +349,17 @@ export class ImsgTransport {
   }
 
   async sendText(chatId: number, text: string): Promise<SendDisposition> {
+    if (this.options.messages !== undefined) {
+      const outcome = await this.options.messages.reply({
+        conversation: { chatId, provider: "apple-messages", version: 1 },
+        text,
+      });
+      if (outcome.status === "confirmed") {
+        return { disposition: "confirmed", guid: outcome.providerMessageId };
+      }
+      if (outcome.status === "ambiguous") return { disposition: "ambiguous" };
+      return { disposition: "failed", retrySafe: outcome.retryable };
+    }
     try {
       const result = object(await this.rpc.call("send", { chat_id: chatId, text }));
       if (result.ok !== true) return { disposition: "failed", retrySafe: false };

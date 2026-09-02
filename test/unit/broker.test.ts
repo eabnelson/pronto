@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import {
   ConversationBroker,
   type CurrentChatSource,
-} from "../../src/tools/broker";
+} from "../../packages/cli/src/tools/broker";
 
 const temporaryDirectories: string[] = [];
 

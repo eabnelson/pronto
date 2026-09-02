@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { RuntimeChain } from "../../src/runtimes/chain";
+import { RuntimeChain } from "../../packages/cli/src/runtimes/chain";
 import type {
   RuntimeAdapter,
   RuntimeAttemptResult,
   RuntimeInput,
-} from "../../src/runtimes/types";
+} from "../../packages/cli/src/runtimes/types";
 
 class FakeAdapter implements RuntimeAdapter {
   calls: RuntimeInput[] = [];
