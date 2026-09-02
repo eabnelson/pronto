@@ -15,12 +15,12 @@ file records capability evidence, not private conversation data.
 | Claude Code | 2.1.226 | Auth/help inspection and adapter fixtures | Pass |
 | Codex effective local probe | 0.146.1 | Setup noninteractive file-tool probe | Pass |
 | Claude effective local probe | 2.1.226 | Setup noninteractive file-tool probe | Pass |
-| Messages Automation | Owner self-chat, 2026-08-18 | Exactly one agent send; one expected mirrored display pair | Pass |
-| Self-chat mirror handling | Owner self-chat, 2026-08-18 | One tagged activation and one agent send | Pass |
-| Full remote tagged flow | Owner test chat | Remote-participant and multi-turn smoke | Pending |
+| Messages Automation | Owner test chats, 2026-09-02 | Exactly one self-chat send and one RCS send; expected self-chat display mirror only | Pass |
+| Self-chat mirror handling | Owner self-chat, 2026-09-02 | One tagged activation and one agent send with no echo turn | Pass |
+| Full remote tagged flow | v0.1.0 | RCS exact reply, recent context, tagged continuity, restart suppression, forget, and content-free logs on 2026-09-02 | Pass |
 
-The automated matrix records versions tested on 2026-08-15 and the owner smoke
-evidence added on 2026-08-18. Capability checks, not version
+The automated matrix and owner smoke record versions tested on 2026-09-02.
+Capability checks, not version
 strings alone, determine whether setup and startup proceed.
 
 ## Automated release gates
