@@ -289,7 +289,13 @@ describe("text delivery", () => {
     const rpc = new FakeRpc();
     const replies: Array<{ chatId: number; text: string }> = [];
     const event: MessagesEvent = {
-      conversation: { chatId: 42, provider: "apple-messages", version: 1 },
+      conversation: {
+        chatId: 42,
+        expiresAt: "2026-09-01T12:15:00.000Z",
+        provider: "apple-messages",
+        token: "conversation-token",
+        version: 1,
+      },
       conversationFacts: { ownerParticipated: true, service: "iMessage" },
       message: {
         attachments: [],
@@ -297,6 +303,7 @@ describe("text delivery", () => {
         kind: "message",
         occurredAt: "2026-09-01T12:00:00.000Z",
         providerMessageId: "IN-MODULE",
+        reaction: null,
         replyToProviderMessageId: null,
         replyToText: null,
         rowId: 101,
@@ -304,6 +311,7 @@ describe("text delivery", () => {
         selfChatMirror: false,
         service: "iMessage",
         text: "@helper continue",
+        urlPreview: false,
       },
       provider: "apple-messages",
       version: 1,
@@ -316,6 +324,15 @@ describe("text delivery", () => {
         restartCount: 0,
         state: "ready",
       }),
+      history: async () => ({
+        hasMore: false,
+        messages: [event],
+        scannedBytes: 1,
+        scannedRows: 1,
+      }),
+      materializeAttachment: async () => {
+        throw new Error("not used");
+      },
       qualify: async () => ({
         databaseGeneration: "generation-one",
         degradedCapabilities: [],

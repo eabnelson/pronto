@@ -1,81 +1,118 @@
-import { basename } from "node:path";
+import { createHash } from "node:crypto";
 import type { CurrentChatSource } from "../tools/broker";
-import type { ImsgRpc } from "./rpc-client";
+import type {
+  AttachmentReference,
+  ConversationFacts,
+  ConversationReference,
+  MaterializedAttachment,
+  MessagesEvent,
+  ProntoMessages,
+} from "pronto-imessage";
+import { rawFromMessagesEvent } from "./event-adapter";
 
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+interface ConversationContext {
+  readonly facts: ConversationFacts;
+  readonly reference: ConversationReference;
 }
 
-function list(value: unknown, key: string): unknown[] {
-  if (Array.isArray(value)) return value;
-  const container = record(value);
-  return container !== null && Array.isArray(container[key]) ? container[key] : [];
+interface ScopedAttachment {
+  readonly conversation: ConversationReference;
+  readonly reference: AttachmentReference;
 }
 
-function numericId(value: Record<string, unknown>): number | null {
-  for (const key of ["chat_id", "id", "rowid"]) {
-    const candidate = value[key];
-    if (typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate > 0) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function stringField(value: Record<string, unknown>, keys: readonly string[]): string | null {
-  for (const key of keys) {
-    const candidate = value[key];
-    if (typeof candidate === "string" && candidate.length > 0) return candidate;
-  }
-  return null;
+function opaqueAttachmentId(reference: AttachmentReference): string {
+  return createHash("sha256").update(reference.token, "utf8").digest("base64url");
 }
 
 export class ImsgCurrentChatSource implements CurrentChatSource {
-  constructor(readonly rpc: ImsgRpc) {}
+  readonly #attachments = new Map<string, ScopedAttachment>();
+  readonly #materialized = new Set<MaterializedAttachment>();
+
+  constructor(
+    readonly messages: ProntoMessages,
+    readonly context: (chatId: number) => ConversationContext | undefined,
+  ) {}
 
   async details(chatId: number): Promise<unknown> {
-    const result = await this.rpc.call("chats.list", { limit: 100 });
-    const chat = list(result, "chats")
-      .map(record)
-      .find((candidate) => candidate !== null && numericId(candidate) === chatId);
-    if (chat === undefined || chat === null) throw new Error("Current chat details are unavailable");
-    return chat;
+    const context = this.#context(chatId);
+    return {
+      owner_participated: context.facts.ownerParticipated,
+      provider: context.reference.provider,
+      service: context.facts.service,
+    };
   }
 
   async history(chatId: number, limit: number): Promise<unknown> {
-    return this.rpc.call("messages.history", {
-      attachments: true,
-      chat_id: chatId,
-      include_reactions: true,
-      limit,
+    const context = this.#context(chatId);
+    const page = await this.messages.history({
+      budget: {
+        maxBytes: 2 * 1024 * 1024,
+        maxMessages: Math.max(1, Math.min(limit, 50)),
+        maxRows: Math.max(1, Math.min(limit, 50)),
+        maxRpcCalls: 1,
+      },
+      conversation: context.reference,
+      includeReactions: true,
+      mode: "recent",
     });
+    return {
+      has_more: page.hasMore,
+      messages: page.messages.map((event) => rawFromMessagesEvent(event, (attachment) => {
+        if (attachment.reference === undefined) return undefined;
+        const id = opaqueAttachmentId(attachment.reference);
+        const key = `${chatId}:${event.message.providerMessageId}:${id}`;
+        this.#attachments.delete(key);
+        this.#attachments.set(key, {
+          conversation: event.conversation,
+          reference: attachment.reference,
+        });
+        while (this.#attachments.size > 256) {
+          const oldest = this.#attachments.keys().next().value;
+          if (oldest === undefined) break;
+          this.#attachments.delete(oldest);
+        }
+        return id;
+      })),
+    };
   }
 
   async attachment(chatId: number, messageGuid: string, attachmentId: string) {
-    const result = await this.history(chatId, 50);
-    for (const candidate of list(result, "messages")) {
-      const message = record(candidate);
-      if (message === null || stringField(message, ["guid", "message_guid"]) !== messageGuid) {
-        continue;
-      }
-      for (const rawAttachment of list(message.attachments, "attachments")) {
-        const attachment = record(rawAttachment);
-        if (attachment === null) continue;
-        const id = stringField(attachment, ["attachment_id", "guid", "id"]);
-        if (id !== attachmentId) continue;
-        const path = stringField(attachment, ["path", "original_path", "filename"]);
-        if (path === null) return null;
-        return {
-          attachmentId: id,
-          messageGuid,
-          name:
-            stringField(attachment, ["name", "transfer_name", "filename"]) ?? basename(path),
-          path,
-        };
-      }
+    let scoped = this.#attachments.get(`${chatId}:${messageGuid}:${attachmentId}`);
+    if (scoped === undefined) {
+      await this.history(chatId, 50);
+      scoped = this.#attachments.get(`${chatId}:${messageGuid}:${attachmentId}`);
     }
-    return null;
+    if (scoped === undefined) return null;
+    const materialized = await this.messages.materializeAttachment({
+      attachment: scoped.reference,
+      conversation: scoped.conversation,
+      maxBytes: 20 * 1024 * 1024,
+    });
+    while (this.#materialized.size >= 32) {
+      const oldest = this.#materialized.values().next().value;
+      if (oldest === undefined) break;
+      this.#materialized.delete(oldest);
+      await oldest.dispose().catch(() => undefined);
+    }
+    this.#materialized.add(materialized);
+    return {
+      attachmentId,
+      messageGuid,
+      name: materialized.name,
+      path: materialized.path,
+    };
+  }
+
+  async close(): Promise<void> {
+    await Promise.all([...this.#materialized].map(async (attachment) => {
+      await attachment.dispose().catch(() => undefined);
+    }));
+    this.#materialized.clear();
+  }
+
+  #context(chatId: number): ConversationContext {
+    const context = this.context(chatId);
+    if (context === undefined) throw new Error("Current conversation scope is unavailable");
+    return context;
   }
 }

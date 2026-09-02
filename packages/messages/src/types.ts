@@ -1,6 +1,15 @@
 export interface ConversationReference {
   readonly chatId: number;
+  readonly expiresAt: string;
   readonly provider: "apple-messages";
+  readonly token: string;
+  readonly version: 1;
+}
+
+export interface AttachmentReference {
+  readonly expiresAt: string;
+  readonly provider: "apple-messages";
+  readonly token: string;
   readonly version: 1;
 }
 
@@ -10,9 +19,11 @@ export interface ConversationFacts {
 }
 
 export interface MessagesAttachment {
+  readonly available: boolean;
   readonly mimeType: string | null;
   readonly name: string | null;
   readonly providerAttachmentId: string | null;
+  readonly reference?: AttachmentReference;
   readonly sizeBytes: number | null;
 }
 
@@ -25,6 +36,11 @@ export interface MessagesEvent {
     readonly kind: "message" | "poll" | "reaction";
     readonly occurredAt: string | null;
     readonly providerMessageId: string;
+    readonly reaction: {
+      readonly added: boolean | null;
+      readonly targetProviderMessageId: string;
+      readonly type: string;
+    } | null;
     readonly rowId: number;
     readonly replyToProviderMessageId: string | null;
     readonly replyToText: string | null;
@@ -32,6 +48,7 @@ export interface MessagesEvent {
     readonly selfChatMirror: boolean;
     readonly service: string | null;
     readonly text: string | null;
+    readonly urlPreview: boolean;
   };
   readonly provider: "apple-messages";
   readonly version: 1;
@@ -86,10 +103,47 @@ export interface MessagesRecoveryLimits {
   readonly maxRows?: number;
 }
 
+export interface MessagesScopeLimits {
+  readonly maxAttachmentBytes?: number;
+  readonly maxAttachmentCount?: number;
+  readonly maxHistoryBytes?: number;
+  readonly maxHistoryMessages?: number;
+  readonly maxHistoryRows?: number;
+  readonly maxHistoryRpcCalls?: number;
+  readonly ttlMs?: number;
+}
+
+export interface MessagesHistoryBudget {
+  readonly maxBytes: number;
+  readonly maxMessages: number;
+  readonly maxRows: number;
+  readonly maxRpcCalls: number;
+}
+
+export interface MessagesHistoryPage {
+  readonly continuation?: string;
+  readonly hasMore: boolean;
+  readonly messages: readonly MessagesEvent[];
+  readonly scannedBytes: number;
+  readonly scannedRows: number;
+}
+
+export interface MaterializedAttachment {
+  dispose(): Promise<void>;
+  readonly mimeType: string;
+  readonly name: string;
+  readonly path: string;
+  readonly sha256: string;
+  readonly sizeBytes: number;
+}
+
 export interface CreateProntoMessagesOptions {
+  readonly attachmentsRoot?: string;
   readonly imsgPath: string;
   readonly legacyUnscopedCursor?: number;
   readonly recoveryLimits?: MessagesRecoveryLimits;
+  readonly scopeLimits?: MessagesScopeLimits;
+  readonly scratchRoot?: string;
   readonly statePath?: string;
 }
 
@@ -101,6 +155,18 @@ export interface MessagesSubscription {
 export interface ProntoMessages {
   close(): Promise<void>;
   diagnostics(): MessagesDiagnostics;
+  history(input: {
+    readonly budget: MessagesHistoryBudget;
+    readonly continuation?: string;
+    readonly conversation: ConversationReference;
+    readonly includeReactions?: boolean;
+    readonly mode?: "forward" | "recent";
+  }): Promise<MessagesHistoryPage>;
+  materializeAttachment(input: {
+    readonly attachment: AttachmentReference;
+    readonly conversation: ConversationReference;
+    readonly maxBytes: number;
+  }): Promise<MaterializedAttachment>;
   qualify(): Promise<MessagesQualification>;
   reply(input: {
     readonly conversation: ConversationReference;

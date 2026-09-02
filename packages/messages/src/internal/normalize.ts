@@ -69,6 +69,7 @@ function attachment(value: unknown): MessagesAttachment | null {
   if (Object.keys(raw).length === 0) return null;
   const size = raw.total_bytes ?? raw.size;
   return {
+    available: false,
     mimeType: optionalString(raw.mime_type ?? raw.mimeType),
     name: optionalString(raw.name ?? raw.transfer_name ?? raw.filename),
     providerAttachmentId: optionalString(raw.attachment_id ?? raw.guid),
@@ -107,7 +108,13 @@ export function normalizeEvent(
     return null;
   }
   return {
-    conversation: { chatId, provider: "apple-messages", version: 1 },
+    conversation: {
+      chatId,
+      expiresAt: new Date(0).toISOString(),
+      provider: "apple-messages",
+      token: "",
+      version: 1,
+    },
     conversationFacts,
     message: {
       attachments: Array.isArray(raw.attachments)
@@ -117,13 +124,26 @@ export function normalizeEvent(
         })
         : [],
       fromMe: raw.is_from_me === true,
-      kind: Object.keys(reaction).length > 0
+      kind: Object.keys(reaction).length > 0 || raw.is_reaction === true
         ? "reaction"
         : Object.keys(poll).length > 0 ? "poll" : "message",
       occurredAt: typeof raw.date === "string"
         ? raw.date
         : typeof raw.created_at === "string" ? raw.created_at : null,
       providerMessageId,
+      reaction: (() => {
+        const type = reaction.type ?? raw.reaction_type;
+        const target = reaction.target_guid ?? reaction.targetGuid ?? raw.reacted_to_guid;
+        if (typeof type !== "string" || type === "" || typeof target !== "string" || target === "") {
+          return null;
+        }
+        const added = reaction.added ?? raw.is_reaction_add;
+        return {
+          added: typeof added === "boolean" ? added : null,
+          targetProviderMessageId: target,
+          type,
+        };
+      })(),
       rowId,
       replyToProviderMessageId:
         typeof raw.reply_to_guid === "string" && raw.reply_to_guid !== ""
@@ -134,6 +154,7 @@ export function normalizeEvent(
       selfChatMirror: false,
       service: typeof raw.service === "string" ? raw.service : null,
       text: typeof raw.text === "string" ? raw.text : null,
+      urlPreview: raw.url_preview !== undefined,
     },
     provider: "apple-messages",
     version: 1,

@@ -3,7 +3,8 @@ import { activatedRequest, type ActivatedRequest } from "../activation";
 import { normalizeMessage, type NormalizedMessage } from "./message";
 import { qualifyImsgStatus, type QualifiedImsg } from "./probe";
 import { ImsgRpcError, type ImsgRpc, type WatchableImsgRpc } from "./rpc-client";
-import type { MessagesEvent, ProntoMessages } from "pronto-imessage";
+import type { ConversationReference, MessagesEvent, ProntoMessages } from "pronto-imessage";
+import { rawFromMessagesEvent } from "./event-adapter";
 
 export type SendDisposition =
   | { disposition: "confirmed"; guid: string }
@@ -84,6 +85,10 @@ function isCorrelatedMirror(message: NormalizedMessage, original: NormalizedMess
 
 export class ImsgTransport {
   readonly #recentOutgoing = new Map<string, NormalizedMessage>();
+  readonly #conversations = new Map<number, {
+    readonly facts: ChatEligibility;
+    readonly reference: ConversationReference;
+  }>();
 
   constructor(
     readonly rpc: ImsgRpc,
@@ -107,6 +112,10 @@ export class ImsgTransport {
 
   async ownerParticipated(chatId: number): Promise<boolean> {
     return (await this.#chatEligibility(chatId)).ownerParticipated;
+  }
+
+  conversationContext(chatId: number) {
+    return this.#conversations.get(chatId);
   }
 
   async #chatEligibility(chatId: number): Promise<ChatEligibility> {
@@ -223,6 +232,22 @@ export class ImsgTransport {
   }
 
   async recentMessages(chatId: number, limit = 30): Promise<unknown[]> {
+    if (this.options.messages !== undefined) {
+      const conversation = this.#conversations.get(chatId)?.reference;
+      if (conversation === undefined) throw new Error("Current conversation scope is unavailable");
+      const page = await this.options.messages.history({
+        budget: {
+          maxBytes: 2 * 1024 * 1024,
+          maxMessages: Math.max(1, Math.min(limit, 100)),
+          maxRows: Math.max(1, Math.min(limit, 100)),
+          maxRpcCalls: 1,
+        },
+        conversation,
+        includeReactions: true,
+        mode: "recent",
+      });
+      return page.messages.map((event) => rawFromMessagesEvent(event));
+    }
     const result = object(
       await this.rpc.call("messages.history", {
         attachments: true,
@@ -243,6 +268,10 @@ export class ImsgTransport {
     if (this.options.messages !== undefined) {
       return await this.options.messages.subscribe({
         onEvent: async (event) => {
+          this.#conversations.set(event.conversation.chatId, {
+            facts: event.conversationFacts,
+            reference: event.conversation,
+          });
           const message = fromMessagesEvent(event);
           const request = await this.#activationForMessage(
             message,
@@ -356,8 +385,10 @@ export class ImsgTransport {
 
   async sendText(chatId: number, text: string): Promise<SendDisposition> {
     if (this.options.messages !== undefined) {
+      const conversation = this.#conversations.get(chatId)?.reference;
+      if (conversation === undefined) throw new Error("Current conversation scope is unavailable");
       const outcome = await this.options.messages.reply({
-        conversation: { chatId, provider: "apple-messages", version: 1 },
+        conversation,
         text,
       });
       if (outcome.status === "confirmed") {

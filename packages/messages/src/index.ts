@@ -12,6 +12,7 @@ import {
   record,
 } from "./internal/normalize.js";
 import { databaseGeneration } from "./internal/generation.js";
+import { ScopedMessagesAccess } from "./internal/scoped.js";
 import {
   MemoryCheckpointStore,
   ProviderStateStore,
@@ -20,8 +21,10 @@ import {
 import type {
   DeliveryOutcome,
   CreateProntoMessagesOptions,
+  MaterializedAttachment,
   MessagesDiagnostics,
   MessagesEvent,
+  MessagesHistoryPage,
   MessagesQualification,
   MessagesRecoveryOutcome,
   MessagesRecoveryReason,
@@ -32,17 +35,22 @@ import type {
 export type {
   ConversationFacts,
   ConversationReference,
+  AttachmentReference,
   CreateProntoMessagesOptions,
   DeliveryOutcome,
   MessagesAttachment,
   MessagesEvent,
+  MessagesHistoryBudget,
+  MessagesHistoryPage,
   MessagesDiagnostics,
   MessagesQualification,
   MessagesRecoveryOutcome,
   MessagesRecoveryLimits,
   MessagesRecoveryReason,
+  MessagesScopeLimits,
   MessagesSubscription,
   ProntoMessages,
+  MaterializedAttachment,
 } from "./types.js";
 
 function messageDateMs(value: string | null): number | null {
@@ -90,6 +98,7 @@ function isGenerationBoundary(error: unknown): error is RecoveryBoundaryError {
 
 class ProntoMessagesClient implements ProntoMessages {
   readonly #rpc: ResilientRpcClient;
+  readonly #scoped: ScopedMessagesAccess;
   readonly #recentOutgoing = new Map<string, MessagesEvent>();
   readonly #inFlightDeliveries = new Map<string, Promise<void>>();
   readonly #state: CheckpointStore;
@@ -121,6 +130,13 @@ class ProntoMessagesClient implements ProntoMessages {
           : { legacyUnscopedCursor: input.legacyUnscopedCursor }),
       });
     this.#rpc = ResilientRpcClient.spawn(input.imsgPath);
+    this.#scoped = new ScopedMessagesAccess({
+      ...(input.attachmentsRoot === undefined ? {} : { attachmentsRoot: input.attachmentsRoot }),
+      generation: async () => await this.#refreshGeneration(),
+      ...(input.scopeLimits === undefined ? {} : { limits: input.scopeLimits }),
+      rpc: this.#rpc,
+      ...(input.scratchRoot === undefined ? {} : { scratchRoot: input.scratchRoot }),
+    });
   }
 
   async qualify(): Promise<MessagesQualification> {
@@ -142,6 +158,18 @@ class ProntoMessagesClient implements ProntoMessages {
       state: this.#closed ? "closed" : rpc.state === "recovering" ? "recovering" : this.#diagnostics.state,
       ...(rpc.nextRetryAt === undefined ? {} : { nextRetryAt: rpc.nextRetryAt }),
     };
+  }
+
+  async history(
+    input: Parameters<ProntoMessages["history"]>[0],
+  ): Promise<MessagesHistoryPage> {
+    return await this.#scoped.history(input);
+  }
+
+  async materializeAttachment(
+    input: Parameters<ProntoMessages["materializeAttachment"]>[0],
+  ): Promise<MaterializedAttachment> {
+    return await this.#scoped.materializeAttachment(input);
   }
 
   async subscribe(
@@ -437,9 +465,10 @@ class ProntoMessagesClient implements ProntoMessages {
   }
 
   async reply(input: Parameters<ProntoMessages["reply"]>[0]): Promise<DeliveryOutcome> {
+    const conversation = await this.#scoped.conversation(input.conversation);
     try {
       const result = record(await this.#rpc.request("send", {
-        chat_id: input.conversation.chatId,
+        chat_id: conversation.chatId,
         text: input.text,
       }));
       if (result.ok !== true) return { retryable: false, status: "failed" };
@@ -490,7 +519,12 @@ class ProntoMessagesClient implements ProntoMessages {
         selfChatMirror: await this.#isSelfChatMirror(event, budget),
       },
     };
-    this.#rememberOutgoing(normalizedEvent);
+    const scopedEvent = await within(async () => await this.#scoped.decorateEvent(
+      normalizedEvent,
+      rawMessage,
+      generation,
+    ));
+    this.#rememberOutgoing(scopedEvent);
     const deliveryKey = `${generation}:${rowId}`;
     const existingDelivery = this.#inFlightDeliveries.get(deliveryKey);
     if (existingDelivery !== undefined) {
@@ -498,7 +532,7 @@ class ProntoMessagesClient implements ProntoMessages {
       return;
     }
     const delivery = (async () => {
-      await input.onEvent(normalizedEvent);
+      await input.onEvent(scopedEvent);
       const observedGeneration = await this.#refreshGeneration();
       if (observedGeneration !== generation) {
         throw new RecoveryBoundaryError("database-generation-changed", budget?.rows ?? 0);

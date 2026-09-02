@@ -47,7 +47,11 @@ export class ProntoDaemon {
       matchesOutboundEcho: (chatId, text) => journal.matchesOutboundEcho(chatId, text),
       messages,
     });
-    const broker = new ConversationBroker(new ImsgCurrentChatSource(rpc));
+    const currentChatSource = new ImsgCurrentChatSource(
+      messages,
+      (chatId) => transport.conversationContext(chatId),
+    );
+    const broker = new ConversationBroker(currentChatSource);
     let brokerServer: ReturnType<ConversationBroker["listen"]> | null = null;
     let activeWatch: Awaited<ReturnType<ImsgTransport["watch"]>> | null = null;
 
@@ -140,6 +144,7 @@ export class ProntoDaemon {
       this.#stop = null;
       await activeWatch?.close().catch(() => undefined);
       brokerServer?.close();
+      await currentChatSource.close().catch(() => undefined);
       await rpc.close().catch(() => undefined);
       await messages.close().catch(() => undefined);
       database.close();

@@ -106,7 +106,13 @@ test("normalizes one inbound transcript event and replies to its exact conversat
 
   const event = await nextEvent(messages);
   expect(event).toEqual({
-    conversation: { chatId: 42, provider: "apple-messages", version: 1 },
+    conversation: {
+      chatId: 42,
+      expiresAt: expect.any(String),
+      provider: "apple-messages",
+      token: expect.any(String),
+      version: 1,
+    },
     conversationFacts: { ownerParticipated: true, service: "iMessage" },
     message: {
       attachments: [],
@@ -114,6 +120,7 @@ test("normalizes one inbound transcript event and replies to its exact conversat
       kind: "message",
       occurredAt: "2026-09-01T12:00:00.000Z",
       providerMessageId: "inbound-guid",
+      reaction: null,
       rowId: 101,
       replyToProviderMessageId: null,
       replyToText: null,
@@ -121,6 +128,7 @@ test("normalizes one inbound transcript event and replies to its exact conversat
       selfChatMirror: false,
       service: "iMessage",
       text: "hello from Messages",
+      urlPreview: false,
     },
     provider: "apple-messages",
     version: 1,
@@ -164,8 +172,9 @@ test("classifies a process failure after send submission as ambiguous without re
     exitDuringSend: true,
     sentMessages: 1,
   });
+  const event = await nextEvent(messages);
   expect(await messages.reply({
-    conversation: { chatId: 42, provider: "apple-messages", version: 1 },
+    conversation: event.conversation,
     text: "one external effect",
   })).toEqual({ status: "ambiguous" });
   await messages.close();
