@@ -2,14 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeAdapter } from "../../src/runtimes/claude";
-import { CodexAdapter } from "../../src/runtimes/codex";
+import { ClaudeAdapter } from "../../packages/cli/src/runtimes/claude";
+import { CodexAdapter } from "../../packages/cli/src/runtimes/codex";
 import type {
   ProcessExecution,
   ProcessRunner,
   ProcessSpec,
-} from "../../src/runtimes/process";
-import { ProcessSpawnError } from "../../src/runtimes/process";
+} from "../../packages/cli/src/runtimes/process";
+import { ProcessSpawnError } from "../../packages/cli/src/runtimes/process";
 
 class FakeRunner implements ProcessRunner {
   codexHome: string | null = null;
@@ -46,7 +46,7 @@ class FakeRunner implements ProcessRunner {
 const temporaryDirectories: string[] = [];
 
 async function codexAdapter(runner: FakeRunner, executablePath = "/usr/local/bin/codex") {
-  const codexHome = await mkdtemp(join(tmpdir(), "s4imsg-codex-home-"));
+  const codexHome = await mkdtemp(join(tmpdir(), "pronto-codex-home-"));
   temporaryDirectories.push(codexHome);
   runner.codexHome = codexHome;
   return { adapter: new CodexAdapter(executablePath, runner, codexHome), codexHome };
@@ -60,7 +60,7 @@ afterEach(async () => {
 
 const input = {
   bridgeExecutableArgs: ["/source/src/cli.ts"],
-  bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
+  bridgeExecutablePath: "/Applications/pronto/bin/pronto",
   brokerUrl: "http://127.0.0.1:3456",
   capability: "secret-capability",
   prompt: "AUTHORIZED REQUEST\nDo the work",
@@ -95,13 +95,13 @@ describe("Codex adapter", () => {
     expect(execution.args).toContain("--profile");
     expect(execution.env).toEqual({});
     expect(runner.observedCodexProfile).toContain(
-      'S4IMSG_ATTEMPT_CAPABILITY = "secret-capability"',
+      'PRONTO_ATTEMPT_CAPABILITY = "secret-capability"',
     );
     expect(runner.observedCodexProfile).toContain(
       'args = ["/source/src/cli.ts","mcp"]',
     );
     expect(runner.observedCodexProfile).toContain(
-      'S4IMSG_BROKER_URL = "http://127.0.0.1:3456"',
+      'PRONTO_BROKER_URL = "http://127.0.0.1:3456"',
     );
     expect(runner.observedCodexProfileMode).toBe(0o600);
     expect(await readdir(codexHome)).toEqual([]);
@@ -109,7 +109,7 @@ describe("Codex adapter", () => {
   });
 
   test("creates an absent custom Codex home and removes the temporary profile", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "s4imsg-absent-codex-home-"));
+    const parent = await mkdtemp(join(tmpdir(), "pronto-absent-codex-home-"));
     temporaryDirectories.push(parent);
     const codexHome = join(parent, "nested", ".codex");
     const runner = new FakeRunner();
@@ -124,7 +124,7 @@ describe("Codex adapter", () => {
     ).toMatchObject({ status: "success" });
     expect((await stat(codexHome)).mode & 0o777).toBe(0o700);
     expect(runner.observedCodexProfile).toContain(
-      'S4IMSG_ATTEMPT_CAPABILITY = "secret-capability"',
+      'PRONTO_ATTEMPT_CAPABILITY = "secret-capability"',
     );
     expect(await readdir(codexHome)).toEqual([]);
   });
@@ -156,12 +156,12 @@ describe("Claude Code adapter", () => {
     expect(execution.args.join(" ")).not.toContain("secret-capability");
     expect(runner.observedMcpConfig).toEqual({
       mcpServers: {
-        s4imsg: {
+        pronto: {
           args: ["/source/src/cli.ts", "mcp"],
           command: input.bridgeExecutablePath,
           env: {
-            S4IMSG_ATTEMPT_CAPABILITY: input.capability,
-            S4IMSG_BROKER_URL: input.brokerUrl,
+            PRONTO_ATTEMPT_CAPABILITY: input.capability,
+            PRONTO_BROKER_URL: input.brokerUrl,
           },
         },
       },

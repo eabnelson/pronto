@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { ConversationBroker, type CurrentChatSource } from "../../src/tools/broker";
-import { brokerQuery } from "../../src/tools/mcp";
+import { ConversationBroker, type CurrentChatSource } from "../../packages/cli/src/tools/broker";
+import { brokerQuery } from "../../packages/cli/src/tools/mcp";
 
 class TwoChatSource implements CurrentChatSource {
   async details(chatId: number): Promise<unknown> {

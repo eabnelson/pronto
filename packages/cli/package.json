@@ -1,0 +1,13 @@
+{
+  "name": "pronto-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "pronto": "./src/cli.ts",
+    "s4imsg": "./src/legacy-cli.ts"
+  },
+  "dependencies": {
+    "pronto-imessage": "workspace:*"
+  }
+}

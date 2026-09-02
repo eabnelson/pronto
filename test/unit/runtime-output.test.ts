@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { RUNTIME_OUTPUT_SCHEMA, validateRuntimeOutput } from "../../src/runtimes/types";
+import { RUNTIME_OUTPUT_SCHEMA, validateRuntimeOutput } from "../../packages/cli/src/runtimes/types";
 
 test("uses a strict Codex-compatible schema while preserving optional output fields", () => {
   expect(RUNTIME_OUTPUT_SCHEMA.required).toEqual([

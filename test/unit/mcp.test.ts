@@ -1,5 +1,11 @@
-import { expect, test } from "bun:test";
-import { handleMcpRequest, TOOL_DEFINITIONS } from "../../src/tools/mcp";
+import { afterEach, expect, mock, test } from "bun:test";
+import { brokerQuery, handleMcpRequest, TOOL_DEFINITIONS } from "../../packages/cli/src/tools/mcp";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 test("advertises only deterministic read-only current-chat tools", async () => {
   expect(TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual([
@@ -47,7 +53,40 @@ test("supports legacy initialization without expanding capabilities", async () =
   ).toMatchObject({
     result: {
       capabilities: { tools: {} },
-      serverInfo: { name: "s4imsg-current-chat" },
+      serverInfo: { name: "pronto-current-chat" },
     },
   });
+});
+
+test("refuses every broker URL that is not the literal local HTTP listener", async () => {
+  const fetchMock = mock(
+    async (_input: string | URL | Request, _init?: RequestInit) =>
+      new Response(JSON.stringify({ result: {} }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+  );
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+  for (const brokerUrl of [
+    "https://example.com:443",
+    "http://169.254.169.254:80",
+    "http://127.0.0.1.evil.example:80",
+    "http://127.0.0.1@evil.example:80",
+    "http://[::1]:9000",
+    "http://127.0.0.1:9000/unexpected",
+  ]) {
+    await expect(brokerQuery(brokerUrl, "capability", "current_chat_details", {}))
+      .rejects.toThrow("local loopback");
+  }
+  expect(fetchMock).not.toHaveBeenCalled();
+
+  await expect(brokerQuery(
+    "http://127.0.0.1:9000",
+    "capability",
+    "current_chat_details",
+    {},
+  )).resolves.toEqual({});
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:9000/query");
 });

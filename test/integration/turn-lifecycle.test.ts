@@ -2,21 +2,21 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ActivatedRequest } from "../../src/activation";
-import { FAILURE_NOTICE, TurnCoordinator, TurnProcessor } from "../../src/core/turn";
-import type { SendDisposition } from "../../src/imessage/transport";
-import { RuntimeChain } from "../../src/runtimes/chain";
+import type { ActivatedRequest } from "../../packages/cli/src/activation";
+import { FAILURE_NOTICE, TurnCoordinator, TurnProcessor } from "../../packages/cli/src/core/turn";
+import type { SendDisposition } from "../../packages/cli/src/imessage/transport";
+import { RuntimeChain } from "../../packages/cli/src/runtimes/chain";
 import type {
   RuntimeAdapter,
   RuntimeAttemptResult,
   RuntimeInput,
-} from "../../src/runtimes/types";
-import { chatKeyForId } from "../../src/storage/chat-key";
-import { openS4imsgDatabase } from "../../src/storage/database";
-import { DeliveryJournal } from "../../src/storage/journal";
-import { MemoryStore } from "../../src/storage/memory";
-import { promoteWorkspace, WorkspaceStore } from "../../src/storage/workspaces";
-import { ConversationBroker, type CurrentChatSource } from "../../src/tools/broker";
+} from "../../packages/cli/src/runtimes/types";
+import { chatKeyForId } from "../../packages/cli/src/storage/chat-key";
+import { openProntoDatabase } from "../../packages/cli/src/storage/database";
+import { DeliveryJournal } from "../../packages/cli/src/storage/journal";
+import { MemoryStore } from "../../packages/cli/src/storage/memory";
+import { promoteWorkspace, WorkspaceStore } from "../../packages/cli/src/storage/workspaces";
+import { ConversationBroker, type CurrentChatSource } from "../../packages/cli/src/tools/broker";
 
 const temporaryDirectories: string[] = [];
 
@@ -67,12 +67,21 @@ class FakeTransport {
   async recentMessages(): Promise<unknown[]> {
     return [
       {
-        attachments: [{ transfer_name: "brief.pdf" }],
-        chat_id: 42,
-        guid: "RECENT-1",
-        is_from_me: false,
+        attachments: [{
+          available: true,
+          mimeType: "application/pdf",
+          name: "brief.pdf",
+          sizeBytes: 12,
+        }],
+        fromMe: false,
+        kind: "message",
+        messageGuid: "RECENT-1",
+        occurredAt: "2026-09-01T12:00:00.000Z",
+        reaction: null,
+        sender: "+15555550100",
         service: "iMessage",
         text: "The launch is Friday.",
+        urlPreview: false,
       },
     ];
   }
@@ -90,8 +99,14 @@ const source: CurrentChatSource = {
 
 const activation: ActivatedRequest = {
   activationTag: "@helper",
-  attachments: [],
   chatId: 42,
+  conversation: {
+    chatId: 42,
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    provider: "apple-messages",
+    token: "persisted-conversation-reference",
+    version: 1,
+  },
   isFromMe: false,
   providerGuid: "IN-1",
   request: "Draft the launch note.",
@@ -99,16 +114,16 @@ const activation: ActivatedRequest = {
 };
 
 async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-turn-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-turn-"));
   temporaryDirectories.push(directory);
-  const database = openS4imsgDatabase(join(directory, "state.sqlite"));
+  const database = openProntoDatabase(join(directory, "state.sqlite"));
   const journal = new DeliveryJournal(database);
   const memory = new MemoryStore(database);
   const workspaces = new WorkspaceStore(database);
   const transport = new FakeTransport();
   const broker = new ConversationBroker(source);
   const processor = new TurnProcessor({
-    bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
+    bridgeExecutablePath: "/Applications/pronto/bin/pronto",
     broker,
     brokerUrl: "http://127.0.0.1:1",
     journal,
@@ -300,6 +315,7 @@ describe("turn lifecycle", () => {
       h.coordinator.admit({
         ...activation,
         chatId: 99,
+        conversation: { ...activation.conversation, chatId: 99 },
         providerGuid: "IN-OTHER-CHAT",
         request: "1",
       });
@@ -471,7 +487,7 @@ describe("turn lifecycle", () => {
       expect(primary.inputs).toHaveLength(0);
       expect(h.transport.sends[0]!.text).toContain(missing);
       expect(h.transport.sends[0]!.text).toContain("use /path/to/project");
-      expect(h.transport.sends[0]!.text).toContain("s4imsg forget");
+      expect(h.transport.sends[0]!.text).toContain("pronto forget");
     } finally {
       h.close();
     }
@@ -497,6 +513,7 @@ describe("turn lifecycle", () => {
       });
       expect(primary.inputs[0]!.prompt).toContain("The launch is Friday.");
       expect(primary.inputs[0]!.prompt).toContain("AUTHORIZED REQUEST");
+      expect(primary.inputs[0]!.prompt).toContain("iMessage or RCS conversation");
     } finally {
       h.close();
     }
@@ -650,6 +667,7 @@ describe("turn lifecycle", () => {
         activationTag: "@plan",
         chatId: 42,
         chatKey: chatKeyForId(42, h.salt),
+        conversation: activation.conversation,
         providerGuid: "IN-RECOVER",
         request: "recover me",
       });
@@ -662,6 +680,35 @@ describe("turn lifecycle", () => {
       expect(primary.inputs).toHaveLength(0);
       expect(h.transport.sends).toEqual([{ chatId: 42, text: "Plan\nalready accepted" }]);
       expect(h.journal.state("IN-RECOVER")).toBe("delivered");
+    } finally {
+      h.close();
+    }
+  });
+
+  test("fails a legacy accepted reply without marking an unattempted send ambiguous", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "must not run" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    try {
+      h.journal.admit({
+        activationTag: "@plan",
+        chatId: 42,
+        chatKey: chatKeyForId(42, h.salt),
+        providerGuid: "IN-LEGACY-RECOVER",
+        request: "recover me",
+      });
+      const lease = h.journal.lease("IN-LEGACY-RECOVER")!;
+      h.journal.accept("IN-LEGACY-RECOVER", lease, { reply: "already accepted" });
+
+      expect(h.coordinator.start()).toEqual({ ambiguous: 0, parked: 0, resumed: 1 });
+      await h.coordinator.idle();
+
+      expect(primary.inputs).toHaveLength(0);
+      expect(h.transport.sends).toEqual([]);
+      expect(h.journal.state("IN-LEGACY-RECOVER")).toBe("failed");
     } finally {
       h.close();
     }

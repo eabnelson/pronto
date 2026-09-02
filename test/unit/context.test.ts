@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { assembleContext } from "../../src/context/assemble";
+import { assembleContext } from "../../packages/cli/src/context/assemble";
 
 describe("bounded context assembly", () => {
   test("combines transient recent messages with tagged memory", () => {

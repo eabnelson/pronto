@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
-import type { RuntimeAdapter, RuntimeInput } from "../../src/runtimes/types";
-import { qualifyRuntime } from "../../src/runtimes/qualification";
+import type { RuntimeAdapter, RuntimeInput } from "../../packages/cli/src/runtimes/types";
+import { qualifyRuntime } from "../../packages/cli/src/runtimes/qualification";
 
 class ProbeAdapter implements RuntimeAdapter {
   readonly executablePath = "/usr/local/bin/codex";
@@ -34,7 +34,7 @@ describe("runtime qualification", () => {
     const adapter = new ProbeAdapter();
     const result = await qualifyRuntime({
       adapter,
-      bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
+      bridgeExecutablePath: "/Applications/pronto/bin/pronto",
       commandRunner: successfulRunner,
       workingDirectory: "/Users/example/project",
     });
@@ -52,7 +52,7 @@ describe("runtime qualification", () => {
     let calls = 0;
     const result = await qualifyRuntime({
       adapter: new ProbeAdapter(),
-      bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
+      bridgeExecutablePath: "/Applications/pronto/bin/pronto",
       commandRunner: async (_executable, args) => {
         calls += 1;
         return {
@@ -75,7 +75,7 @@ describe("runtime qualification", () => {
     const adapter = new ProbeAdapter();
     const result = await qualifyRuntime({
       adapter,
-      bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
+      bridgeExecutablePath: "/Applications/pronto/bin/pronto",
       commandRunner: async () => ({
         exitCode: 0,
         stderr: "",
@@ -90,7 +90,7 @@ describe("runtime qualification", () => {
   test("rejects a runtime whose effective permissions cannot create the marker", async () => {
     const result = await qualifyRuntime({
       adapter: new ProbeAdapter(false),
-      bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
+      bridgeExecutablePath: "/Applications/pronto/bin/pronto",
       commandRunner: successfulRunner,
       workingDirectory: "/Users/example/project",
     });

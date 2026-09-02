@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { BoundedProcessRunner } from "../../src/runtimes/process";
+import { BoundedProcessRunner } from "../../packages/cli/src/runtimes/process";
 
 test("bounds captured runtime output", async () => {
   const result = await new BoundedProcessRunner().run({

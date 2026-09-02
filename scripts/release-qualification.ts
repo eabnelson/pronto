@@ -1,6 +1,7 @@
 const expectedSurfaces = new Set([
   "macOS",
   "Bun",
+  "Node.js",
   "imsg",
   "Codex CLI",
   "Claude Code",

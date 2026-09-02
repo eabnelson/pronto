@@ -2,10 +2,10 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openS4imsgDatabase } from "../../src/storage/database";
-import { MemoryStore } from "../../src/storage/memory";
-import { chatKeyForId } from "../../src/storage/chat-key";
-import { DeliveryJournal } from "../../src/storage/journal";
+import { openProntoDatabase } from "../../packages/cli/src/storage/database";
+import { MemoryStore } from "../../packages/cli/src/storage/memory";
+import { chatKeyForId } from "../../packages/cli/src/storage/chat-key";
+import { DeliveryJournal } from "../../packages/cli/src/storage/journal";
 
 const temporaryDirectories: string[] = [];
 
@@ -23,9 +23,9 @@ test("derives stable opaque chat keys from the private installation salt", () =>
 });
 
 test("retains eight exact exchanges, one valid summary, and supports forget", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-memory-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-memory-"));
   temporaryDirectories.push(directory);
-  const database = openS4imsgDatabase(join(directory, "state.sqlite"));
+  const database = openProntoDatabase(join(directory, "state.sqlite"));
   const memory = new MemoryStore(database);
   try {
     for (let index = 1; index <= 9; index++) {

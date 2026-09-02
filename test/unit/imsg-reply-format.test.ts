@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { findTagRanges } from "../../src/activation";
+import { findTagRanges } from "../../packages/cli/src/activation";
 import {
   formatImessageReplyText,
   imessageReplyBodyCharacterLimit,
-} from "../../src/imessage/reply-format";
+} from "../../packages/cli/src/imessage/reply-format";
 
 describe("iMessage reply formatting", () => {
   test("puts the triggering tag in title case on its own first line", () => {

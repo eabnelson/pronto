@@ -1,0 +1,36 @@
+{
+  "name": "pronto-imessage",
+  "version": "0.1.0",
+  "description": "Reusable local Apple Messages transport for Pronto consumers",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/eabnelson/pronto#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eabnelson/pronto.git",
+    "directory": "packages/messages"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./dist/index.js",
+      "import": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "imessage",
+    "macos",
+    "messages"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

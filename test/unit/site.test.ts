@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 const repoRoot = new URL("../../", import.meta.url);
 const siteRoot = new URL("site/", repoRoot);
 const setupPrompt =
-  "Help me set up iMessage Tags on this Mac. Follow https://studiofour.io/imessage-setup.md and stay with me until one tagged iMessage gets exactly one agent reply.";
+  "Help me set up iMessage Tags on this Mac. Follow https://studiofour.io/imessage-setup.md and stay with me until one tagged iMessage or RCS message gets exactly one agent reply.";
 
 async function read(name: string): Promise<string> {
   return Bun.file(new URL(name, siteRoot)).text();
@@ -325,7 +325,7 @@ describe("public landing page", () => {
     expect(source).toContain("@plan");
     expect(source).toContain("#0a84ff");
     expect(source).toContain("#e5e5ea");
-    expect(source).not.toContain(">s4imsg<");
+    expect(source).not.toContain(">pronto<");
     expect(createHash("sha256").update(sourceBytes).digest("hex")).toBe(
       "7d3642d252cbf645f065dc39ef896d3329086548056fe7f2009b31fc4b05945b",
     );
@@ -500,18 +500,20 @@ describe("public landing page", () => {
   test("provides a complete agent-readable setup handoff", async () => {
     const setup = await read("setup.md");
 
-    expect(setup).toContain("https://github.com/eabnelson/s4imsg.git");
-    expect(setup).toContain("bun run src/cli.ts setup");
+    expect(setup).toContain("https://github.com/eabnelson/pronto.git");
+    expect(setup).toContain("bun run packages/cli/src/cli.ts setup");
     expect(setup).toContain("Full Disk Access");
     expect(setup).toContain("doctor");
     expect(setup).toContain("status");
     expect(setup).toContain("Do not type `yes` for me");
     expect(setup).toContain("Do not use `sudo`");
+    expect(setup).toContain("iMessage or RCS");
+    expect(setup).toContain("SMS messages do not activate Pronto");
   });
 
   test("grants setup and installed executables Full Disk Access at the right times", async () => {
     const setup = await read("setup.md");
-    const setupCommand = setup.indexOf("bun run src/cli.ts setup");
+    const setupCommand = setup.indexOf("bun run packages/cli/src/cli.ts setup");
     const setupPermission = setup.indexOf("terminal or parent app that will run setup");
     const installedPermission = setup.indexOf("exact installed executable");
 
@@ -523,12 +525,12 @@ describe("public landing page", () => {
   test("guards an existing checkout before running repository code", async () => {
     const setup = await read("setup.md");
     const cloneWithChosenPath = setup.indexOf(
-      "git clone https://github.com/eabnelson/s4imsg.git \"$CHECKOUT\"",
+      "git clone https://github.com/eabnelson/pronto.git \"$CHECKOUT\"",
     );
     const checkoutUse = setup.indexOf('cd "$CHECKOUT"');
     const originCheck = setup.indexOf("git remote get-url origin");
     const exactOrigins = setup.indexOf(
-      "https://github.com/eabnelson/s4imsg.git|git@github.com:eabnelson/s4imsg.git)",
+      "https://github.com/eabnelson/pronto.git|git@github.com:eabnelson/pronto.git)",
     );
     const cleanCheck = setup.indexOf("git status --porcelain");
     const fastForward = setup.indexOf("git pull --ff-only");
@@ -548,7 +550,7 @@ describe("public landing page", () => {
     const finalStep = setup.slice(setup.indexOf("7. "));
 
     expect(finalStep).toContain(
-      'S4IMSG="$HOME/Library/Application Support/s4imsg/bin/s4imsg"\n   "$S4IMSG" status',
+      'PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"\n   "$PRONTO" status',
     );
   });
 });

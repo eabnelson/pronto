@@ -1,88 +1,104 @@
 import { describe, expect, test } from "bun:test";
-import { activatedRequest } from "../../src/activation";
-import { normalizeMessage } from "../../src/imessage/message";
+import { activatedRequest } from "../../packages/cli/src/activation";
+import type { MessagesEvent } from "pronto-imessage";
 
-const baseMessage = {
-  chat_id: 42,
-  date: "2026-08-15T12:00:00Z",
-  guid: "INBOUND-1",
-  id: 100,
-  is_from_me: false,
-  sender: "+15550000001",
-  service: "iMessage",
-  text: "@helper summarize this",
-};
+function event(overrides: {
+  readonly conversationService?: string | null;
+  readonly fromMe?: boolean;
+  readonly kind?: MessagesEvent["message"]["kind"];
+  readonly messageService?: string | null;
+  readonly ownerParticipated?: boolean;
+  readonly selfChatMirror?: boolean;
+  readonly service?: string | null;
+  readonly text?: string | null;
+} = {}): MessagesEvent {
+  return {
+    conversation: {
+      chatId: 42,
+      expiresAt: "2026-09-01T13:00:00.000Z",
+      provider: "apple-messages",
+      token: "conversation-token",
+      version: 1,
+    },
+    conversationFacts: {
+      ownerParticipated: overrides.ownerParticipated ?? true,
+      service: overrides.conversationService === undefined
+        ? overrides.service === undefined ? "iMessage" : overrides.service
+        : overrides.conversationService,
+    },
+    message: {
+      attachments: [],
+      fromMe: overrides.fromMe ?? false,
+      kind: overrides.kind ?? "message",
+      occurredAt: "2026-09-01T12:00:00.000Z",
+      providerMessageId: "message-guid",
+      reaction: null,
+      replyToProviderMessageId: null,
+      replyToText: null,
+      rowId: 101,
+      selfChatMirror: overrides.selfChatMirror ?? false,
+      sender: "+15555550100",
+      service: overrides.messageService === undefined
+        ? overrides.service === undefined ? "iMessage" : overrides.service
+        : overrides.messageService,
+      text: overrides.text === undefined ? "@helper summarize this" : overrides.text,
+      urlPreview: false,
+    },
+    provider: "apple-messages",
+    version: 1,
+  };
+}
 
 describe("activation", () => {
-  test("accepts bounded tags from eligible iMessage chats", () => {
-    const message = normalizeMessage(baseMessage);
-    expect(activatedRequest(message, ["@helper", "@plan"], true)).toMatchObject({
+  test("accepts one bounded tag from an eligible normalized event", () => {
+    expect(activatedRequest(event(), ["@helper"])).toEqual({
       activationTag: "@helper",
       chatId: 42,
-      providerGuid: "INBOUND-1",
+      conversation: event().conversation,
+      isFromMe: false,
+      providerGuid: "message-guid",
       request: "summarize this",
+      rowId: 101,
     });
   });
 
   test("treats a tag-only message as a conversation-help request", () => {
-    const message = normalizeMessage({ ...baseMessage, text: "@HELPER" });
-    expect(activatedRequest(message, ["@helper"], true)).toMatchObject({
-      activationTag: "@helper",
-      request: "Help with this conversation.",
-    });
+    expect(activatedRequest(event({ text: "@HELPER" }), ["@helper"])?.request)
+      .toBe("Help with this conversation.");
   });
 
-  test("does not match email text or a longer tag", () => {
-    for (const text of ["mail me@helper.com", "@helperbot do this"]) {
-      expect(
-        activatedRequest(normalizeMessage({ ...baseMessage, text }), ["@helper"], true),
-      ).toBeNull();
+  test("accepts RCS including mixed-service events without per-message metadata", () => {
+    expect(activatedRequest(event({ service: "RCS" }), ["@helper"])?.request)
+      .toBe("summarize this");
+    expect(activatedRequest(event({
+      conversationService: "RCS",
+      messageService: null,
+    }), ["@helper"])?.request).toBe("summarize this");
+  });
+
+  test("does not match email text, longer tags, or multiple configured tags", () => {
+    for (const text of ["mail helper@example.com", "@helper2 hi", "@helper ask @plan"]) {
+      expect(activatedRequest(event({ text }), ["@helper", "@plan"])).toBeNull();
     }
   });
 
-  test("fails closed for non-iMessage, untyped, reaction, and owner-absent events", () => {
+  test("fails closed for SMS, unknown services, reactions, mirrors, and owner-absent chats", () => {
     for (const candidate of [
-      { ...baseMessage, service: "SMS" },
-      { ...baseMessage, service: undefined },
-      { ...baseMessage, reaction: { type: "love" }, text: "@helper" },
+      event({ service: "SMS" }),
+      event({ service: "satellite" }),
+      event({ kind: "reaction" }),
+      event({ selfChatMirror: true }),
+      event({ ownerParticipated: false }),
+      event({ text: null }),
     ]) {
-      expect(activatedRequest(normalizeMessage(candidate), ["@helper"], true)).toBeNull();
+      expect(activatedRequest(candidate, ["@helper"])).toBeNull();
     }
-    expect(activatedRequest(normalizeMessage(baseMessage), ["@helper"], false)).toBeNull();
   });
 
-  test("accepts tagged text with attachment metadata but not attachment-only events", () => {
-    const attachment = { filename: "notes.pdf", mime_type: "application/pdf" };
-    expect(
-      activatedRequest(
-        normalizeMessage({ ...baseMessage, attachments: [attachment] }),
-        ["@helper"],
-        true,
-      )?.attachments,
-    ).toEqual([attachment]);
-    expect(
-      activatedRequest(
-        normalizeMessage({ ...baseMessage, attachments: [attachment], text: null }),
-        ["@helper"],
-        true,
-      ),
-    ).toBeNull();
-  });
-
-  test("removes every occurrence of one matched tag and ignores ambiguous tags", () => {
-    expect(
-      activatedRequest(
-        normalizeMessage({ ...baseMessage, text: "(@HELPER) summarize @helper please" }),
-        ["@helper", "@plan"],
-        true,
-      )?.request,
-    ).toBe("summarize please");
-    expect(
-      activatedRequest(
-        normalizeMessage({ ...baseMessage, text: "@helper ask @plan what to do" }),
-        ["@helper", "@plan"],
-        true,
-      ),
-    ).toBeNull();
+  test("removes every occurrence of the one matched tag", () => {
+    expect(activatedRequest(
+      event({ text: "(@HELPER) summarize @helper please" }),
+      ["@helper"],
+    )?.request).toBe("summarize please");
   });
 });
