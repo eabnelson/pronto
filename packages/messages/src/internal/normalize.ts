@@ -78,15 +78,52 @@ function attachment(value: unknown): MessagesAttachment | null {
   };
 }
 
-export function normalizeConversationFacts(value: unknown, chatId: number): ConversationFacts {
+export function normalizeConversationFacts(
+  value: unknown,
+  chatId: number,
+  messageValue: unknown,
+  chatValue: unknown,
+): ConversationFacts {
   const result = record(value);
-  const chat = (Array.isArray(result.chats) ? result.chats : [])
+  const statsChat = (Array.isArray(result.chats) ? result.chats : [])
     .map(record)
     .find((candidate) => candidate.chat_id === chatId);
-  return {
+  const message = record(messageValue);
+  const chat = record(chatValue);
+  const accountId = optionalString(chat.account_id);
+  const accountLogin = optionalString(chat.account_login);
+  const conversationId = optionalString(chat.guid);
+  const destinationHandle = optionalString(chat.last_addressed_handle);
+  const participants = Array.isArray(message.participants) &&
+      message.participants.every((value) => typeof value === "string" && value !== "")
+    ? [...new Set(message.participants)] as string[]
+    : null;
+  const service = statsChat !== undefined
+    ? optionalString(statsChat.service)
+    : optionalString(chat.service);
+  const base: ConversationFacts = {
     ownerParticipated:
       typeof result.sent_messages === "number" && result.sent_messages > 0,
-    service: chat !== undefined ? optionalString(chat.service) : null,
+    service,
+  };
+  if (
+    accountId === null || accountLogin === null || conversationId === null ||
+    destinationHandle === null || chat.id !== chatId ||
+    message.chat_id !== chatId || message.chat_guid !== conversationId ||
+    typeof message.is_group !== "boolean" || chat.is_group !== message.is_group ||
+    participants === null || (message.is_group && participants.length === 0)
+  ) return base;
+  return {
+    ...base,
+    routing: {
+      accountId,
+      accountLogin,
+      conversationId,
+      destinationHandle,
+      isGroup: message.is_group,
+      label: optionalString(message.chat_name),
+      participants,
+    },
   };
 }
 

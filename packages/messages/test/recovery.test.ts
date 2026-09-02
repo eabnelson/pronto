@@ -585,6 +585,84 @@ ${rpcLoop(`
   await messages.close();
 }, 5_000);
 
+test("does not publish enriched routing facts across database generations", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  await writeFile(databasePath, "first database evidence");
+  const occurredAt = new Date().toISOString();
+  const executable = await executableWithSource(directory, `
+import { renameSync, writeFileSync } from "node:fs";
+let subscriptions = 0;
+let replaced = false;
+${rpcLoop(`
+    let result;
+    if (request.method === "initialize") result = {
+      protocol_version: 1,
+      version: "0.14.1",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+    };
+    else if (request.method === "watch.subscribe") {
+      subscriptions += 1;
+      result = { subscription: subscriptions };
+    } else if (request.method === "messages.stats") {
+      result = { chats: [{ chat_id: 42, service: "RCS" }], sent_messages: 1 };
+    } else if (request.method === "chats.list") {
+      if (!replaced) {
+        replaced = true;
+        writeFileSync(${JSON.stringify(databasePath)} + ".replacement", "second database evidence");
+        renameSync(${JSON.stringify(databasePath)} + ".replacement", ${JSON.stringify(databasePath)});
+      }
+      result = { chats: [{
+        account_id: "E:owner@example.com",
+        account_login: "owner@example.com",
+        guid: "RCS;-;+15550000000",
+        id: 42,
+        is_group: false,
+        last_addressed_handle: "+15551111111",
+        service: "RCS",
+      }] };
+    } else result = { ok: true };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+    if (request.method === "watch.subscribe" && subscriptions === 1) {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "message", params: {
+        subscription: 1,
+        message: {
+          chat_id: 42,
+          chat_guid: "RCS;-;+15550000000",
+          created_at: ${JSON.stringify(occurredAt)},
+          guid: "old-generation-guid",
+          id: 1,
+          is_from_me: false,
+          is_group: false,
+          participants: ["+15550000000", "+15551111111"],
+          sender: "+15550000000",
+          service: "RCS",
+          text: "must not escape",
+        },
+      } }) + "\\n");
+    }
+  `)}
+  `);
+  const messages = createProntoMessages({ imsgPath: executable });
+  const deliveredRowIds: number[] = [];
+  const outcomes: MessagesRecoveryOutcome[] = [];
+  const subscription = await messages.subscribe({
+    onEvent: (event) => { deliveredRowIds.push(event.message.rowId); },
+    onRecovery: (outcome) => { outcomes.push(outcome); },
+  });
+  const deadline = Date.now() + 3_000;
+  while (outcomes.length < 1 && Date.now() < deadline) await Bun.sleep(20);
+
+  expect(deliveredRowIds).toEqual([]);
+  expect(outcomes).toContainEqual(expect.objectContaining({
+    reason: "database-generation-changed",
+    status: "degraded",
+  }));
+  await subscription.close();
+  await messages.close();
+}, 5_000);
+
 test("discards an old-watch notification after observing a new database generation", async () => {
   const directory = await fixtureDirectory();
   const databasePath = join(directory, "chat.db");

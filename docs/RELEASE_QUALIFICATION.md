@@ -17,7 +17,7 @@ file records capability evidence, not private conversation data.
 | Claude effective local probe | 2.1.226 | Setup noninteractive file-tool probe | Pass |
 | Messages Automation | Owner test chats, 2026-09-02 | Exactly one self-chat send and one RCS send; expected self-chat display mirror only | Pass |
 | Self-chat mirror handling | Owner self-chat, 2026-09-02 | One tagged activation and one agent send with no echo turn | Pass |
-| Full remote tagged flow | v0.1.0 | RCS exact reply, recent context, tagged continuity, restart suppression, forget, and content-free logs on 2026-09-02 | Pass |
+| Full remote tagged flow | v0.2.0 | Awaiting one exact-release remote canary after the consumer routing contract change | Pending |
 
 The automated matrix and owner smoke record versions tested on 2026-09-02.
 Capability checks, not version

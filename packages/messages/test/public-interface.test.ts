@@ -14,8 +14,10 @@ afterEach(async () => {
 
 interface TranscriptScenario {
   readonly event: Record<string, unknown>;
+  readonly expectedFilePath?: string;
   readonly exitDuringSend?: boolean;
   readonly nearby?: readonly Record<string, unknown>[];
+  readonly replaceDatabaseDuringHistory?: boolean;
   readonly sentMessages: number;
 }
 
@@ -48,6 +50,26 @@ for await (const chunk of Bun.stdin.stream()) {
       };
     } else if (request.method === "watch.subscribe") {
       result = { subscription: 7 };
+    } else if (request.method === "chats.list") {
+      result = {
+        chats: [{
+          account_id: "E:owner@example.com",
+          account_login: "owner@example.com",
+          guid: "iMessage;-;+15550000000",
+          id: 42,
+          is_group: false,
+          last_addressed_handle: "+15551111111",
+          service: "iMessage",
+        }],
+      };
+    } else if (request.method === "messages.history") {
+      if (scenario.replaceDatabaseDuringHistory === true) {
+        const replacement = scenario.databasePath + ".replacement";
+        await Bun.write(replacement, "replacement database evidence");
+        await import("node:fs/promises").then(({ rename }) =>
+          rename(replacement, scenario.databasePath));
+      }
+      result = { messages: [scenario.event] };
     } else if (request.method === "messages.stats") {
       result = {
         chats: [{ chat_id: 42, service: "iMessage" }],
@@ -57,6 +79,10 @@ for await (const chunk of Bun.stdin.stream()) {
       result = { messages: scenario.nearby ?? [] };
     } else if (request.method === "send") {
       if (request.params.chat_id !== 42) throw new Error("reply was not exactly routed");
+      if (scenario.expectedFilePath !== undefined &&
+          request.params.file !== scenario.expectedFilePath) {
+        throw new Error("reply attachment was not preserved");
+      }
       if (scenario.exitDuringSend === true) process.exit(0);
       result = { ok: true, guid: "outbound-guid" };
     } else {
@@ -94,6 +120,9 @@ const inboundEvent = {
   guid: "inbound-guid",
   id: 101,
   is_from_me: false,
+  is_group: false,
+  chat_guid: "iMessage;-;+15550000000",
+  participants: ["+15550000000", "+15551111111"],
   sender: "+15550000000",
   service: "iMessage",
   text: "hello from Messages",
@@ -113,7 +142,19 @@ test("normalizes one inbound transcript event and replies to its exact conversat
       token: expect.any(String),
       version: 1,
     },
-    conversationFacts: { ownerParticipated: true, service: "iMessage" },
+    conversationFacts: {
+      ownerParticipated: true,
+      routing: {
+        accountId: "E:owner@example.com",
+        accountLogin: "owner@example.com",
+        conversationId: "iMessage;-;+15550000000",
+        destinationHandle: "+15551111111",
+        isGroup: false,
+        label: null,
+        participants: ["+15550000000", "+15551111111"],
+      },
+      service: "iMessage",
+    },
     message: {
       attachments: [],
       fromMe: false,
@@ -137,6 +178,51 @@ test("normalizes one inbound transcript event and replies to its exact conversat
     providerMessageId: "outbound-guid",
     status: "confirmed",
   });
+  await messages.close();
+});
+
+test("resolves one exact known conversation and preserves one outbound attachment", async () => {
+  const filePath = "/private/tmp/staged-report.pdf";
+  const messages = await transcriptClient({
+    event: inboundEvent,
+    expectedFilePath: filePath,
+    sentMessages: 3,
+  });
+  const resolved = await messages.resolveConversation({
+    accountId: "E:owner@example.com",
+    conversationId: "iMessage;-;+15550000000",
+  });
+  expect(resolved?.facts.routing).toMatchObject({
+    accountId: "E:owner@example.com",
+    conversationId: "iMessage;-;+15550000000",
+  });
+  expect(await messages.reply({
+    conversation: resolved!.conversation,
+    filePath,
+    text: "report attached",
+  })).toEqual({ providerMessageId: "outbound-guid", status: "confirmed" });
+  expect(await messages.reply({
+    conversation: resolved!.conversation,
+    filePath: "relative/report.pdf",
+    text: "unsafe path",
+  })).toEqual({ retryable: false, status: "failed" });
+  expect(await messages.resolveConversation({
+    accountId: "E:other@example.com",
+    conversationId: "iMessage;-;+15550000000",
+  })).toBeNull();
+  await messages.close();
+});
+
+test("does not issue a conversation reference across database generations", async () => {
+  const messages = await transcriptClient({
+    event: inboundEvent,
+    replaceDatabaseDuringHistory: true,
+    sentMessages: 3,
+  });
+  expect(await messages.resolveConversation({
+    accountId: "E:owner@example.com",
+    conversationId: "iMessage;-;+15550000000",
+  })).toBeNull();
   await messages.close();
 });
 
