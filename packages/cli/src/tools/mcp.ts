@@ -108,7 +108,12 @@ export async function brokerQuery(
   name: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
-  const response = await fetch(`${brokerUrl}/query`, {
+  const match = /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})\/?$/.exec(brokerUrl);
+  const port = Number(match?.[1]);
+  if (match === null || !Number.isSafeInteger(port) || port > 65_535) {
+    throw new Error("Current-chat broker must use the local loopback listener");
+  }
+  const response = await fetch(`http://127.0.0.1:${port}/query`, {
     body: JSON.stringify({ arguments: args, tool: name }),
     headers: {
       authorization: `Bearer ${capability}`,
