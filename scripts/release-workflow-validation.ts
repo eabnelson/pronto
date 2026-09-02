@@ -5,6 +5,7 @@ const REQUIRED_CONTROLS = [
   ],
   ["NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}", "npm authentication"],
   ["id-token: write", "OIDC provenance permission"],
+  ["for ATTEMPT in {1..12}; do", "npm registry propagation retry"],
   ["dist/pronto-imessage-*.tgz", "package release artifact"],
   ["sha256sum -c pronto-imessage.sha256", "downloaded package checksum verification"],
   ["workflow_dispatch:", "manual immutable-tag recovery"],

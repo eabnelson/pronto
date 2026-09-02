@@ -163,7 +163,13 @@ jobs:
           else
             npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public
           fi
-          test "$(npm view "pronto-imessage@$PACKAGE_VERSION" version)" = "$PACKAGE_VERSION"
+          REMOTE_VERSION=""
+          for ATTEMPT in {1..12}; do
+            REMOTE_VERSION="$(npm view "pronto-imessage@$PACKAGE_VERSION" version 2>/dev/null || true)"
+            [[ "$REMOTE_VERSION" = "$PACKAGE_VERSION" ]] && break
+            sleep 5
+          done
+          test "$REMOTE_VERSION" = "$PACKAGE_VERSION"
       - name: Publish verified release
         run: |
           gh release edit "$RELEASE_TAG" --draft=false

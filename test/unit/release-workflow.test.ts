@@ -39,6 +39,16 @@ describe("release workflow", () => {
     expect(workflow).toContain('test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"');
   });
 
+  test("retries npm verification while a new version propagates", async () => {
+    const workflow = await releaseWorkflow();
+
+    expect(workflow).toContain("for ATTEMPT in {1..12}; do");
+    expect(workflow).toContain('REMOTE_VERSION="$(npm view "pronto-imessage@$PACKAGE_VERSION" version 2>/dev/null || true)"');
+    expect(workflow).toContain('[[ "$REMOTE_VERSION" = "$PACKAGE_VERSION" ]] && break');
+    expect(workflow).toContain("sleep 5");
+    expect(workflow).toContain('test "$REMOTE_VERSION" = "$PACKAGE_VERSION"');
+  });
+
   test("orders qualification, draft verification, package publication, and release publication", async () => {
     const workflow = await releaseWorkflow();
     expect(releaseWorkflowViolations(workflow)).toEqual([]);
@@ -50,6 +60,7 @@ describe("release workflow", () => {
       'npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public',
       "NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
       "id-token: write",
+      "for ATTEMPT in {1..12}; do",
       "dist/pronto-imessage-*.tgz",
       "sha256sum -c pronto-imessage.sha256",
       "workflow_dispatch:",
