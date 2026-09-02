@@ -657,6 +657,10 @@ export async function installSetup(input: {
       plist: renderLaunchAgent({
         executablePath: input.paths.executablePath,
         logPath: input.paths.logPath,
+        runtimeExecutablePaths: [
+          input.config.primaryRuntimePath,
+          input.config.fallbackRuntimePath,
+        ].filter((path): path is string => path !== undefined),
       }),
       plistPath: input.paths.launchAgentPath,
     });

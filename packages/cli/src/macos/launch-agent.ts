@@ -1,4 +1,5 @@
 import { unlink } from "node:fs/promises";
+import { dirname } from "node:path";
 import { atomicWritePrivate } from "../config";
 import { LAUNCH_AGENT_LABEL } from "./paths";
 
@@ -46,7 +47,15 @@ function xml(value: string): string {
 export function renderLaunchAgent(input: {
   executablePath: string;
   logPath: string;
+  runtimeExecutablePaths: readonly string[];
 }): string {
+  const runtimePath = [...new Set([
+    ...input.runtimeExecutablePaths.map((path) => dirname(path)),
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ])].join(":");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -58,6 +67,11 @@ export function renderLaunchAgent(input: {
     <string>${xml(input.executablePath)}</string>
     <string>run</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${xml(runtimePath)}</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
