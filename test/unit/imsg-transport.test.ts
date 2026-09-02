@@ -310,7 +310,14 @@ describe("text delivery", () => {
     };
     const messages: ProntoMessages = {
       close: async () => undefined,
+      diagnostics: () => ({
+        attempt: 0,
+        catchUpRows: 0,
+        restartCount: 0,
+        state: "ready",
+      }),
       qualify: async () => ({
+        databaseGeneration: "generation-one",
         degradedCapabilities: [],
         providerVersion: "0.14.1",
         status: "ready",

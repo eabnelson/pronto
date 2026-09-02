@@ -14,6 +14,7 @@ afterEach(async () => {
 
 interface TranscriptScenario {
   readonly event: Record<string, unknown>;
+  readonly exitDuringSend?: boolean;
   readonly nearby?: readonly Record<string, unknown>[];
   readonly sentMessages: number;
 }
@@ -22,8 +23,11 @@ async function transcriptClient(scenario: TranscriptScenario): Promise<ProntoMes
   const directory = await mkdtemp(join(tmpdir(), "pronto-messages-transcript-"));
   temporaryDirectories.push(directory);
   const transcript = join(directory, "imsg-transcript");
+  const databasePath = join(directory, "chat.db");
+  await writeFile(databasePath, "synthetic database evidence", { mode: 0o600 });
+  const fixture = { ...scenario, databasePath };
   await writeFile(transcript, `#!/usr/bin/env bun
-const scenario = ${JSON.stringify(scenario)};
+const scenario = ${JSON.stringify(fixture)};
 const decoder = new TextDecoder();
 let buffer = "";
 for await (const chunk of Bun.stdin.stream()) {
@@ -39,7 +43,7 @@ for await (const chunk of Bun.stdin.stream()) {
       result = {
         protocol_version: 1,
         version: "0.14.1",
-        database: { ready: true, features: { routing_metadata: true } },
+        database: { path: scenario.databasePath, ready: true, features: { routing_metadata: true } },
         methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
       };
     } else if (request.method === "watch.subscribe") {
@@ -53,6 +57,7 @@ for await (const chunk of Bun.stdin.stream()) {
       result = { messages: scenario.nearby ?? [] };
     } else if (request.method === "send") {
       if (request.params.chat_id !== 42) throw new Error("reply was not exactly routed");
+      if (scenario.exitDuringSend === true) process.exit(0);
       result = { ok: true, guid: "outbound-guid" };
     } else {
       result = { ok: true };
@@ -150,5 +155,18 @@ test("marks a provider mirror by correlating nearby outbound history", async () 
     sentMessages: 1,
   });
   expect((await nextEvent(messages)).message.selfChatMirror).toBeTrue();
+  await messages.close();
+});
+
+test("classifies a process failure after send submission as ambiguous without replay", async () => {
+  const messages = await transcriptClient({
+    event: inboundEvent,
+    exitDuringSend: true,
+    sentMessages: 1,
+  });
+  expect(await messages.reply({
+    conversation: { chatId: 42, provider: "apple-messages", version: 1 },
+    text: "one external effect",
+  })).toEqual({ status: "ambiguous" });
   await messages.close();
 });

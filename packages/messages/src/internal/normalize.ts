@@ -23,7 +23,9 @@ export function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-export function qualify(value: unknown): MessagesQualification {
+export function qualify(
+  value: unknown,
+): Omit<MessagesQualification, "databaseGeneration"> {
   const status = record(value);
   const database = record(status.database);
   if (status.protocol_version !== 1) throw new Error("Unsupported imsg RPC protocol");
@@ -48,6 +50,14 @@ export function qualify(value: unknown): MessagesQualification {
     providerVersion: status.version,
     status: "ready",
   };
+}
+
+export function databasePath(value: unknown): string {
+  const path = record(record(value).database).path;
+  if (typeof path !== "string" || path.trim() === "") {
+    throw new Error("Messages database path is unavailable");
+  }
+  return path;
 }
 
 function optionalString(value: unknown): string | null {

@@ -43,9 +43,54 @@ export type DeliveryOutcome =
   | { readonly retryable: boolean; readonly status: "failed" };
 
 export interface MessagesQualification {
+  readonly databaseGeneration: string;
   readonly degradedCapabilities: readonly string[];
   readonly providerVersion: string;
   readonly status: "ready";
+}
+
+export type MessagesRecoveryReason =
+  | "age-limit"
+  | "database-generation-changed"
+  | "database-generation-unavailable"
+  | "duration-limit"
+  | "invalid-provider-page"
+  | "provider-unavailable"
+  | "row-limit";
+
+export type MessagesRecoveryOutcome =
+  | {
+    readonly rows: number;
+    readonly status: "recovered";
+  }
+  | {
+    readonly action: "live-events-only";
+    readonly reason: MessagesRecoveryReason;
+    readonly rows: number;
+    readonly status: "degraded";
+  };
+
+export interface MessagesDiagnostics {
+  readonly attempt: number;
+  readonly catchUpRows: number;
+  readonly databaseGenerationDigest?: string;
+  readonly nextRetryAt?: string;
+  readonly recoveryReason?: MessagesRecoveryReason;
+  readonly restartCount: number;
+  readonly state: "closed" | "degraded" | "ready" | "recovering" | "starting";
+}
+
+export interface MessagesRecoveryLimits {
+  readonly maxAgeMs?: number;
+  readonly maxDurationMs?: number;
+  readonly maxRows?: number;
+}
+
+export interface CreateProntoMessagesOptions {
+  readonly imsgPath: string;
+  readonly legacyUnscopedCursor?: number;
+  readonly recoveryLimits?: MessagesRecoveryLimits;
+  readonly statePath?: string;
 }
 
 export interface MessagesSubscription {
@@ -55,6 +100,7 @@ export interface MessagesSubscription {
 
 export interface ProntoMessages {
   close(): Promise<void>;
+  diagnostics(): MessagesDiagnostics;
   qualify(): Promise<MessagesQualification>;
   reply(input: {
     readonly conversation: ConversationReference;
@@ -63,6 +109,6 @@ export interface ProntoMessages {
   subscribe(input: {
     readonly onEvent: (event: MessagesEvent) => void | Promise<void>;
     readonly onOverflow?: (resumeAfterRowId: number) => void | Promise<void>;
-    readonly sinceRowId?: number;
+    readonly onRecovery?: (outcome: MessagesRecoveryOutcome) => void | Promise<void>;
   }): Promise<MessagesSubscription>;
 }

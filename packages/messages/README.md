@@ -5,7 +5,10 @@
 ```ts
 import { createProntoMessages } from "pronto-imessage";
 
-const messages = createProntoMessages({ imsgPath: "/opt/homebrew/bin/imsg" });
+const messages = createProntoMessages({
+  imsgPath: "/opt/homebrew/bin/imsg",
+  statePath: "/private/application-state/provider-state.json",
+});
 await messages.qualify();
 
 const subscription = await messages.subscribe({
@@ -16,7 +19,14 @@ const subscription = await messages.subscribe({
       text: "Reply to this exact conversation",
     });
   },
+  onRecovery: async (outcome) => {
+    if (outcome.status === "degraded") {
+      // Continue with live events and surface outcome.reason to the owner.
+    }
+  },
 });
 ```
 
-The package root exposes normalized, versioned provider facts and delivery outcomes. Raw JSON-RPC methods and payloads remain internal. The package is standard ESM and supports current Node.js and Bun consumers; the standalone `pronto` CLI is one ordinary workspace consumer.
+The package binds durable checkpoints to a fingerprint of the current Messages database. It restarts and resubscribes after provider failure, performs catch-up within row-count, age, and wall-clock limits, and reports privacy-safe recovery diagnostics. A send that may have reached the provider is returned as `ambiguous` and is never automatically replayed.
+
+The package root exposes normalized, versioned provider facts and delivery outcomes. Raw JSON-RPC methods, database paths, and payloads remain internal. The package is standard ESM and supports current Node.js and Bun consumers; the standalone `pronto` CLI is one ordinary workspace consumer.

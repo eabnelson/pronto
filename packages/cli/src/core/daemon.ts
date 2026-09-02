@@ -37,7 +37,12 @@ export class ProntoDaemon {
     const database = openProntoDatabase(this.paths.databasePath);
     const journal = new DeliveryJournal(database);
     const rpc = new NdjsonRpcClient(this.config.imsgPath);
-    const messages = createProntoMessages({ imsgPath: this.config.imsgPath });
+    const legacyUnscopedCursor = journal.cursor();
+    const messages = createProntoMessages({
+      imsgPath: this.config.imsgPath,
+      ...(legacyUnscopedCursor === undefined ? {} : { legacyUnscopedCursor }),
+      statePath: this.paths.providerStatePath,
+    });
     const transport = new ImsgTransport(rpc, {
       matchesOutboundEcho: (chatId, text) => journal.matchesOutboundEcho(chatId, text),
       messages,

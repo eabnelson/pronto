@@ -253,8 +253,14 @@ export class ImsgTransport {
           if (request !== null) await input.onActivation(request);
           await input.onMessageRowId?.(message.rowId!);
         },
-        onOverflow: input.onOverflow,
-        ...(input.sinceRowId === undefined ? {} : { sinceRowId: input.sinceRowId }),
+        onRecovery: (outcome) => {
+          console.error(JSON.stringify({
+            component: "pronto-messages",
+            ...(outcome.status === "degraded" ? { reason: outcome.reason } : {}),
+            rows: outcome.rows,
+            state: outcome.status,
+          }));
+        },
       });
     }
     if (!("on" in this.rpc) || typeof this.rpc.on !== "function") {

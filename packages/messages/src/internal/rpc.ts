@@ -1,14 +1,33 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 interface PendingRequest {
+  readonly method: string;
   readonly reject: (error: Error) => void;
   readonly resolve: (value: unknown) => void;
   readonly timeout: ReturnType<typeof setTimeout>;
 }
 
+export class RpcSubmissionUncertainError extends Error {
+  constructor() {
+    super("imsg send outcome is uncertain");
+    this.name = "RpcSubmissionUncertainError";
+  }
+}
+
 export interface RpcNotification {
   readonly method: string;
   readonly params?: unknown;
+}
+
+export interface RpcConnection {
+  close(): Promise<void>;
+  onFailure(handler: (reason: string) => void): () => void;
+  onNotification(handler: (notification: RpcNotification) => void): () => void;
+  request(
+    method: string,
+    params?: Readonly<Record<string, unknown>>,
+    timeoutMs?: number,
+  ): Promise<unknown>;
 }
 
 export class RpcRequestError extends Error {
@@ -22,13 +41,15 @@ export class RpcRequestError extends Error {
   }
 }
 
-export class ImsgRpcClient {
+export class ImsgRpcClient implements RpcConnection {
   readonly terminated: Promise<void>;
   readonly #child: ChildProcessWithoutNullStreams;
   readonly #handlers = new Set<(notification: RpcNotification) => void>();
+  readonly #failureHandlers = new Set<(reason: string) => void>();
   readonly #pending = new Map<string, PendingRequest>();
   #buffer = "";
   #closed = false;
+  #failed = false;
   #nextId = 1;
   #resolveTerminated!: () => void;
 
@@ -39,8 +60,10 @@ export class ImsgRpcClient {
       this.#resolveTerminated = resolve;
     });
     this.#child.stdout.on("data", (chunk: Buffer | string) => this.#onData(chunk));
-    this.#child.once("error", (error) => this.#fail(error));
-    this.#child.once("exit", () => this.#fail(new Error("imsg RPC process exited")));
+    this.#child.once("error", (error) => this.#fail("spawn-error", error));
+    this.#child.once("exit", () => {
+      this.#fail("process-exit", new Error("imsg RPC process exited"));
+    });
   }
 
   onNotification(handler: (notification: RpcNotification) => void): () => void {
@@ -48,19 +71,28 @@ export class ImsgRpcClient {
     return () => this.#handlers.delete(handler);
   }
 
+  onFailure(handler: (reason: string) => void): () => void {
+    this.#failureHandlers.add(handler);
+    return () => this.#failureHandlers.delete(handler);
+  }
+
   request(
     method: string,
     params: Readonly<Record<string, unknown>> = {},
     timeoutMs = 30_000,
   ): Promise<unknown> {
-    if (this.#closed) return Promise.reject(new Error("imsg RPC client is closed"));
+    if (this.#closed || this.#failed) {
+      return Promise.reject(new Error("imsg RPC client is unavailable"));
+    }
     const id = String(this.#nextId++);
     return new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.#pending.delete(id);
-        reject(new Error(`imsg RPC request timed out: ${method}`));
+        reject(method === "send"
+          ? new RpcSubmissionUncertainError()
+          : new Error(`imsg RPC request timed out: ${method}`));
       }, timeoutMs);
-      this.#pending.set(id, { reject, resolve, timeout });
+      this.#pending.set(id, { method, reject, resolve, timeout });
       this.#child.stdin.write(
         `${JSON.stringify({ id, jsonrpc: "2.0", method, params })}\n`,
         (error) => {
@@ -69,7 +101,9 @@ export class ImsgRpcClient {
           if (pending === undefined) return;
           this.#pending.delete(id);
           clearTimeout(pending.timeout);
-          pending.reject(new Error("Unable to write imsg RPC request"));
+          pending.reject(pending.method === "send"
+            ? new RpcSubmissionUncertainError()
+            : new Error("Unable to write imsg RPC request"));
         },
       );
     });
@@ -99,7 +133,7 @@ export class ImsgRpcClient {
     try {
       value = JSON.parse(line);
     } catch {
-      this.#fail(new Error("imsg emitted invalid JSON-RPC output"));
+      this.#fail("malformed-output", new Error("imsg emitted invalid JSON-RPC output"));
       return;
     }
     if (value === null || typeof value !== "object" || Array.isArray(value)) return;
@@ -131,17 +165,164 @@ export class ImsgRpcClient {
     }
   }
 
-  #fail(error: Error): void {
+  #fail(reason: string, error: Error): void {
     if (this.#closed && this.#pending.size === 0) {
       this.#resolveTerminated();
       return;
     }
-    this.#closed = true;
+    if (this.#failed) return;
+    this.#failed = true;
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timeout);
-      pending.reject(error);
+      pending.reject(pending.method === "send" ? new RpcSubmissionUncertainError() : error);
     }
     this.#pending.clear();
     this.#resolveTerminated();
+    for (const handler of this.#failureHandlers) handler(reason);
+    this.#child.kill("SIGTERM");
+  }
+}
+
+export interface RpcDiagnostics {
+  readonly attempt: number;
+  readonly nextRetryAt?: string;
+  readonly restartCount: number;
+  readonly state: "ready" | "recovering";
+}
+
+export class ResilientRpcClient {
+  readonly terminated: Promise<void>;
+  readonly #connect: () => RpcConnection;
+  readonly #wait: (milliseconds: number) => Promise<void>;
+  readonly #now: () => number;
+  readonly #random: () => number;
+  readonly #notifications = new Set<(notification: RpcNotification) => void>();
+  readonly #restartHandlers = new Set<() => void>();
+  #connection: RpcConnection;
+  #disposeConnection: (() => void)[] = [];
+  #restart: Promise<void> | undefined;
+  #restartCount = 0;
+  #closed = false;
+  #resolveTerminated!: () => void;
+  #diagnostics: RpcDiagnostics = { attempt: 0, restartCount: 0, state: "ready" };
+  #backoffMs = 1_000;
+
+  constructor(input: {
+    readonly connect: () => RpcConnection;
+    readonly now?: () => number;
+    readonly random?: () => number;
+    readonly wait?: (milliseconds: number) => Promise<void>;
+  }) {
+    this.#connect = input.connect;
+    this.#now = input.now ?? Date.now;
+    this.#random = input.random ?? Math.random;
+    this.#wait = input.wait ?? (async (milliseconds) => {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, milliseconds);
+        timer.unref?.();
+      });
+    });
+    this.terminated = new Promise((resolve) => {
+      this.#resolveTerminated = resolve;
+    });
+    this.#connection = this.#connect();
+    this.#bind(this.#connection);
+  }
+
+  static spawn(command: string): ResilientRpcClient {
+    return new ResilientRpcClient({ connect: () => new ImsgRpcClient(command) });
+  }
+
+  diagnostics(): RpcDiagnostics {
+    return this.#diagnostics;
+  }
+
+  onNotification(handler: (notification: RpcNotification) => void): () => void {
+    this.#notifications.add(handler);
+    return () => this.#notifications.delete(handler);
+  }
+
+  onRestart(handler: () => void): () => void {
+    this.#restartHandlers.add(handler);
+    return () => this.#restartHandlers.delete(handler);
+  }
+
+  async request(
+    method: string,
+    params: Readonly<Record<string, unknown>> = {},
+    timeoutMs = 30_000,
+  ): Promise<unknown> {
+    await this.#restart;
+    if (this.#closed) throw new Error("imsg RPC client is closed");
+    // A request submitted to a failed process rejects from that process. It is
+    // deliberately never replayed here, especially when the method is `send`.
+    return await this.#connection.request(method, params, timeoutMs);
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    this.#closed = true;
+    for (const dispose of this.#disposeConnection.splice(0)) dispose();
+    await this.#connection.close().catch(() => undefined);
+    this.#resolveTerminated();
+  }
+
+  #bind(connection: RpcConnection): void {
+    this.#disposeConnection = [
+      connection.onNotification((notification) => {
+        for (const handler of this.#notifications) handler(notification);
+      }),
+      connection.onFailure(() => this.#beginRestart(connection)),
+    ];
+  }
+
+  #beginRestart(failed: RpcConnection): void {
+    if (this.#closed || failed !== this.#connection || this.#restart !== undefined) return;
+    this.#restart = this.#restartLoop(failed).finally(() => {
+      this.#restart = undefined;
+    });
+  }
+
+  async #restartLoop(failed: RpcConnection): Promise<void> {
+    for (const dispose of this.#disposeConnection.splice(0)) dispose();
+    await failed.close().catch(() => undefined);
+    let attempt = 1;
+    while (!this.#closed) {
+      const delayMs = Math.min(
+        60_000,
+        Math.max(1, Math.round(this.#backoffMs * (0.8 + this.#random() * 0.4))),
+      );
+      this.#diagnostics = {
+        attempt,
+        nextRetryAt: new Date(this.#now() + delayMs).toISOString(),
+        restartCount: this.#restartCount,
+        state: "recovering",
+      };
+      await this.#wait(delayMs);
+      if (this.#closed) return;
+      const next = this.#connect();
+      try {
+        await next.request("initialize", { protocol_version: 1 }, 10_000);
+        if (this.#closed) {
+          await next.close().catch(() => undefined);
+          return;
+        }
+        this.#connection = next;
+        this.#bind(next);
+        this.#restartCount += 1;
+        this.#backoffMs = Math.min(60_000, this.#backoffMs * 2);
+        this.#diagnostics = {
+          attempt: 0,
+          restartCount: this.#restartCount,
+          state: "ready",
+        };
+        for (const handler of this.#restartHandlers) handler();
+        return;
+      } catch {
+        await next.close().catch(() => undefined);
+        this.#backoffMs = Math.min(60_000, this.#backoffMs * 2);
+        attempt += 1;
+      }
+    }
   }
 }

@@ -11,6 +11,7 @@ export interface ProntoPaths {
   launchAgentPath: string;
   logDirectory: string;
   logPath: string;
+  providerStatePath: string;
 }
 
 function productPathsForHome(input: {
@@ -39,6 +40,7 @@ function productPathsForHome(input: {
     ),
     logDirectory,
     logPath: join(logDirectory, "daemon.log"),
+    providerStatePath: join(appSupportDirectory, "provider-state.json"),
   };
 }
 

@@ -10,6 +10,7 @@ test("derives one owner-scoped service layout", () => {
     launchAgentPath: "/Users/example/Library/LaunchAgents/dev.pronto.agent.plist",
     logDirectory: "/Users/example/Library/Logs/pronto",
     logPath: "/Users/example/Library/Logs/pronto/daemon.log",
+    providerStatePath: "/Users/example/Library/Application Support/pronto/provider-state.json",
   });
 });
 
@@ -22,5 +23,6 @@ test("retains the legacy layout only for migration", () => {
     launchAgentPath: "/Users/example/Library/LaunchAgents/dev.s4imsg.agent.plist",
     logDirectory: "/Users/example/Library/Logs/s4imsg",
     logPath: "/Users/example/Library/Logs/s4imsg/daemon.log",
+    providerStatePath: "/Users/example/Library/Application Support/s4imsg/provider-state.json",
   });
 });
