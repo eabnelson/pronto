@@ -3,8 +3,10 @@ import { activatedRequest } from "../../packages/cli/src/activation";
 import type { MessagesEvent } from "pronto-imessage";
 
 function event(overrides: {
+  readonly conversationService?: string | null;
   readonly fromMe?: boolean;
   readonly kind?: MessagesEvent["message"]["kind"];
+  readonly messageService?: string | null;
   readonly ownerParticipated?: boolean;
   readonly selfChatMirror?: boolean;
   readonly service?: string | null;
@@ -20,7 +22,9 @@ function event(overrides: {
     },
     conversationFacts: {
       ownerParticipated: overrides.ownerParticipated ?? true,
-      service: overrides.service === undefined ? "iMessage" : overrides.service,
+      service: overrides.conversationService === undefined
+        ? overrides.service === undefined ? "iMessage" : overrides.service
+        : overrides.conversationService,
     },
     message: {
       attachments: [],
@@ -34,7 +38,9 @@ function event(overrides: {
       rowId: 101,
       selfChatMirror: overrides.selfChatMirror ?? false,
       sender: "+15555550100",
-      service: overrides.service === undefined ? "iMessage" : overrides.service,
+      service: overrides.messageService === undefined
+        ? overrides.service === undefined ? "iMessage" : overrides.service
+        : overrides.messageService,
       text: overrides.text === undefined ? "@helper summarize this" : overrides.text,
       urlPreview: false,
     },
@@ -61,15 +67,25 @@ describe("activation", () => {
       .toBe("Help with this conversation.");
   });
 
+  test("accepts RCS including mixed-service events without per-message metadata", () => {
+    expect(activatedRequest(event({ service: "RCS" }), ["@helper"])?.request)
+      .toBe("summarize this");
+    expect(activatedRequest(event({
+      conversationService: "RCS",
+      messageService: null,
+    }), ["@helper"])?.request).toBe("summarize this");
+  });
+
   test("does not match email text, longer tags, or multiple configured tags", () => {
     for (const text of ["mail helper@example.com", "@helper2 hi", "@helper ask @plan"]) {
       expect(activatedRequest(event({ text }), ["@helper", "@plan"])).toBeNull();
     }
   });
 
-  test("fails closed for non-iMessage, reactions, mirrors, and owner-absent chats", () => {
+  test("fails closed for SMS, unknown services, reactions, mirrors, and owner-absent chats", () => {
     for (const candidate of [
       event({ service: "SMS" }),
+      event({ service: "satellite" }),
       event({ kind: "reaction" }),
       event({ selfChatMirror: true }),
       event({ ownerParticipated: false }),

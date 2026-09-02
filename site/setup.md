@@ -1,14 +1,14 @@
 # Set up pronto for me
 
-You are my setup agent. Help me install and verify **pronto**, the local macOS bridge that lets any of my iMessage tags invoke Codex or Claude Code.
+You are my setup agent. Help me install and verify **pronto**, the local macOS bridge that lets tags in iMessage or RCS chats invoke Codex or Claude Code.
 
 Repository: <https://github.com/eabnelson/pronto>
 
-Work interactively and stay with me until one tagged iMessage gets exactly one agent reply. Explain what you are checking, run the terminal steps you can run, and pause only when I must choose an option or change a macOS setting.
+Work interactively and stay with me until one tagged iMessage or RCS message gets exactly one agent reply. Explain what you are checking, run the terminal steps you can run, and pause only when I must choose an option or change a macOS setting.
 
 ## Safety rules
 
-- This works only on macOS with Messages signed in to iMessage.
+- This works only on macOS with Messages signed in to iMessage. RCS also requires an iPhone and carrier configuration that makes the conversation available in Messages on the Mac. SMS messages do not activate Pronto.
 - Do not use `sudo`, disable System Integrity Protection, or enable a private IMCore bridge.
 - Do not type `yes` for me at the trust-model prompt. Show me the warning, let me read it, and ask me to type my own answer.
 - Never paste or record real message text, phone numbers, email addresses, chat identifiers, attachment paths, credentials, or provider output.
@@ -114,7 +114,7 @@ Work interactively and stay with me until one tagged iMessage gets exactly one a
    "$PRONTO" tags remove @plan
    ```
 
-   Explain that tags are case-insensitive, duplicate tags are ignored, and at least one tag must remain. If a message contains two different configured tags, the bridge ignores it instead of choosing ambiguously. Then ask me to send `<my-tag> ping` in an iMessage conversation where this Mac owner has already sent at least one message. Confirm that exactly one agent reply arrives. In a self-chat, Messages may display each single send as an incoming/outgoing mirrored pair; that is one send, not a duplicate.
+   Explain that tags are case-insensitive, duplicate tags are ignored, and at least one tag must remain. If a message contains two different configured tags, the bridge ignores it instead of choosing ambiguously. Then ask me to send `<my-tag> ping` in an iMessage or RCS conversation where this Mac owner has already sent at least one message. Confirm that exactly one agent reply arrives. SMS does not activate Pronto. In a self-chat, Messages may display each single send as an incoming/outgoing mirrored pair; that is one send, not a duplicate.
 
 7. Run the final status check with its executable assigned in the same shell call:
 

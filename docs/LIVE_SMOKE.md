@@ -1,8 +1,9 @@
 # Live test-chat checklist
 
-Use a dedicated iMessage conversation whose participants know the test is
+Use a dedicated iMessage or RCS conversation whose participants know the test is
 happening. A live smoke sends real conversation material to the selected model
-provider and sends real iMessages; it is never run by CI.
+provider and sends real Messages replies; it is never run by CI. SMS is not an
+eligible activation service.
 
 ## Core reply and permissions
 

@@ -3,9 +3,9 @@
 [![CI](https://github.com/eabnelson/pronto/actions/workflows/ci.yml/badge.svg)](https://github.com/eabnelson/pronto/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`pronto` is a small, local macOS bridge between iMessage and the Codex or Claude
-Code CLI. Create as many tags as you want, such as `@helper`, `@plan`, or
-`@research`. When anyone uses one in an iMessage chat you have already
+`pronto` is a small, local macOS bridge between Apple Messages and the Codex or
+Claude Code CLI. Create as many tags as you want, such as `@helper`, `@plan`, or
+`@research`. When anyone uses one in an iMessage or RCS chat you have already
 participated in, the bridge gives one bounded, one-shot turn to your chosen
 local agent and sends one plain-text reply.
 
@@ -39,6 +39,8 @@ switch a chat into a repository you do not trust.
 ## Requirements
 
 - macOS 14 or newer with Messages signed in to iMessage
+- For RCS, an iPhone and carrier configuration that makes the RCS conversation
+  available in Messages on the Mac
 - [Bun 1.3.14](https://bun.sh/) for source installation
 - [`imsg`](https://github.com/openclaw/imsg) 0.14 or a capability-compatible release
 - At least one authenticated [Codex CLI](https://github.com/openai/codex) or
@@ -127,7 +129,7 @@ Send a text message using any configured tag:
 @helper summarize the decision and suggest the next step
 ```
 
-The message must be iMessage, not SMS or RCS, and the Mac owner must previously
+The message must be iMessage or RCS, not SMS, and the Mac owner must previously
 have sent at least one message in that chat. Tags are case-insensitive. Reactions,
 polls, and attachment-only messages do not activate the agent, but the agent can
 query supported reactions, polls, participants, message details, and attachment
@@ -219,7 +221,7 @@ sleep 3
 
 ### No reply arrives
 
-- Confirm the message is iMessage, not SMS or RCS.
+- Confirm the message is iMessage or RCS, not SMS.
 - Confirm this Mac owner previously sent a message in that chat.
 - Run `doctor` and resolve every failed check; degraded
   `messages-send-automation` is expected until the first real send.

@@ -507,6 +507,8 @@ describe("public landing page", () => {
     expect(setup).toContain("status");
     expect(setup).toContain("Do not type `yes` for me");
     expect(setup).toContain("Do not use `sudo`");
+    expect(setup).toContain("iMessage or RCS");
+    expect(setup).toContain("SMS messages do not activate Pronto");
   });
 
   test("grants setup and installed executables Full Disk Access at the right times", async () => {

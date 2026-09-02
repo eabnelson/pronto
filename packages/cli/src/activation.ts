@@ -59,7 +59,8 @@ export function activatedRequest(
   const message = event.message;
   if (!event.conversationFacts.ownerParticipated) return null;
   if (message.kind !== "message" || message.selfChatMirror) return null;
-  if ((message.service ?? event.conversationFacts.service)?.toLowerCase() !== "imessage") return null;
+  const service = (message.service ?? event.conversationFacts.service)?.toLowerCase();
+  if (service !== "imessage" && service !== "rcs") return null;
   if (message.text === null) return null;
   const activation = removeOneMatchedTag(message.text, tags);
   if (activation === null) return null;
