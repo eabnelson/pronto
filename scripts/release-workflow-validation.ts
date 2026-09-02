@@ -1,12 +1,21 @@
 const REQUIRED_CONTROLS = [
   [
-    'npm publish "release-assets/$PACKAGE_FILE" --provenance --access public',
+    'npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public',
     "npm publication with provenance",
   ],
   ["NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}", "npm authentication"],
   ["id-token: write", "OIDC provenance permission"],
   ["dist/pronto-imessage-*.tgz", "package release artifact"],
   ["sha256sum -c pronto-imessage.sha256", "downloaded package checksum verification"],
+  ["workflow_dispatch:", "manual immutable-tag recovery"],
+  [
+    "ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}",
+    "tag-pinned recovery checkout",
+  ],
+  [
+    'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
+    "peeled recovery tag verification",
+  ],
 ] as const;
 
 const ORDERED_STEPS = [
