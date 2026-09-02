@@ -3,8 +3,9 @@ const REQUIRED_CONTROLS = [
     'npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public',
     "npm publication with provenance",
   ],
-  ["NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}", "npm authentication"],
-  ["id-token: write", "OIDC provenance permission"],
+  ["id-token: write", "OIDC publishing permission"],
+  ["npm install --global npm@11.19.1", "trusted-publishing npm CLI"],
+  ['test "$(npm --version)" = "11.19.1"', "trusted-publishing npm CLI verification"],
   ["for ATTEMPT in {1..60}; do", "npm registry propagation retry"],
   ["dist/pronto-imessage-*.tgz", "package release artifact"],
   ["sha256sum -c pronto-imessage.sha256", "downloaded package checksum verification"],
@@ -50,6 +51,9 @@ export function releaseWorkflowViolations(workflow: string): string[] {
   const npmPublish = workflow.indexOf("npm publish");
   if (npmPublish >= 0 && (publishJob < 0 || npmPublish <= publishJob)) {
     violations.push("npm publication must run only in the dependent publish job");
+  }
+  if (/NODE_AUTH_TOKEN|secrets\.NPM_TOKEN/.test(workflow)) {
+    violations.push("release workflow must use OIDC instead of an npm token");
   }
   return violations;
 }

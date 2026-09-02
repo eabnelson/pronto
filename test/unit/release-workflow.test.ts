@@ -58,8 +58,9 @@ describe("release workflow", () => {
     const workflow = await releaseWorkflow();
     for (const control of [
       'npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public',
-      "NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
       "id-token: write",
+      "npm install --global npm@11.19.1",
+      'test "$(npm --version)" = "11.19.1"',
       "for ATTEMPT in {1..60}; do",
       "dist/pronto-imessage-*.tgz",
       "sha256sum -c pronto-imessage.sha256",
@@ -70,6 +71,8 @@ describe("release workflow", () => {
       expect(releaseWorkflowViolations(workflow.replace(control, "removed-control")))
         .not.toEqual([]);
     }
+    expect(releaseWorkflowViolations(`${workflow}\nNODE_AUTH_TOKEN: \${{ secrets.NPM_TOKEN }}`))
+      .toContain("release workflow must use OIDC instead of an npm token");
     const reordered = workflow
       .replace("- name: Publish and verify pronto-imessage", "- name: temporary-step")
       .replace("- name: Create draft release", "- name: Publish and verify pronto-imessage")
