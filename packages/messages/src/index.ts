@@ -546,6 +546,7 @@ class ProntoMessagesClient implements ProntoMessages {
       facts.routing?.accountId !== input.accountId ||
       facts.routing.conversationId !== input.conversationId
     ) return null;
+    if (await this.#refreshGeneration() !== qualification.databaseGeneration) return null;
     return {
       conversation: this.#scoped.issueConversation(
         chat.id,
@@ -606,6 +607,10 @@ class ProntoMessagesClient implements ProntoMessages {
       rawMessage,
       generation,
     ));
+    const enrichedGeneration = await within(async () => await this.#refreshGeneration());
+    if (enrichedGeneration !== generation) {
+      throw new RecoveryBoundaryError("database-generation-changed", budget?.rows ?? 0);
+    }
     this.#rememberOutgoing(scopedEvent);
     const deliveryKey = `${generation}:${rowId}`;
     const existingDelivery = this.#inFlightDeliveries.get(deliveryKey);

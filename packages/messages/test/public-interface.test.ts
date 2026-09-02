@@ -17,6 +17,7 @@ interface TranscriptScenario {
   readonly expectedFilePath?: string;
   readonly exitDuringSend?: boolean;
   readonly nearby?: readonly Record<string, unknown>[];
+  readonly replaceDatabaseDuringHistory?: boolean;
   readonly sentMessages: number;
 }
 
@@ -62,6 +63,12 @@ for await (const chunk of Bun.stdin.stream()) {
         }],
       };
     } else if (request.method === "messages.history") {
+      if (scenario.replaceDatabaseDuringHistory === true) {
+        const replacement = scenario.databasePath + ".replacement";
+        await Bun.write(replacement, "replacement database evidence");
+        await import("node:fs/promises").then(({ rename }) =>
+          rename(replacement, scenario.databasePath));
+      }
       result = { messages: [scenario.event] };
     } else if (request.method === "messages.stats") {
       result = {
@@ -201,6 +208,19 @@ test("resolves one exact known conversation and preserves one outbound attachmen
   })).toEqual({ retryable: false, status: "failed" });
   expect(await messages.resolveConversation({
     accountId: "E:other@example.com",
+    conversationId: "iMessage;-;+15550000000",
+  })).toBeNull();
+  await messages.close();
+});
+
+test("does not issue a conversation reference across database generations", async () => {
+  const messages = await transcriptClient({
+    event: inboundEvent,
+    replaceDatabaseDuringHistory: true,
+    sentMessages: 3,
+  });
+  expect(await messages.resolveConversation({
+    accountId: "E:owner@example.com",
     conversationId: "iMessage;-;+15550000000",
   })).toBeNull();
   await messages.close();
