@@ -121,6 +121,7 @@ describe("setup discovery", () => {
     expect(TRUST_DISCLOSURE).toContain("bypass");
     expect(TRUST_DISCLOSURE).toContain("current or future");
     expect(TRUST_DISCLOSURE).toContain("hooks");
+    expect(TRUST_DISCLOSURE).toContain("iMessage or RCS");
   });
 
   test("resolves and creates a home-relative workspace without changing an existing folder", async () => {

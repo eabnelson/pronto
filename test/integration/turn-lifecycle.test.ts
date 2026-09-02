@@ -513,6 +513,7 @@ describe("turn lifecycle", () => {
       });
       expect(primary.inputs[0]!.prompt).toContain("The launch is Friday.");
       expect(primary.inputs[0]!.prompt).toContain("AUTHORIZED REQUEST");
+      expect(primary.inputs[0]!.prompt).toContain("iMessage or RCS conversation");
     } finally {
       h.close();
     }
