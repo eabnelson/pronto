@@ -1,6 +1,6 @@
 {
   "name": "pronto-workspace",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A local iMessage bridge for Codex and Claude Code",
   "type": "module",
   "private": true,

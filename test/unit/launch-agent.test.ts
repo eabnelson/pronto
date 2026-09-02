@@ -25,11 +25,19 @@ test("renders a stable owner LaunchAgent without shell interpolation", () => {
   const plist = renderLaunchAgent({
     executablePath: "/Users/me/Application Support/pronto/bin/pronto",
     logPath: "/Users/me/Logs/pronto/agent & output.log",
+    runtimeExecutablePaths: [
+      "/opt/homebrew/bin/codex",
+      "/Users/me/.local/bin/claude",
+      "/opt/homebrew/bin/codex",
+    ],
   });
 
   expect(plist).toContain("dev.pronto.agent");
   expect(plist).toContain("<string>run</string>");
   expect(plist).toContain("agent &amp; output.log");
+  expect(plist).toContain(
+    "<string>/opt/homebrew/bin:/Users/me/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
+  );
   expect(plist).not.toContain("/bin/sh");
 });
 

@@ -12,7 +12,7 @@
     },
     "packages/cli": {
       "name": "pronto-cli",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "bin": {
         "pronto": "./src/cli.ts",
         "s4imsg": "./src/legacy-cli.ts",
@@ -23,7 +23,7 @@
     },
     "packages/messages": {
       "name": "pronto-imessage",
-      "version": "0.2.1",
+      "version": "0.2.2",
     },
   },
   "packages": {
