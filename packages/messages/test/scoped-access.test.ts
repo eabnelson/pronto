@@ -41,6 +41,7 @@ async function scopedClient(input: {
   readonly recent?: readonly Record<string, unknown>[];
   readonly referenceKey?: string;
   readonly rpcLogPath?: string;
+  readonly rpcParamsLogPath?: string;
   readonly scopeLimits?: MessagesScopeLimits;
   readonly scratchRoot?: string;
 }): Promise<ProntoMessages> {
@@ -60,6 +61,7 @@ for await (const chunk of Bun.stdin.stream()) {
     if (line.trim() === "") continue;
     const request = JSON.parse(line);
     if (scenario.rpcLogPath) appendFileSync(scenario.rpcLogPath, request.method + "\\n");
+    if (scenario.rpcParamsLogPath) appendFileSync(scenario.rpcParamsLogPath, JSON.stringify(request) + "\\n");
     let result;
     if (request.method === "initialize") result = {
       protocol_version: 1,
@@ -248,6 +250,49 @@ test("sealed conversation history preserves reactions, previews, pagination, and
     conversation: { ...observed.conversation, chatId: 99 },
     text: "wrong scope",
   })).rejects.toThrow("reference_invalid");
+  await messages.close();
+});
+
+test("recent history omits the unsupported imsg reaction parameter", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const rpcParamsLogPath = join(directory, "rpc-params.log");
+  await writeFile(databasePath, "database evidence");
+  await writeFile(rpcParamsLogPath, "");
+  const reaction = {
+    attachments: [],
+    chat_id: 42,
+    created_at: "2026-09-01T11:00:00.000Z",
+    guid: "reaction-guid",
+    id: 1,
+    is_from_me: false,
+    is_reaction: true,
+    is_reaction_add: true,
+    reacted_to_guid: "target-guid",
+    reaction_type: "heart",
+    service: "iMessage",
+    text: "",
+  };
+  const messages = await scopedClient({
+    databasePath,
+    event: observedEvent,
+    recent: [reaction],
+    rpcParamsLogPath,
+  });
+  const observed = await nextEvent(messages);
+  await writeFile(rpcParamsLogPath, "");
+
+  const page = await messages.history({
+    budget: historyBudget,
+    conversation: observed.conversation,
+    includeReactions: true,
+    mode: "recent",
+  });
+
+  const request = JSON.parse((await readFile(rpcParamsLogPath, "utf8")).trim());
+  expect(request).toMatchObject({ method: "messages.history" });
+  expect(request.params).not.toHaveProperty("include_reactions");
+  expect(page.messages[0]?.message.kind).toBe("reaction");
   await messages.close();
 });
 

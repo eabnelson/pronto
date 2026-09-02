@@ -444,7 +444,6 @@ export class ScopedMessagesAccess {
     const result = record(await this.#rpc.request(method, method === "messages.history" ? {
       attachments: true,
       chat_id: scope.chatId,
-      include_reactions: includeReactions,
       limit: Math.min(500, remaining.maxMessages, remaining.maxRows),
     } : {
       attachments: true,
