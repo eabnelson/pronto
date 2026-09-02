@@ -58,6 +58,8 @@ const requiredFiles = [
   ".github/ISSUE_TEMPLATE/config.yml",
   ".github/PULL_REQUEST_TEMPLATE.md",
   ...workflowPaths,
+  "dist/pronto",
+  "dist/s4imsg",
 ];
 const requiredFileChecks = await Promise.all(
   requiredFiles.map(async (path) => ({

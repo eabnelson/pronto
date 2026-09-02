@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConfig, saveConfig, UNRESTRICTED_TRUST_VERSION } from "../../src/config";
 import { pathsForHome } from "../../src/macos/paths";
+import { renderCompatibilityLauncher } from "../../src/compatibility";
 
 const temporaryDirectories: string[] = [];
 
@@ -46,6 +47,56 @@ describe("Pronto CLI", () => {
     expect(exitCode).toBe(0);
     expect(stderr.trim()).toBe("s4imsg is now Pronto; use the pronto command.");
     expect(stdout.trim()).toBe("pronto 0.1.0");
+  });
+
+  test("the legacy command refuses to start a second foreground listener", async () => {
+    const process = Bun.spawn(["bun", "src/legacy-cli.ts", "run"], {
+      cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [exitCode, stderr] = await Promise.all([
+      process.exited,
+      new Response(process.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("cannot run run");
+  });
+
+  test("the legacy command refuses to install itself as Pronto", async () => {
+    const process = Bun.spawn(["bun", "src/legacy-cli.ts", "setup"], {
+      cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [exitCode, stderr] = await Promise.all([
+      process.exited,
+      new Response(process.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("cannot run setup");
+  });
+
+  test("the installed compatibility launcher shares the safe-command policy", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pronto-compatibility-"));
+    temporaryDirectories.push(directory);
+    const pronto = join(directory, "pronto");
+    const legacy = join(directory, "s4imsg");
+    await writeFile(pronto, "#!/bin/sh\nprintf 'delegated:%s\\n' \"$1\"\n", { mode: 0o700 });
+    await writeFile(legacy, renderCompatibilityLauncher(pronto), { mode: 0o700 });
+    await chmod(legacy, 0o700);
+
+    const unsafe = Bun.spawn([legacy, "setup"], { stderr: "pipe", stdout: "pipe" });
+    expect(await unsafe.exited).toBe(2);
+    expect(await new Response(unsafe.stderr).text()).toContain("cannot run setup");
+
+    const safe = Bun.spawn([legacy, "status"], { stderr: "pipe", stdout: "pipe" });
+    expect(await safe.exited).toBe(0);
+    expect((await new Response(safe.stdout).text()).trim()).toBe("delegated:status");
   });
 
   test("lists every configured tag from the installed command surface", async () => {

@@ -6,13 +6,15 @@ import { saveConfig } from "../../src/config";
 import { legacyPathsForHome, pathsForHome } from "../../src/macos/paths";
 import {
   TRUST_DISCLOSURE,
+  completeSetupCutover,
   createWorkspaceDirectory,
   discoverCommands,
   installSetup,
   inspectInstallation,
   loadExistingSetupDefaults,
-  migrateLegacyInstallation,
+  prepareLegacyInstallation,
   prepareSetupConfig,
+  qualifyInstalledExecutable,
   resolveWorkspaceSelection,
   setupCompletionMessage,
   uninstallInstallation,
@@ -27,7 +29,7 @@ afterEach(async () => {
 });
 
 describe("setup discovery", () => {
-  test("gives copy-safe post-install permission and verification steps", () => {
+  test("gives copy-safe post-install verification steps after qualification", () => {
     const message = setupCompletionMessage(
       {
         executablePath: "/Users/example/Library/Application Support/pronto/bin/pronto",
@@ -35,12 +37,8 @@ describe("setup discovery", () => {
       ["@helper", "@plan"],
     );
 
-    expect(message).toContain("Pronto installed");
-    expect(message).toContain("Full Disk Access");
-    expect(message).toContain("remove and re-add");
-    expect(message).toContain(
-      "'/Users/example/Library/Application Support/pronto/bin/pronto' doctor",
-    );
+    expect(message).toContain("Pronto installed and qualified");
+    expect(message).not.toContain("Full Disk Access");
     expect(message).toContain(
       "'/Users/example/Library/Application Support/pronto/bin/pronto' status",
     );
@@ -49,14 +47,14 @@ describe("setup discovery", () => {
     expect(message).toContain("tags add <tag>");
   });
 
-  test("shell-quotes an installed path containing an apostrophe", () => {
+  test("shell-quotes an installed status command containing an apostrophe", () => {
     const message = setupCompletionMessage(
       { executablePath: "/Users/O'Neil/Library/Application Support/pronto/bin/pronto" },
       ["@helper"],
     );
 
     expect(message).toContain(
-      "'/Users/O'\\''Neil/Library/Application Support/pronto/bin/pronto' doctor",
+      "'/Users/O'\\''Neil/Library/Application Support/pronto/bin/pronto' status",
     );
   });
 
@@ -173,6 +171,18 @@ describe("setup discovery", () => {
     await expect(loadExistingSetupDefaults(path)).rejects.toThrow(
       "Unable to preserve existing setup defaults",
     );
+    await writeFile(
+      path,
+      JSON.stringify({
+        chatKeySalt: "s".repeat(32),
+        tags: ["@future"],
+        version: 99,
+        workingDirectory: "/Users/example/project",
+      }),
+    );
+    await expect(loadExistingSetupDefaults(path)).rejects.toThrow(
+      "Unsupported configuration version 99",
+    );
   });
 });
 
@@ -283,12 +293,15 @@ test("setup atomically installs a hashed executable and private configuration", 
 
   expect(await readFile(paths.executablePath, "utf8")).toBe("compiled-s4imsg");
   expect((await lstat(paths.executablePath)).mode & 0o777).toBe(0o700);
+  const compatibilityExecutable = join(paths.appSupportDirectory, "bin", "s4imsg");
+  expect(await readFile(compatibilityExecutable, "utf8")).toContain("s4imsg is now Pronto");
+  expect((await lstat(compatibilityExecutable)).mode & 0o777).toBe(0o700);
   expect(installed.installedExecutableHash).toHaveLength(64);
   expect(installedPlist).toContain(paths.executablePath);
   expect(await readFile(paths.configPath, "utf8")).not.toContain("@Helper");
 });
 
-test("migration stops the legacy listener and preserves its private state", async () => {
+test("migration retains the stopped legacy service until the Pronto cutover is finalized", async () => {
   const home = await mkdtemp(join(tmpdir(), "pronto-migration-"));
   temporaryDirectories.push(home);
   const legacyPaths = legacyPathsForHome(home);
@@ -302,18 +315,29 @@ test("migration stops the legacy listener and preserves its private state", asyn
   await writeFile(`${legacyPaths.databasePath}-shm`, "legacy-shm", { mode: 0o600 });
   await writeFile(legacyPaths.executablePath, "legacy-executable", { mode: 0o700 });
   await writeFile(legacyPaths.launchAgentPath, "legacy-plist", { mode: 0o600 });
-  const removedAgents: string[] = [];
+  const lifecycle: string[] = [];
 
-  expect(await migrateLegacyInstallation({
+  const migration = await prepareLegacyInstallation({
     legacyPaths,
     paths,
-    removeLegacyAgent: async (plistPath) => {
-      removedAgents.push(plistPath);
-      await rm(plistPath, { force: true });
+    dependencies: {
+      inspectLegacyAgent: async () => "running",
+      stopLegacyAgent: async () => {
+        lifecycle.push("stop");
+      },
+      restoreLegacyAgent: async () => {
+        lifecycle.push("restore");
+      },
+      removeLegacyAgent: async (plistPath) => {
+        lifecycle.push("remove");
+        await rm(plistPath, { force: true });
+      },
     },
-  })).toBe("migrated");
+  });
 
-  expect(removedAgents).toEqual([legacyPaths.launchAgentPath]);
+  expect(migration.status).toBe("migrated");
+  expect(lifecycle).toEqual(["stop"]);
+  expect(await readFile(legacyPaths.launchAgentPath, "utf8")).toBe("legacy-plist");
   expect(await readFile(paths.configPath, "utf8")).toBe("legacy-configuration");
   expect(await readFile(paths.databasePath, "utf8")).toBe("legacy-database");
   expect(await readFile(`${paths.databasePath}-wal`, "utf8")).toBe("legacy-wal");
@@ -334,13 +358,345 @@ test("migration stops the legacy listener and preserves its private state", asyn
     join(paths.appSupportDirectory, "migration-backup", "state.sqlite-shm"),
     "utf8",
   )).toBe("legacy-shm");
+  await migration.finalize();
+  expect(lifecycle).toEqual(["stop", "remove"]);
   await expect(access(legacyPaths.launchAgentPath)).rejects.toThrow();
+  expect(await readFile(legacyPaths.executablePath, "utf8")).toContain(
+    "s4imsg is now Pronto",
+  );
+  expect(await readFile(
+    join(paths.appSupportDirectory, "migration-backup", "s4imsg-executable"),
+    "utf8",
+  )).toBe("legacy-executable");
+  expect(await readFile(
+    join(paths.appSupportDirectory, "migration-backup", "completed"),
+    "utf8",
+  )).toContain("completed");
+  await writeFile(paths.configPath, "post-migration-pronto-configuration", { mode: 0o600 });
+  const completedRetry = await prepareLegacyInstallation({ legacyPaths, paths });
+  expect(completedRetry.status).toBe("already_migrated");
+});
 
-  expect(await migrateLegacyInstallation({
+test("migration restores the retained legacy listener when copying state fails", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pronto-migration-rollback-"));
+  temporaryDirectories.push(home);
+  const legacyPaths = legacyPathsForHome(home);
+  const paths = pathsForHome(home);
+  await mkdir(legacyPaths.appSupportDirectory, { recursive: true });
+  await mkdir(paths.appSupportDirectory, { recursive: true });
+  await mkdir(join(home, "Library", "LaunchAgents"), { recursive: true });
+  await writeFile(legacyPaths.configPath, "legacy-configuration", { mode: 0o600 });
+  await writeFile(paths.configPath, "conflicting-pronto-configuration", { mode: 0o600 });
+  await writeFile(legacyPaths.launchAgentPath, "legacy-plist", { mode: 0o600 });
+  const lifecycle: string[] = [];
+
+  await expect(prepareLegacyInstallation({
     legacyPaths,
     paths,
-    removeLegacyAgent: async () => undefined,
-  })).toBe("already_migrated");
+    dependencies: {
+      inspectLegacyAgent: async () => "running",
+      stopLegacyAgent: async () => {
+        lifecycle.push("stop");
+      },
+      restoreLegacyAgent: async () => {
+        lifecycle.push("restore");
+      },
+      removeLegacyAgent: async () => {
+        lifecycle.push("remove");
+      },
+    },
+  })).rejects.toThrow("conflicts");
+
+  expect(lifecycle).toEqual(["stop", "restore"]);
+  expect(await readFile(legacyPaths.launchAgentPath, "utf8")).toBe("legacy-plist");
+});
+
+test("migration rollback restarts the retained legacy listener after a later cutover failure", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pronto-migration-late-rollback-"));
+  temporaryDirectories.push(home);
+  const legacyPaths = legacyPathsForHome(home);
+  const paths = pathsForHome(home);
+  await mkdir(legacyPaths.appSupportDirectory, { recursive: true });
+  await mkdir(join(home, "Library", "LaunchAgents"), { recursive: true });
+  await writeFile(legacyPaths.configPath, "legacy-configuration", { mode: 0o600 });
+  await writeFile(legacyPaths.launchAgentPath, "legacy-plist", { mode: 0o600 });
+  const lifecycle: string[] = [];
+
+  const migration = await prepareLegacyInstallation({
+    legacyPaths,
+    paths,
+    dependencies: {
+      inspectLegacyAgent: async () => "running",
+      stopLegacyAgent: async () => {
+        lifecycle.push("stop");
+      },
+      restoreLegacyAgent: async () => {
+        lifecycle.push("restore");
+      },
+      removeLegacyAgent: async () => {
+        lifecycle.push("remove");
+      },
+    },
+  });
+
+  await writeFile(paths.configPath, "mutated-pronto-configuration", { mode: 0o600 });
+  await writeFile(`${paths.databasePath}-wal`, "new-pronto-wal", { mode: 0o600 });
+  await migration.rollback();
+  expect(lifecycle).toEqual(["stop", "restore"]);
+  await expect(access(paths.configPath)).rejects.toThrow();
+  await expect(access(`${paths.databasePath}-wal`)).rejects.toThrow();
+
+  const retry = await prepareLegacyInstallation({
+    legacyPaths,
+    paths,
+    dependencies: {
+      inspectLegacyAgent: async () => "stopped",
+      stopLegacyAgent: async () => undefined,
+      restoreLegacyAgent: async () => undefined,
+      removeLegacyAgent: async () => undefined,
+    },
+  });
+  expect(retry.status).toBe("migrated");
+});
+
+test("migration resumes finalization after the legacy shim write is interrupted", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pronto-finalize-shim-"));
+  temporaryDirectories.push(home);
+  const legacyPaths = legacyPathsForHome(home);
+  const paths = pathsForHome(home);
+  await mkdir(join(legacyPaths.appSupportDirectory, "bin"), { recursive: true });
+  await mkdir(join(home, "Library", "LaunchAgents"), { recursive: true });
+  await writeFile(legacyPaths.configPath, "legacy-configuration", { mode: 0o600 });
+  await writeFile(legacyPaths.executablePath, "legacy-executable", { mode: 0o700 });
+  await writeFile(legacyPaths.launchAgentPath, "legacy-plist", { mode: 0o600 });
+
+  const interrupted = await prepareLegacyInstallation({
+    legacyPaths,
+    paths,
+    dependencies: {
+      inspectLegacyAgent: async () => "running",
+      installLegacyShim: async (path) => {
+        await writeFile(path, "partial-shim", { mode: 0o700 });
+        throw new Error("shim interruption");
+      },
+      stopLegacyAgent: async () => undefined,
+    },
+  });
+  await writeFile(paths.configPath, "qualified-pronto-configuration", { mode: 0o600 });
+  await expect(interrupted.finalize()).rejects.toThrow("shim interruption");
+
+  const resumed = await prepareLegacyInstallation({
+    legacyPaths,
+    paths,
+    dependencies: {
+      inspectLegacyAgent: async () => "stopped",
+      removeLegacyAgent: async (path) => rm(path, { force: true }),
+    },
+  });
+  await resumed.finalize();
+
+  expect(await readFile(legacyPaths.executablePath, "utf8")).toContain("s4imsg is now Pronto");
+  expect(await readFile(paths.configPath, "utf8")).toBe("qualified-pronto-configuration");
+});
+
+test("migration stops an interrupted Pronto listener before restoring prepared targets", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pronto-prepared-resume-"));
+  temporaryDirectories.push(home);
+  const legacyPaths = legacyPathsForHome(home);
+  const paths = pathsForHome(home);
+  await mkdir(legacyPaths.appSupportDirectory, { recursive: true });
+  await mkdir(join(home, "Library", "LaunchAgents"), { recursive: true });
+  await writeFile(legacyPaths.configPath, "legacy-configuration", { mode: 0o600 });
+  await writeFile(legacyPaths.launchAgentPath, "legacy-plist", { mode: 0o600 });
+
+  await prepareLegacyInstallation({
+    legacyPaths,
+    paths,
+    dependencies: {
+      inspectLegacyAgent: async () => "running",
+      stopLegacyAgent: async () => undefined,
+    },
+  });
+  await writeFile(paths.configPath, "running-pronto-configuration", { mode: 0o600 });
+  const lifecycle: string[] = [];
+
+  const resumed = await prepareLegacyInstallation({
+    legacyPaths,
+    paths,
+    dependencies: {
+      inspectLegacyAgent: async () => "stopped",
+      restoreLegacyAgent: async () => undefined,
+      stopProntoAgent: async () => {
+        lifecycle.push(`stop-pronto:${await readFile(paths.configPath, "utf8")}`);
+      },
+    },
+  });
+
+  expect(lifecycle).toEqual(["stop-pronto:running-pronto-configuration"]);
+  expect(await readFile(paths.configPath, "utf8")).toBe("legacy-configuration");
+  await resumed.rollback();
+});
+
+test("migration preserves targets and legacy shutdown state when interrupted Pronto will not stop", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pronto-prepared-stop-failure-"));
+  temporaryDirectories.push(home);
+  const legacyPaths = legacyPathsForHome(home);
+  const paths = pathsForHome(home);
+  await mkdir(legacyPaths.appSupportDirectory, { recursive: true });
+  await mkdir(join(home, "Library", "LaunchAgents"), { recursive: true });
+  await writeFile(legacyPaths.configPath, "legacy-configuration", { mode: 0o600 });
+  await writeFile(legacyPaths.launchAgentPath, "legacy-plist", { mode: 0o600 });
+
+  await prepareLegacyInstallation({
+    legacyPaths,
+    paths,
+    dependencies: {
+      inspectLegacyAgent: async () => "running",
+      stopLegacyAgent: async () => undefined,
+    },
+  });
+  await writeFile(paths.configPath, "running-pronto-configuration", { mode: 0o600 });
+  let legacyRestored = false;
+
+  await expect(prepareLegacyInstallation({
+    legacyPaths,
+    paths,
+    dependencies: {
+      inspectLegacyAgent: async () => "stopped",
+      restoreLegacyAgent: async () => {
+        legacyRestored = true;
+      },
+      stopProntoAgent: async () => {
+        throw new Error("Pronto is still loaded");
+      },
+    },
+  })).rejects.toThrow("Pronto is still loaded");
+
+  expect(await readFile(paths.configPath, "utf8")).toBe("running-pronto-configuration");
+  expect(legacyRestored).toBeFalse();
+  expect(await readFile(
+    join(paths.appSupportDirectory, "migration-backup", "transaction.json"),
+    "utf8",
+  )).toContain('"phase": "prepared"');
+});
+
+test("migration resumes finalization after legacy plist removal is interrupted", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pronto-finalize-plist-"));
+  temporaryDirectories.push(home);
+  const legacyPaths = legacyPathsForHome(home);
+  const paths = pathsForHome(home);
+  await mkdir(join(legacyPaths.appSupportDirectory, "bin"), { recursive: true });
+  await mkdir(join(home, "Library", "LaunchAgents"), { recursive: true });
+  await writeFile(legacyPaths.configPath, "legacy-configuration", { mode: 0o600 });
+  await writeFile(legacyPaths.executablePath, "legacy-executable", { mode: 0o700 });
+  await writeFile(legacyPaths.launchAgentPath, "legacy-plist", { mode: 0o600 });
+
+  const interrupted = await prepareLegacyInstallation({
+    legacyPaths,
+    paths,
+    dependencies: {
+      inspectLegacyAgent: async () => "running",
+      removeLegacyAgent: async (path) => {
+        await rm(path, { force: true });
+        throw new Error("plist interruption");
+      },
+      stopLegacyAgent: async () => undefined,
+    },
+  });
+  await expect(interrupted.finalize()).rejects.toThrow("plist interruption");
+
+  const resumed = await prepareLegacyInstallation({
+    legacyPaths,
+    paths,
+    dependencies: {
+      inspectLegacyAgent: async () => "stopped",
+      removeLegacyAgent: async (path) => rm(path, { force: true }),
+    },
+  });
+  await resumed.finalize();
+
+  await expect(access(legacyPaths.launchAgentPath)).rejects.toThrow();
+  expect(await readFile(
+    join(paths.appSupportDirectory, "migration-backup", "completed"),
+    "utf8",
+  )).toContain("completed");
+});
+
+test("installed qualification runs doctor through the exact installed executable", async () => {
+  const calls: Array<{ executable: string; args: readonly string[] }> = [];
+
+  await qualifyInstalledExecutable(
+    "/Users/example/Library/Application Support/pronto/bin/pronto",
+    async (executable, args) => {
+      calls.push({ executable, args });
+      return { exitCode: 0, stderr: "", stdout: "ok" };
+    },
+  );
+
+  expect(calls).toEqual([{
+    executable: "/Users/example/Library/Application Support/pronto/bin/pronto",
+    args: ["doctor"],
+  }]);
+});
+
+test("cutover qualifies the installed executable before finalizing legacy removal", async () => {
+  const lifecycle: string[] = [];
+
+  await completeSetupCutover({
+    install: async () => {
+      lifecycle.push("install");
+    },
+    migration: {
+      status: "migrated",
+      finalize: async () => {
+        lifecycle.push("finalize");
+      },
+      rollback: async () => {
+        lifecycle.push("rollback");
+      },
+    },
+    qualify: async () => {
+      lifecycle.push("qualify-installed");
+    },
+    removeProntoAgent: async () => {
+      lifecycle.push("remove-pronto");
+    },
+  });
+
+  expect(lifecycle).toEqual(["install", "qualify-installed", "finalize"]);
+});
+
+test("cutover stops Pronto and restores legacy after installed qualification fails", async () => {
+  const lifecycle: string[] = [];
+
+  await expect(completeSetupCutover({
+    install: async () => {
+      lifecycle.push("install");
+    },
+    migration: {
+      status: "migrated",
+      finalize: async () => {
+        lifecycle.push("finalize");
+      },
+      rollback: async () => {
+        lifecycle.push("rollback");
+      },
+    },
+    qualify: async () => {
+      lifecycle.push("qualify-installed");
+      throw new Error("qualification failed");
+    },
+    removeProntoAgent: async () => {
+      lifecycle.push("remove-pronto");
+    },
+  })).rejects.toThrow("qualification failed");
+
+  expect(lifecycle).toEqual([
+    "install",
+    "qualify-installed",
+    "remove-pronto",
+    "rollback",
+  ]);
 });
 
 test("setup leaves the installed executable and config paired when config persistence fails", async () => {

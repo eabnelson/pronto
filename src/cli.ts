@@ -8,19 +8,22 @@ import { stdin, stdout } from "node:process";
 import { addTag, loadConfig, normalizeTags, removeTag, saveConfig } from "./config";
 import {
   parseLaunchAgentState,
+  removeLaunchAgent,
   restartLaunchAgent,
   stopLaunchAgent,
 } from "./macos/launch-agent";
 import { legacyPathsForHome, pathsForHome } from "./macos/paths";
 import {
   TRUST_DISCLOSURE,
+  completeSetupCutover,
   createWorkspaceDirectory,
   discoverCommands,
   inspectInstallation,
   installSetup,
   loadExistingSetupDefaults,
-  migrateLegacyInstallation,
+  prepareLegacyInstallation,
   prepareSetupConfig,
+  qualifyInstalledExecutable,
   resolveWorkspaceSelection,
   setupCompletionMessage,
   uninstallInstallation,
@@ -36,6 +39,10 @@ import { NdjsonRpcClient } from "./imessage/rpc-client";
 import { ImsgTransport } from "./imessage/transport";
 import { DeliveryJournal } from "./storage/journal";
 import { LAUNCH_AGENT_LABEL } from "./macos/paths";
+import {
+  PRONTO_ATTEMPT_CAPABILITY_ENV,
+  PRONTO_BROKER_URL_ENV,
+} from "./tools/contract";
 
 const HELP = `pronto ${packageJson.version}
 
@@ -196,11 +203,22 @@ async function runSetup(): Promise<number> {
         return 1;
       }
     }
-    await migrateLegacyInstallation({ legacyPaths, paths });
-    await installSetup({
-      config,
-      paths,
-      ...(sourceInvocation ? { repositoryRoot: dirname(dirname(resolve(sourceEntry))) } : {}),
+    const migration = await prepareLegacyInstallation({ legacyPaths, paths });
+    await completeSetupCutover({
+      install: async () => {
+        await installSetup({
+          config,
+          paths,
+          ...(sourceInvocation ? { repositoryRoot: dirname(dirname(resolve(sourceEntry))) } : {}),
+        });
+      },
+      migration,
+      qualify: async () => {
+        console.log(`Before setup can finish, grant Full Disk Access to this exact file:\n${paths.executablePath}`);
+        await prompt.question("After granting access, press Enter to qualify the installed Pronto executable: ");
+        await qualifyInstalledExecutable(paths.executablePath);
+      },
+      removeProntoAgent: () => removeLaunchAgent(paths.launchAgentPath),
     });
     console.log(setupCompletionMessage(paths, config.tags));
     return 0;
@@ -430,8 +448,8 @@ export async function runCli(args: readonly string[]): Promise<number> {
 
   if (command === "setup") return runSetup();
   if (command === "mcp") {
-    const brokerUrl = process.env.PRONTO_BROKER_URL;
-    const capability = process.env.PRONTO_ATTEMPT_CAPABILITY;
+    const brokerUrl = process.env[PRONTO_BROKER_URL_ENV];
+    const capability = process.env[PRONTO_ATTEMPT_CAPABILITY_ENV];
     if (brokerUrl === undefined || capability === undefined) {
       console.error("The current-chat MCP server requires a turn-scoped capability.");
       return 1;

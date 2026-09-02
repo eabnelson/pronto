@@ -1,9 +1,17 @@
 #!/usr/bin/env bun
 
 import { runCli } from "./cli";
+import { compatibilityNotice, compatibilityRejection } from "./compatibility";
 
-console.error("s4imsg is now Pronto; use the pronto command.");
+console.error(compatibilityNotice());
 
 if (import.meta.main) {
-  process.exitCode = await runCli(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  const rejection = compatibilityRejection(args[0]);
+  if (rejection !== null) {
+    console.error(rejection);
+    process.exitCode = 2;
+  } else {
+    process.exitCode = await runCli(args);
+  }
 }

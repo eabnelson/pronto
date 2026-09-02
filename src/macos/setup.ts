@@ -1,7 +1,7 @@
 import { access, chmod, copyFile, mkdir, readFile, realpath, rename, rm, stat, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   atomicWritePrivate,
   createConfig,
@@ -15,12 +15,17 @@ import {
 } from "../config";
 import {
   installLaunchAgent,
+  launchAgentStateForLabel,
   removeLaunchAgent,
   removeLaunchAgentForLabel,
   renderLaunchAgent,
+  restoreLaunchAgentForLabel,
+  stopLaunchAgentForLabel,
+  type LaunchAgentState,
   type ProcessResult,
 } from "./launch-agent";
-import { LEGACY_LAUNCH_AGENT_LABEL, type ProntoPaths } from "./paths";
+import { LAUNCH_AGENT_LABEL, LEGACY_LAUNCH_AGENT_LABEL, type ProntoPaths } from "./paths";
+import { renderCompatibilityLauncher } from "../compatibility";
 
 export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider. You are responsible for informing participants.`;
 
@@ -44,17 +49,12 @@ export function setupCompletionMessage(
   tags: readonly string[],
 ): string {
   const executable = shellQuote(paths.executablePath);
-  return `Pronto installed.
+  return `Pronto installed and qualified.
 
-Finish setup:
-1. In System Settings > Privacy & Security > Full Disk Access, add this exact file:
-   ${paths.executablePath}
-   After an upgrade, remove and re-add a stale pronto entry if macOS no longer recognizes it.
-2. Wait for the checks to finish:
-   ${executable} doctor
-3. Confirm the background listener is ready:
+Next steps:
+1. Confirm the background listener is ready:
    ${executable} status
-4. Send ${tags[0]} ping in an iMessage chat where this Mac owner has already sent a message.
+2. Send ${tags[0]} ping in an iMessage chat where this Mac owner has already sent a message.
 
 Configured tags: ${tags.join(", ")}
 Add or remove tags later with ${executable} tags add <tag> and ${executable} tags remove <tag>.`;
@@ -69,13 +69,18 @@ export async function loadExistingSetupDefaults(
       throw new Error("existing configuration is not an object");
     }
     const value = parsed as Record<string, unknown>;
-    const tags = value.version === 1
-      ? typeof value.tag === "string" ? normalizeTags([value.tag]) : null
-      : value.version === 2
-        ? Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string")
-          ? normalizeTags(value.tags)
-          : null
-        : ["@s4"];
+    let tags: string[] | null;
+    if (value.version === undefined) {
+      tags = ["@s4"];
+    } else if (value.version === 1) {
+      tags = typeof value.tag === "string" ? normalizeTags([value.tag]) : null;
+    } else if (value.version === 2) {
+      tags = Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string")
+        ? normalizeTags(value.tags)
+        : null;
+    } else {
+      throw new Error(`Unsupported configuration version ${String(value.version)}`);
+    }
     if (
       typeof value.chatKeySalt !== "string" ||
       value.chatKeySalt.length < 32 ||
@@ -96,11 +101,26 @@ export async function loadExistingSetupDefaults(
   }
 }
 
-export async function migrateLegacyInstallation(input: {
+export interface LegacyMigration {
+  status: "not_found" | "already_migrated" | "migrated";
+  finalize: () => Promise<void>;
+  rollback: () => Promise<void>;
+}
+
+interface LegacyMigrationDependencies {
+  inspectLegacyAgent: () => Promise<LaunchAgentState>;
+  installLegacyShim: (executablePath: string) => Promise<void>;
+  removeLegacyAgent: (plistPath: string) => Promise<void>;
+  restoreLegacyAgent: (plistPath: string) => Promise<void>;
+  stopLegacyAgent: () => Promise<void>;
+  stopProntoAgent: () => Promise<void>;
+}
+
+export async function prepareLegacyInstallation(input: {
   legacyPaths: ProntoPaths;
   paths: ProntoPaths;
-  removeLegacyAgent?: (plistPath: string) => Promise<void>;
-}): Promise<"not_found" | "already_migrated" | "migrated"> {
+  dependencies?: Partial<LegacyMigrationDependencies>;
+}): Promise<LegacyMigration> {
   const exists = async (path: string): Promise<boolean> => {
     try {
       await access(path);
@@ -110,6 +130,62 @@ export async function migrateLegacyInstallation(input: {
       throw error;
     }
   };
+  const backupDirectory = join(input.paths.appSupportDirectory, "migration-backup");
+  const completionMarker = join(backupDirectory, "completed");
+  const statePath = join(backupDirectory, "transaction.json");
+  const rollbackDirectory = join(backupDirectory, "pronto-before-cutover");
+  const targets = [
+    input.paths.configPath,
+    input.paths.databasePath,
+    `${input.paths.databasePath}-wal`,
+    `${input.paths.databasePath}-shm`,
+  ];
+  if (await exists(completionMarker)) {
+    return {
+      status: "already_migrated",
+      finalize: async () => undefined,
+      rollback: async () => undefined,
+    };
+  }
+  const dependencies: LegacyMigrationDependencies = {
+    inspectLegacyAgent: () => launchAgentStateForLabel({ label: LEGACY_LAUNCH_AGENT_LABEL }),
+    installLegacyShim: async (executablePath) => {
+      await atomicWritePrivate(
+        executablePath,
+        renderCompatibilityLauncher(input.paths.executablePath),
+      );
+      await chmod(executablePath, 0o700);
+    },
+    removeLegacyAgent: (plistPath) => removeLaunchAgentForLabel({
+      label: LEGACY_LAUNCH_AGENT_LABEL,
+      plistPath,
+    }),
+    restoreLegacyAgent: (plistPath) => restoreLaunchAgentForLabel({
+      label: LEGACY_LAUNCH_AGENT_LABEL,
+      plistPath,
+    }),
+    stopLegacyAgent: () => stopLaunchAgentForLabel({ label: LEGACY_LAUNCH_AGENT_LABEL }),
+    stopProntoAgent: () => stopLaunchAgentForLabel({ label: LAUNCH_AGENT_LABEL }),
+    ...input.dependencies,
+  };
+  type TransactionState = {
+    legacyExecutableExisted: boolean;
+    legacyPlistExisted: boolean;
+    phase: "preparing" | "prepared" | "finalizing";
+    restoreLegacyOnRollback: boolean;
+    targetPresence: Record<string, boolean>;
+    version: 1;
+  };
+  const storedState = await readFile(statePath, "utf8")
+    .then((contents) => JSON.parse(contents) as TransactionState)
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+  if (storedState !== null && storedState.version !== 1) {
+    throw new Error("Unsupported Pronto migration transaction version");
+  }
+  const legacyAgentState = await dependencies.inspectLegacyAgent();
   const legacyConfigExists = await exists(input.legacyPaths.configPath);
   const legacyAgentExists = await exists(input.legacyPaths.launchAgentPath);
   const legacyArtifacts = [
@@ -125,41 +201,221 @@ export async function migrateLegacyInstallation(input: {
       }),
     ).then((artifacts) => artifacts.filter((artifact) => artifact !== undefined)),
   ];
-  if (legacyArtifacts.length === 0 && !legacyAgentExists) return "not_found";
-
-  if (legacyAgentExists) {
-    await (input.removeLegacyAgent ?? ((plistPath) => removeLaunchAgentForLabel({
-      label: LEGACY_LAUNCH_AGENT_LABEL,
-      plistPath,
-    })))(input.legacyPaths.launchAgentPath);
+  if (
+    storedState === null &&
+    legacyArtifacts.length === 0 &&
+    !legacyAgentExists &&
+    legacyAgentState === "stopped"
+  ) {
+    return {
+      status: "not_found",
+      finalize: async () => undefined,
+      rollback: async () => undefined,
+    };
   }
-
-  const backupDirectory = join(input.paths.appSupportDirectory, "migration-backup");
+  if (storedState === null && legacyAgentState !== "stopped" && !legacyAgentExists) {
+    throw new Error(
+      "The legacy s4imsg service is loaded but its LaunchAgent plist is missing; restore the plist before migrating",
+    );
+  }
   await ensurePrivateDirectory(input.paths.appSupportDirectory);
   await ensurePrivateDirectory(backupDirectory);
-  let changed = legacyAgentExists;
-  for (const artifact of legacyArtifacts) {
-    const backup = join(backupDirectory, basename(artifact.source));
-    if (await exists(backup)) {
-      if (await sha256File(backup) !== await sha256File(artifact.source)) {
-        throw new Error("Legacy state changed after Pronto migration started");
-      }
-    } else {
-      await copyFile(artifact.source, backup);
+  await ensurePrivateDirectory(rollbackDirectory);
+  let state = storedState;
+  if (state === null) {
+    const targetPresence = Object.fromEntries(
+      await Promise.all(targets.map(async (target) => [target, await exists(target)] as const)),
+    );
+    for (const target of targets) {
+      if (!targetPresence[target]) continue;
+      const backup = join(rollbackDirectory, basename(target));
+      await copyFile(target, backup);
       await chmod(backup, 0o600);
-      changed = true;
     }
-    if (await exists(artifact.target)) {
-      if (await sha256File(artifact.target) !== await sha256File(backup)) {
-        throw new Error("Pronto state conflicts with the legacy migration backup");
-      }
-    } else {
-      await copyFile(backup, artifact.target);
-      await chmod(artifact.target, 0o600);
-      changed = true;
+    const legacyExecutableExisted = await exists(input.legacyPaths.executablePath);
+    if (legacyExecutableExisted) {
+      await copyFile(
+        input.legacyPaths.executablePath,
+        join(backupDirectory, "s4imsg-executable"),
+      );
+      await chmod(join(backupDirectory, "s4imsg-executable"), 0o700);
     }
+    if (legacyAgentExists) {
+      await copyFile(
+        input.legacyPaths.launchAgentPath,
+        join(backupDirectory, "s4imsg-launch-agent.plist"),
+      );
+      await chmod(join(backupDirectory, "s4imsg-launch-agent.plist"), 0o600);
+    }
+    state = {
+      legacyExecutableExisted,
+      legacyPlistExisted: legacyAgentExists,
+      phase: "preparing",
+      restoreLegacyOnRollback: legacyAgentState !== "stopped",
+      targetPresence,
+      version: 1,
+    };
+    await atomicWritePrivate(statePath, `${JSON.stringify(state, null, 2)}\n`);
   }
-  return changed ? "migrated" : "already_migrated";
+  const restoreTargets = async (): Promise<void> => {
+    for (const target of targets) {
+      if (state.targetPresence[target] === true) {
+        await copyFile(join(rollbackDirectory, basename(target)), target);
+        await chmod(target, 0o600);
+      } else {
+        await rm(target, { force: true });
+      }
+    }
+  };
+  const restoreLegacyFiles = async (): Promise<void> => {
+    if (state.legacyExecutableExisted) {
+      await copyFile(
+        join(backupDirectory, "s4imsg-executable"),
+        input.legacyPaths.executablePath,
+      );
+      await chmod(input.legacyPaths.executablePath, 0o700);
+    } else {
+      await rm(input.legacyPaths.executablePath, { force: true });
+    }
+    if (state.legacyPlistExisted) {
+      await copyFile(
+        join(backupDirectory, "s4imsg-launch-agent.plist"),
+        input.legacyPaths.launchAgentPath,
+      );
+      await chmod(input.legacyPaths.launchAgentPath, 0o600);
+    }
+  };
+  let settled = false;
+  let safeToRollback = true;
+  try {
+    if (storedState !== null && state.phase !== "finalizing") {
+      safeToRollback = false;
+      await dependencies.stopProntoAgent();
+      safeToRollback = true;
+    }
+    if (legacyAgentState !== "stopped") {
+      safeToRollback = false;
+      await dependencies.stopLegacyAgent();
+      safeToRollback = true;
+    }
+    let changed = false;
+    if (state.phase !== "finalizing") {
+      await restoreTargets();
+      for (const artifact of legacyArtifacts) {
+        const backup = join(backupDirectory, basename(artifact.source));
+        if (await exists(backup)) {
+          if (await sha256File(backup) !== await sha256File(artifact.source)) {
+            throw new Error("Legacy state changed after Pronto migration started");
+          }
+        } else {
+          await copyFile(artifact.source, backup);
+          await chmod(backup, 0o600);
+          changed = true;
+        }
+        if (await exists(artifact.target)) {
+          if (await sha256File(artifact.target) !== await sha256File(backup)) {
+            throw new Error("Pronto state conflicts with the legacy migration backup");
+          }
+        } else {
+          await copyFile(backup, artifact.target);
+          await chmod(artifact.target, 0o600);
+          changed = true;
+        }
+      }
+      state.phase = "prepared";
+      await atomicWritePrivate(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    }
+    return {
+      status: changed ? "migrated" : "already_migrated",
+      finalize: async () => {
+        if (settled) return;
+        state.phase = "finalizing";
+        await atomicWritePrivate(statePath, `${JSON.stringify(state, null, 2)}\n`);
+        await dependencies.installLegacyShim(input.legacyPaths.executablePath);
+        if (state.legacyPlistExisted && await exists(input.legacyPaths.launchAgentPath)) {
+          await dependencies.removeLegacyAgent(input.legacyPaths.launchAgentPath);
+        }
+        await atomicWritePrivate(completionMarker, "Pronto migration completed.\n");
+        await rm(statePath, { force: true });
+        settled = true;
+      },
+      rollback: async () => {
+        if (settled) return;
+        await restoreTargets();
+        await restoreLegacyFiles();
+        if (state.restoreLegacyOnRollback) {
+          await dependencies.restoreLegacyAgent(input.legacyPaths.launchAgentPath);
+        }
+        await rm(statePath, { force: true });
+        settled = true;
+      },
+    };
+  } catch (error) {
+    if (!safeToRollback) throw error;
+    try {
+      await restoreTargets();
+      await restoreLegacyFiles();
+      if (state.restoreLegacyOnRollback) {
+        await dependencies.restoreLegacyAgent(input.legacyPaths.launchAgentPath);
+      }
+      await rm(statePath, { force: true });
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Legacy migration failed and the s4imsg listener could not be restored",
+      );
+    }
+    throw error;
+  }
+}
+
+export type InstalledExecutableRunner = (
+  executable: string,
+  args: readonly string[],
+) => Promise<ProcessResult>;
+
+export async function qualifyInstalledExecutable(
+  executablePath: string,
+  runner: InstalledExecutableRunner = runCommand,
+): Promise<void> {
+  const result = await runner(executablePath, ["doctor"]);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Installed Pronto qualification failed: ${result.stderr.trim() || result.stdout.trim() || result.exitCode}`,
+    );
+  }
+}
+
+export async function completeSetupCutover(input: {
+  install: () => Promise<void>;
+  migration: LegacyMigration;
+  qualify: () => Promise<void>;
+  removeProntoAgent: () => Promise<void>;
+}): Promise<void> {
+  try {
+    await input.install();
+    await input.qualify();
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    let prontoStopped = true;
+    await input.removeProntoAgent().catch((rollbackError) => {
+      prontoStopped = false;
+      rollbackErrors.push(rollbackError);
+    });
+    if (prontoStopped) {
+      await input.migration.rollback().catch((rollbackError) => {
+        rollbackErrors.push(rollbackError);
+      });
+    }
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        "Pronto setup failed and the previous listener could not be fully restored",
+      );
+    }
+    throw error;
+  }
+  await input.migration.finalize();
 }
 
 export async function resolveWorkspaceSelection(
@@ -322,10 +578,17 @@ export async function installSetup(input: {
   await ensurePrivateDirectory(binDirectory);
   await ensurePrivateDirectory(input.paths.logDirectory);
   const temporaryExecutable = join(binDirectory, `.pronto-${randomUUID()}.tmp`);
+  const temporaryCompatibilityExecutable = join(binDirectory, `.s4imsg-${randomUUID()}.tmp`);
+  const compatibilityExecutable = join(binDirectory, "s4imsg");
 
   try {
     await dependencies.buildExecutable(temporaryExecutable);
     await chmod(temporaryExecutable, 0o700);
+    await atomicWritePrivate(
+      temporaryCompatibilityExecutable,
+      renderCompatibilityLauncher(input.paths.executablePath),
+    );
+    await chmod(temporaryCompatibilityExecutable, 0o700);
     const installedExecutableHash = await sha256File(temporaryExecutable);
     const config = { ...input.config, installedExecutableHash };
     const previousConfig = await readFile(input.paths.configPath, "utf8").catch(
@@ -349,6 +612,7 @@ export async function installSetup(input: {
       }
       throw error;
     }
+    await rename(temporaryCompatibilityExecutable, compatibilityExecutable);
     await dependencies.installAgent({
       plist: renderLaunchAgent({
         executablePath: input.paths.executablePath,
@@ -359,6 +623,7 @@ export async function installSetup(input: {
     return config;
   } finally {
     await unlink(temporaryExecutable).catch(() => undefined);
+    await unlink(temporaryCompatibilityExecutable).catch(() => undefined);
   }
 }
 
@@ -371,6 +636,11 @@ export async function uninstallInstallation(input: {
   await unlink(input.paths.executablePath).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });
+  await unlink(join(dirname(input.paths.executablePath), "s4imsg")).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    },
+  );
   if (input.purge === true) {
     await rm(input.paths.appSupportDirectory, { force: true, recursive: true });
     await rm(input.paths.logDirectory, { force: true, recursive: true });

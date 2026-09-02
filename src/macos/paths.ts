@@ -13,40 +13,49 @@ export interface ProntoPaths {
   logPath: string;
 }
 
-export function pathsForHome(homeDirectory: string): ProntoPaths {
-  const appSupportDirectory = join(homeDirectory, "Library", "Application Support", "pronto");
-  const logDirectory = join(homeDirectory, "Library", "Logs", "pronto");
+function productPathsForHome(input: {
+  executable: string;
+  homeDirectory: string;
+  label: string;
+  product: string;
+}): ProntoPaths {
+  const appSupportDirectory = join(
+    input.homeDirectory,
+    "Library",
+    "Application Support",
+    input.product,
+  );
+  const logDirectory = join(input.homeDirectory, "Library", "Logs", input.product);
   return {
     appSupportDirectory,
     configPath: join(appSupportDirectory, "config.json"),
     databasePath: join(appSupportDirectory, "state.sqlite"),
-    executablePath: join(appSupportDirectory, "bin", "pronto"),
+    executablePath: join(appSupportDirectory, "bin", input.executable),
     launchAgentPath: join(
-      homeDirectory,
+      input.homeDirectory,
       "Library",
       "LaunchAgents",
-      `${LAUNCH_AGENT_LABEL}.plist`,
+      `${input.label}.plist`,
     ),
     logDirectory,
     logPath: join(logDirectory, "daemon.log"),
   };
 }
 
+export function pathsForHome(homeDirectory: string): ProntoPaths {
+  return productPathsForHome({
+    executable: "pronto",
+    homeDirectory,
+    label: LAUNCH_AGENT_LABEL,
+    product: "pronto",
+  });
+}
+
 export function legacyPathsForHome(homeDirectory: string): ProntoPaths {
-  const appSupportDirectory = join(homeDirectory, "Library", "Application Support", "s4imsg");
-  const logDirectory = join(homeDirectory, "Library", "Logs", "s4imsg");
-  return {
-    appSupportDirectory,
-    configPath: join(appSupportDirectory, "config.json"),
-    databasePath: join(appSupportDirectory, "state.sqlite"),
-    executablePath: join(appSupportDirectory, "bin", "s4imsg"),
-    launchAgentPath: join(
-      homeDirectory,
-      "Library",
-      "LaunchAgents",
-      `${LEGACY_LAUNCH_AGENT_LABEL}.plist`,
-    ),
-    logDirectory,
-    logPath: join(logDirectory, "daemon.log"),
-  };
+  return productPathsForHome({
+    executable: "s4imsg",
+    homeDirectory,
+    label: LEGACY_LAUNCH_AGENT_LABEL,
+    product: "s4imsg",
+  });
 }

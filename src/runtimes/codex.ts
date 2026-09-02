@@ -17,6 +17,11 @@ import {
   type RuntimeInput,
   type ToolActivity,
 } from "./types";
+import {
+  PRONTO_ATTEMPT_CAPABILITY_ENV,
+  PRONTO_BROKER_URL_ENV,
+  PRONTO_MCP_SERVER_NAME,
+} from "../tools/contract";
 
 function activity(current: ToolActivity, next: ToolActivity): ToolActivity {
   if (current === "observed" || next === "observed") return "observed";
@@ -96,13 +101,13 @@ export class CodexAdapter implements RuntimeAdapter {
       await writeFile(
         profilePath,
         [
-          "[mcp_servers.pronto]",
+          `[mcp_servers.${PRONTO_MCP_SERVER_NAME}]`,
           `command = ${JSON.stringify(input.bridgeExecutablePath)}`,
           `args = ${JSON.stringify([...(input.bridgeExecutableArgs ?? []), "mcp"])}`,
           "",
-          "[mcp_servers.pronto.env]",
-          `PRONTO_ATTEMPT_CAPABILITY = ${JSON.stringify(input.capability)}`,
-          `PRONTO_BROKER_URL = ${JSON.stringify(input.brokerUrl)}`,
+          `[mcp_servers.${PRONTO_MCP_SERVER_NAME}.env]`,
+          `${PRONTO_ATTEMPT_CAPABILITY_ENV} = ${JSON.stringify(input.capability)}`,
+          `${PRONTO_BROKER_URL_ENV} = ${JSON.stringify(input.brokerUrl)}`,
           "",
         ].join("\n"),
         { flag: "wx", mode: 0o600 },

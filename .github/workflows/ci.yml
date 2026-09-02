@@ -21,4 +21,5 @@ jobs:
       - run: bun run build
       - run: ./dist/pronto --version
       - run: ./dist/pronto --help
+      - run: ./dist/s4imsg --version
       - run: bun run release:validate

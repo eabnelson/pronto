@@ -11,6 +11,11 @@ import {
   type RuntimeInput,
   type ToolActivity,
 } from "./types";
+import {
+  PRONTO_ATTEMPT_CAPABILITY_ENV,
+  PRONTO_BROKER_URL_ENV,
+  PRONTO_MCP_SERVER_NAME,
+} from "../tools/contract";
 
 function parseClaude(stdout: string): { output: unknown; toolActivity: ToolActivity } {
   let output: unknown = null;
@@ -81,12 +86,12 @@ export class ClaudeAdapter implements RuntimeAdapter {
       mcpPath,
       JSON.stringify({
         mcpServers: {
-          pronto: {
+          [PRONTO_MCP_SERVER_NAME]: {
             args: [...(input.bridgeExecutableArgs ?? []), "mcp"],
             command: input.bridgeExecutablePath,
             env: {
-              PRONTO_ATTEMPT_CAPABILITY: input.capability,
-              PRONTO_BROKER_URL: input.brokerUrl,
+              [PRONTO_ATTEMPT_CAPABILITY_ENV]: input.capability,
+              [PRONTO_BROKER_URL_ENV]: input.brokerUrl,
             },
           },
         },
