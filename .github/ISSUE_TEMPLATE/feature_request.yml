@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest a focused improvement to s4imsg
+description: Suggest a focused improvement to pronto
 title: "[Feature]: "
 labels:
   - enhancement
@@ -27,7 +27,7 @@ body:
     attributes:
       label: Scope confirmation
       options:
-        - label: This keeps s4imsg independent of Studio Four.
+        - label: This keeps pronto independent of Studio Four.
           required: true
         - label: This request contains no private conversation data or participant identifiers.
           required: true

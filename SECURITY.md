@@ -15,7 +15,7 @@ therefore do not constrain the turn. Conversation context may be sent
 to the configured model provider. The Mac owner is responsible for informing
 participants and choosing chats whose members they trust.
 
-`s4imsg` limits its own Messages query capability to the originating chat, but
+`pronto` limits its own Messages query capability to the originating chat, but
 the runtime may access any command or file available to the macOS user. The
 per-chat working folder is organizational context, not a security boundary.
 Project instructions, hooks, plugins, and MCP servers in a selected repository
@@ -26,14 +26,14 @@ untrusted evidence and may still influence model behavior.
 The current-chat query token is random, expires, and is scoped to one numeric
 chat row. Claude Code receives it through a private temporary MCP configuration;
 Codex receives it through a private temporary profile used to configure the
-`s4imsg` MCP server. It is not added to the agent process environment or
+`pronto` MCP server. It is not added to the agent process environment or
 command-line arguments, and the temporary configuration is deleted after every
 runtime attempt. Because the runtime still acts as the same macOS user, this is
 capability scoping rather than an operating-system sandbox. The MCP surface is
 read-only and cannot send, react, vote, edit, unsend, or select another chat.
 This boundary does not restrict the runtime's other locally configured tools.
 
-Private state is stored below `~/Library/Application Support/s4imsg` with
+Private state is stored below `~/Library/Application Support/pronto` with
 owner-only permissions. The database retains at most eight confirmed tagged
 request/reply exchanges and one compact summary per chat. It does not archive
 ordinary messages, participant rosters, attachment metadata, attachment bytes,
@@ -50,7 +50,7 @@ prompt injection risk, but are not authorization or process isolation.
 
 Do not include real message text, participant identifiers, chat identifiers,
 attachment paths, credentials, or provider output in a public report. Open a
-minimal [private GitHub security advisory](https://github.com/eabnelson/s4imsg/security/advisories/new).
+minimal [private GitHub security advisory](https://github.com/eabnelson/pronto/security/advisories/new).
 Include the affected version or commit, impact, and synthetic reproduction steps.
 You should receive an initial response within seven days. Please do not open a
 public issue until a fix and disclosure plan have been agreed.

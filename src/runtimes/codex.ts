@@ -85,9 +85,9 @@ export class CodexAdapter implements RuntimeAdapter {
   ) {}
 
   async run(input: RuntimeInput): Promise<RuntimeAttemptResult> {
-    const directory = await mkdtemp(join(tmpdir(), "s4imsg-codex-"));
+    const directory = await mkdtemp(join(tmpdir(), "pronto-codex-"));
     const schemaPath = join(directory, "output-schema.json");
-    const profileName = `s4imsg-${randomUUID()}`;
+    const profileName = `pronto-${randomUUID()}`;
     const profilePath = join(this.codexHome, `${profileName}.config.toml`);
     try {
       await chmod(directory, 0o700);
@@ -96,13 +96,13 @@ export class CodexAdapter implements RuntimeAdapter {
       await writeFile(
         profilePath,
         [
-          "[mcp_servers.s4imsg]",
+          "[mcp_servers.pronto]",
           `command = ${JSON.stringify(input.bridgeExecutablePath)}`,
           `args = ${JSON.stringify([...(input.bridgeExecutableArgs ?? []), "mcp"])}`,
           "",
-          "[mcp_servers.s4imsg.env]",
-          `S4IMSG_ATTEMPT_CAPABILITY = ${JSON.stringify(input.capability)}`,
-          `S4IMSG_BROKER_URL = ${JSON.stringify(input.brokerUrl)}`,
+          "[mcp_servers.pronto.env]",
+          `PRONTO_ATTEMPT_CAPABILITY = ${JSON.stringify(input.capability)}`,
+          `PRONTO_BROKER_URL = ${JSON.stringify(input.brokerUrl)}`,
           "",
         ].join("\n"),
         { flag: "wx", mode: 0o600 },

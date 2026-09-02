@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 test("exchanges NDJSON responses and notifications with a long-lived imsg process", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-rpc-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-rpc-"));
   temporaryDirectories.push(directory);
   const executable = join(directory, "fake-imsg");
   await writeFile(
@@ -57,7 +57,7 @@ for await (const chunk of Bun.stdin.stream()) {
 });
 
 test("keeps reading responses while a notification handler makes a nested call", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-rpc-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-rpc-"));
   temporaryDirectories.push(directory);
   const executable = join(directory, "fake-imsg");
   await writeFile(
@@ -102,7 +102,7 @@ for await (const chunk of Bun.stdin.stream()) {
 });
 
 test("does not let sustained imsg diagnostics block RPC responses", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-rpc-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-rpc-"));
   temporaryDirectories.push(directory);
   const executable = join(directory, "fake-imsg");
   await writeFile(
@@ -142,7 +142,7 @@ for await (const chunk of Bun.stdin.stream()) {
 });
 
 test("times out an unresponsive request and terminates a stuck child on close", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-rpc-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-rpc-"));
   temporaryDirectories.push(directory);
   const executable = join(directory, "fake-imsg");
   await writeFile(
@@ -160,7 +160,7 @@ await Bun.sleep(60_000);
 });
 
 test("fails closed and signals termination for malformed protocol output", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-rpc-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-rpc-"));
   temporaryDirectories.push(directory);
   const executable = join(directory, "fake-imsg");
   await writeFile(

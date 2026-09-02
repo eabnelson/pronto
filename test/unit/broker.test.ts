@@ -84,7 +84,7 @@ describe("capability lifecycle", () => {
 });
 
 test("returns only a canonical path selected by the fixed-chat source", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-attachment-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-attachment-"));
   temporaryDirectories.push(directory);
   const file = join(directory, "notes.txt");
   await writeFile(file, "private attachment contents");

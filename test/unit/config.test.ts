@@ -60,7 +60,7 @@ describe("configuration persistence", () => {
   });
 
   test("round-trips owner-private configuration atomically", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    const directory = await mkdtemp(join(tmpdir(), "pronto-config-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "nested", "config.json");
     const config = createConfig({
@@ -80,7 +80,7 @@ describe("configuration persistence", () => {
   });
 
   test("ignores the removed manual self-chat field in an existing configuration", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    const directory = await mkdtemp(join(tmpdir(), "pronto-config-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "config.json");
     await Bun.write(path, JSON.stringify({
@@ -99,7 +99,7 @@ describe("configuration persistence", () => {
   });
 
   test("rejects legacy configuration without unrestricted access consent", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    const directory = await mkdtemp(join(tmpdir(), "pronto-config-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "config.json");
     await Bun.write(path, JSON.stringify({
@@ -110,11 +110,11 @@ describe("configuration persistence", () => {
       tag: "@helper",
       workingDirectory: "/Users/example",
     }));
-    await expect(loadConfig(path)).rejects.toThrow("run s4imsg setup");
+    await expect(loadConfig(path)).rejects.toThrow("run pronto setup");
   });
 
   test("rejects a symlinked configuration directory", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    const directory = await mkdtemp(join(tmpdir(), "pronto-config-"));
     temporaryDirectories.push(directory);
     const actual = join(directory, "actual");
     await Bun.write(join(actual, ".keep"), "");
@@ -136,7 +136,7 @@ describe("configuration persistence", () => {
   });
 
   test("tightens an existing configuration directory to owner-only access", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    const directory = await mkdtemp(join(tmpdir(), "pronto-config-"));
     temporaryDirectories.push(directory);
     const stateDirectory = join(directory, "state");
     await mkdir(stateDirectory, { mode: 0o755 });
@@ -156,7 +156,7 @@ describe("configuration persistence", () => {
   });
 
   test("does not change permissions on existing ancestor directories", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "s4imsg-config-"));
+    const directory = await mkdtemp(join(tmpdir(), "pronto-config-"));
     temporaryDirectories.push(directory);
     await chmod(directory, 0o755);
 

@@ -1,16 +1,16 @@
 {
-  "name": "s4imsg",
+  "name": "pronto",
   "version": "0.1.0",
   "description": "A local iMessage bridge for Codex and Claude Code",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/eabnelson/s4imsg#readme",
+  "homepage": "https://github.com/eabnelson/pronto#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/eabnelson/s4imsg.git"
+    "url": "git+https://github.com/eabnelson/pronto.git"
   },
   "bugs": {
-    "url": "https://github.com/eabnelson/s4imsg/issues"
+    "url": "https://github.com/eabnelson/pronto/issues"
   },
   "engines": {
     "bun": ">=1.3.14"
@@ -22,11 +22,12 @@
     "macos"
   ],
   "bin": {
-    "s4imsg": "./src/cli.ts"
+    "pronto": "./src/cli.ts",
+    "s4imsg": "./src/legacy-cli.ts"
   },
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "build": "bun build ./src/cli.ts --compile --outfile ./dist/s4imsg",
+    "build": "bun build ./src/cli.ts --compile --outfile ./dist/pronto",
     "setup": "bun run ./src/cli.ts setup",
     "typecheck": "tsc --noEmit",
     "test": "bun test",

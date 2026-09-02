@@ -47,7 +47,7 @@ test("supports legacy initialization without expanding capabilities", async () =
   ).toMatchObject({
     result: {
       capabilities: { tools: {} },
-      serverInfo: { name: "s4imsg-current-chat" },
+      serverInfo: { name: "pronto-current-chat" },
     },
   });
 });

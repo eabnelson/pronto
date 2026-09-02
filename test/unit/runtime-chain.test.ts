@@ -20,7 +20,7 @@ class FakeAdapter implements RuntimeAdapter {
 }
 
 const input: RuntimeInput = {
-  bridgeExecutablePath: "/tmp/s4imsg",
+  bridgeExecutablePath: "/tmp/pronto",
   brokerUrl: "http://127.0.0.1:1",
   capability: "opaque",
   prompt: "immutable prompt",

@@ -20,7 +20,7 @@ describe("release workflow", () => {
     expect(beforePublish).toContain(".tag_name == $tag");
     expect(beforePublish).toContain(".draft == true");
     expect(beforePublish).toContain(
-      '([.assets[].name] | sort) == ["s4imsg", "s4imsg.sha256"]',
+      '([.assets[].name] | sort) == ["pronto", "pronto.sha256"]',
     );
   });
 

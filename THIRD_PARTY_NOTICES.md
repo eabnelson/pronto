@@ -2,7 +2,7 @@
 
 ## imsg
 
-`s4imsg` interoperates with the separately installed
+`pronto` interoperates with the separately installed
 [openclaw/imsg](https://github.com/openclaw/imsg) command-line tool. No `imsg`
 source or binary is bundled.
 

@@ -58,7 +58,7 @@ export async function handleMcpRequest(
         capabilities: { tools: {} },
         protocolVersion:
           typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-11-25",
-        serverInfo: { name: "s4imsg-current-chat", version: "0.1.0" },
+        serverInfo: { name: "pronto-current-chat", version: "0.1.0" },
       },
     };
   }

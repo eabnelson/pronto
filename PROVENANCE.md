@@ -1,6 +1,6 @@
 # Provenance
 
-`s4imsg` is implemented clean-room from public command and protocol contracts.
+`pronto` is implemented clean-room from public command and protocol contracts.
 No Studio Four source code is copied into this repository.
 
 Public implementation references:

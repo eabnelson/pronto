@@ -3,7 +3,7 @@ import { access, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { saveConfig } from "../../src/config";
-import { pathsForHome } from "../../src/macos/paths";
+import { legacyPathsForHome, pathsForHome } from "../../src/macos/paths";
 import {
   TRUST_DISCLOSURE,
   createWorkspaceDirectory,
@@ -11,6 +11,7 @@ import {
   installSetup,
   inspectInstallation,
   loadExistingSetupDefaults,
+  migrateLegacyInstallation,
   prepareSetupConfig,
   resolveWorkspaceSelection,
   setupCompletionMessage,
@@ -29,19 +30,19 @@ describe("setup discovery", () => {
   test("gives copy-safe post-install permission and verification steps", () => {
     const message = setupCompletionMessage(
       {
-        executablePath: "/Users/example/Library/Application Support/s4imsg/bin/s4imsg",
+        executablePath: "/Users/example/Library/Application Support/pronto/bin/pronto",
       },
       ["@helper", "@plan"],
     );
 
-    expect(message).toContain("s4imsg installed");
+    expect(message).toContain("Pronto installed");
     expect(message).toContain("Full Disk Access");
     expect(message).toContain("remove and re-add");
     expect(message).toContain(
-      "'/Users/example/Library/Application Support/s4imsg/bin/s4imsg' doctor",
+      "'/Users/example/Library/Application Support/pronto/bin/pronto' doctor",
     );
     expect(message).toContain(
-      "'/Users/example/Library/Application Support/s4imsg/bin/s4imsg' status",
+      "'/Users/example/Library/Application Support/pronto/bin/pronto' status",
     );
     expect(message).toContain("@helper ping");
     expect(message).toContain("@helper, @plan");
@@ -50,12 +51,12 @@ describe("setup discovery", () => {
 
   test("shell-quotes an installed path containing an apostrophe", () => {
     const message = setupCompletionMessage(
-      { executablePath: "/Users/O'Neil/Library/Application Support/s4imsg/bin/s4imsg" },
+      { executablePath: "/Users/O'Neil/Library/Application Support/pronto/bin/pronto" },
       ["@helper"],
     );
 
     expect(message).toContain(
-      "'/Users/O'\\''Neil/Library/Application Support/s4imsg/bin/s4imsg' doctor",
+      "'/Users/O'\\''Neil/Library/Application Support/pronto/bin/pronto' doctor",
     );
   });
 
@@ -113,12 +114,12 @@ describe("setup discovery", () => {
   test("resolves and creates a home-relative workspace without changing an existing folder", async () => {
     const home = await mkdtemp(join(tmpdir(), "s4imsg-workspace-"));
     temporaryDirectories.push(home);
-    const missing = await resolveWorkspaceSelection("~/s4imsg", home);
-    expect(missing).toEqual({ exists: false, path: join(home, "s4imsg") });
-    const canonical = join(await realpath(home), "s4imsg");
+    const missing = await resolveWorkspaceSelection("~/pronto", home);
+    expect(missing).toEqual({ exists: false, path: join(home, "pronto") });
+    const canonical = join(await realpath(home), "pronto");
     expect(await createWorkspaceDirectory(missing.path)).toBe(canonical);
     await chmod(missing.path, 0o755);
-    const existing = await resolveWorkspaceSelection("~/s4imsg", home);
+    const existing = await resolveWorkspaceSelection("~/pronto", home);
     expect(existing).toEqual({ exists: true, path: canonical });
     expect((await lstat(existing.path)).mode & 0o777).toBe(0o755);
   });
@@ -216,7 +217,7 @@ test("declining unrestricted consent creates no workspace or installation state"
 
   expect(exitCode).toBe(1);
   expect(stderr).toContain("Setup cancelled without changing the service.");
-  await expect(access(join(home, "s4imsg"))).rejects.toThrow();
+  await expect(access(join(home, "pronto"))).rejects.toThrow();
   await expect(access(pathsForHome(home).configPath)).rejects.toThrow();
   await expect(access(pathsForHome(home).launchAgentPath)).rejects.toThrow();
 });
@@ -285,6 +286,61 @@ test("setup atomically installs a hashed executable and private configuration", 
   expect(installed.installedExecutableHash).toHaveLength(64);
   expect(installedPlist).toContain(paths.executablePath);
   expect(await readFile(paths.configPath, "utf8")).not.toContain("@Helper");
+});
+
+test("migration stops the legacy listener and preserves its private state", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pronto-migration-"));
+  temporaryDirectories.push(home);
+  const legacyPaths = legacyPathsForHome(home);
+  const paths = pathsForHome(home);
+  await mkdir(join(legacyPaths.appSupportDirectory, "bin"), { recursive: true });
+  await mkdir(legacyPaths.logDirectory, { recursive: true });
+  await mkdir(join(home, "Library", "LaunchAgents"), { recursive: true });
+  await writeFile(legacyPaths.configPath, "legacy-configuration", { mode: 0o600 });
+  await writeFile(legacyPaths.databasePath, "legacy-database", { mode: 0o600 });
+  await writeFile(`${legacyPaths.databasePath}-wal`, "legacy-wal", { mode: 0o600 });
+  await writeFile(`${legacyPaths.databasePath}-shm`, "legacy-shm", { mode: 0o600 });
+  await writeFile(legacyPaths.executablePath, "legacy-executable", { mode: 0o700 });
+  await writeFile(legacyPaths.launchAgentPath, "legacy-plist", { mode: 0o600 });
+  const removedAgents: string[] = [];
+
+  expect(await migrateLegacyInstallation({
+    legacyPaths,
+    paths,
+    removeLegacyAgent: async (plistPath) => {
+      removedAgents.push(plistPath);
+      await rm(plistPath, { force: true });
+    },
+  })).toBe("migrated");
+
+  expect(removedAgents).toEqual([legacyPaths.launchAgentPath]);
+  expect(await readFile(paths.configPath, "utf8")).toBe("legacy-configuration");
+  expect(await readFile(paths.databasePath, "utf8")).toBe("legacy-database");
+  expect(await readFile(`${paths.databasePath}-wal`, "utf8")).toBe("legacy-wal");
+  expect(await readFile(`${paths.databasePath}-shm`, "utf8")).toBe("legacy-shm");
+  expect(await readFile(
+    join(paths.appSupportDirectory, "migration-backup", "config.json"),
+    "utf8",
+  )).toBe("legacy-configuration");
+  expect(await readFile(
+    join(paths.appSupportDirectory, "migration-backup", "state.sqlite"),
+    "utf8",
+  )).toBe("legacy-database");
+  expect(await readFile(
+    join(paths.appSupportDirectory, "migration-backup", "state.sqlite-wal"),
+    "utf8",
+  )).toBe("legacy-wal");
+  expect(await readFile(
+    join(paths.appSupportDirectory, "migration-backup", "state.sqlite-shm"),
+    "utf8",
+  )).toBe("legacy-shm");
+  await expect(access(legacyPaths.launchAgentPath)).rejects.toThrow();
+
+  expect(await migrateLegacyInstallation({
+    legacyPaths,
+    paths,
+    removeLegacyAgent: async () => undefined,
+  })).toBe("already_migrated");
 });
 
 test("setup leaves the installed executable and config paired when config persistence fails", async () => {

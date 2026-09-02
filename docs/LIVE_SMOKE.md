@@ -8,25 +8,25 @@ provider and sends real iMessages; it is never run by CI.
 
 1. Confirm Messages is signed in and the owner has already sent a message in the
    test chat.
-2. Run setup and confirm it offers `~/s4imsg`, asks before reusing an existing
+2. Run setup and confirm it offers `~/pronto`, asks before reusing an existing
    folder, and presents the
    unrestricted trust disclosure before the runtime probe.
 3. Confirm the probe completes without a Claude Code or Codex approval prompt.
-4. Run `~/Library/Application\ Support/s4imsg/bin/s4imsg doctor`. Resolve failed checks. A degraded
+4. Run `~/Library/Application\ Support/pronto/bin/pronto doctor`. Resolve failed checks. A degraded
    `messages-send-automation` check is expected until this smoke succeeds.
-5. Run `~/Library/Application\ Support/s4imsg/bin/s4imsg status` and confirm the listener is `running`.
-6. Send `<tag> reply with exactly: s4imsg smoke ok` in the test chat.
-7. Approve the macOS Messages Automation prompt for the installed `s4imsg`
+5. Run `~/Library/Application\ Support/pronto/bin/pronto status` and confirm the listener is `running`.
+6. Send `<tag> reply with exactly: pronto smoke ok` in the test chat.
+7. Approve the macOS Messages Automation prompt for the installed `pronto`
    executable if it appears.
 8. Confirm exactly one plain-text reply arrives and it contains
-   `s4imsg smoke ok`.
+   `pronto smoke ok`.
 9. Wait one minute and confirm the sent reply did not trigger an echo-loop turn.
 
 ## Self-chat mirror handling
 
 1. Re-run setup; self-chat handling should require no question or address entry.
 2. Re-grant Full Disk Access if macOS treats the rebuilt executable as a new
-   identity, then confirm `s4imsg status` reports `daemon ready`.
+   identity, then confirm `pronto status` reports `daemon ready`.
 3. Send one new tagged message to yourself and confirm the agent runs once and
    sends one reply, even though Messages displays incoming and outgoing copies.
 4. In a different eligible chat, have another participant send a tagged message
@@ -55,13 +55,13 @@ provider and sends real iMessages; it is never run by CI.
 
 ## Recovery and inspection
 
-1. Run `~/Library/Application\ Support/s4imsg/bin/s4imsg status --chats`; confirm it prints only opaque `c_...` keys and
+1. Run `~/Library/Application\ Support/pronto/bin/pronto status --chats`; confirm it prints only opaque `c_...` keys and
    counts, never handles or message text.
 2. Stop and restart through `bun run src/cli.ts setup`, then send one new tagged
    request. Confirm no old request is replayed.
-3. Run `~/Library/Application\ Support/s4imsg/bin/s4imsg forget <opaque-chat-key>`, then confirm the prior tagged fact is no
+3. Run `~/Library/Application\ Support/pronto/bin/pronto forget <opaque-chat-key>`, then confirm the prior tagged fact is no
    longer available unless it is still present in recent Messages history.
-4. Inspect `~/Library/Logs/s4imsg/daemon.log` and confirm it contains no message
+4. Inspect `~/Library/Logs/pronto/daemon.log` and confirm it contains no message
    text, participant handles, chat identifiers, provider output, or attachment
    paths.
 

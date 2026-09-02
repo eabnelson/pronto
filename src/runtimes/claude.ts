@@ -74,19 +74,19 @@ export class ClaudeAdapter implements RuntimeAdapter {
   ) {}
 
   async run(input: RuntimeInput): Promise<RuntimeAttemptResult> {
-    const directory = await mkdtemp(join(tmpdir(), "s4imsg-claude-"));
+    const directory = await mkdtemp(join(tmpdir(), "pronto-claude-"));
     await chmod(directory, 0o700);
     const mcpPath = join(directory, "mcp.json");
     await writeFile(
       mcpPath,
       JSON.stringify({
         mcpServers: {
-          s4imsg: {
+          pronto: {
             args: [...(input.bridgeExecutableArgs ?? []), "mcp"],
             command: input.bridgeExecutablePath,
             env: {
-              S4IMSG_ATTEMPT_CAPABILITY: input.capability,
-              S4IMSG_BROKER_URL: input.brokerUrl,
+              PRONTO_ATTEMPT_CAPABILITY: input.capability,
+              PRONTO_BROKER_URL: input.brokerUrl,
             },
           },
         },

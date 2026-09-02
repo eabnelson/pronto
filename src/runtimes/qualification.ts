@@ -70,7 +70,7 @@ export async function qualifyRuntime(input: {
     return { checks, qualified: false };
   }
 
-  const directory = await mkdtemp(join(tmpdir(), `s4imsg-${adapter.kind}-qualification-`));
+  const directory = await mkdtemp(join(tmpdir(), `pronto-${adapter.kind}-qualification-`));
   await chmod(directory, 0o700);
   const markerPath = join(directory, "permission-probe.txt");
   const marker = randomBytes(24).toString("base64url");
@@ -85,7 +85,7 @@ export async function qualifyRuntime(input: {
       prompt: [
         "AUTHORIZED LOCAL QUALIFICATION REQUEST",
         `Use your normal local file tools to create ${markerPath} containing exactly: ${marker}`,
-        "Do not call the s4imsg current-chat tools. Then return a short confirmation reply.",
+        "Do not call the pronto current-chat tools. Then return a short confirmation reply.",
       ].join("\n"),
       workingDirectory: input.workingDirectory,
     });

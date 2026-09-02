@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   installLaunchAgent,
   parseLaunchAgentState,
+  removeLaunchAgentForLabel,
   renderLaunchAgent,
   restartLaunchAgent,
   type LaunchctlRunner,
@@ -20,11 +21,11 @@ afterEach(async () => {
 
 test("renders a stable owner LaunchAgent without shell interpolation", () => {
   const plist = renderLaunchAgent({
-    executablePath: "/Users/me/Application Support/s4imsg/bin/s4imsg",
-    logPath: "/Users/me/Logs/s4imsg/agent & output.log",
+    executablePath: "/Users/me/Application Support/pronto/bin/pronto",
+    logPath: "/Users/me/Logs/pronto/agent & output.log",
   });
 
-  expect(plist).toContain("dev.s4imsg.agent");
+  expect(plist).toContain("dev.pronto.agent");
   expect(plist).toContain("<string>run</string>");
   expect(plist).toContain("agent &amp; output.log");
   expect(plist).not.toContain("/bin/sh");
@@ -52,13 +53,34 @@ test("restarts the stable listener after a tag change", async () => {
   }, 501);
 
   expect(result.exitCode).toBe(0);
-  expect(calls).toEqual([["kickstart", "-k", "gui/501/dev.s4imsg.agent"]]);
+  expect(calls).toEqual([["kickstart", "-k", "gui/501/dev.pronto.agent"]]);
+});
+
+test("removes the legacy service by its legacy label", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pronto-legacy-agent-"));
+  temporaryDirectories.push(directory);
+  const plistPath = join(directory, "dev.s4imsg.agent.plist");
+  await Bun.write(plistPath, "legacy plist");
+  const calls: string[][] = [];
+
+  await removeLaunchAgentForLabel({
+    label: "dev.s4imsg.agent",
+    plistPath,
+    runner: async (args) => {
+      calls.push([...args]);
+      return { exitCode: 0, stderr: "", stdout: "" };
+    },
+    uid: 501,
+  });
+
+  expect(calls).toEqual([["bootout", "gui/501/dev.s4imsg.agent"]]);
+  await expect(readFile(plistPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 test("installs and bootstraps one LaunchAgent", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-agent-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-agent-"));
   temporaryDirectories.push(directory);
-  const plistPath = join(directory, "dev.s4imsg.agent.plist");
+  const plistPath = join(directory, "dev.pronto.agent.plist");
   const calls: string[][] = [];
   const runner: LaunchctlRunner = async (args) => {
     calls.push([...args]);
@@ -78,17 +100,17 @@ test("installs and bootstraps one LaunchAgent", async () => {
 
   expect(await readFile(plistPath, "utf8")).toContain("<plist>");
   expect(calls).toEqual([
-    ["bootout", "gui/501/dev.s4imsg.agent"],
-    ["print", "gui/501/dev.s4imsg.agent"],
+    ["bootout", "gui/501/dev.pronto.agent"],
+    ["print", "gui/501/dev.pronto.agent"],
     ["bootstrap", "gui/501", plistPath],
-    ["kickstart", "-k", "gui/501/dev.s4imsg.agent"],
+    ["kickstart", "-k", "gui/501/dev.pronto.agent"],
   ]);
 });
 
 test("waits for a LaunchAgent to disappear even when bootout reports in progress", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-agent-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-agent-"));
   temporaryDirectories.push(directory);
-  const plistPath = join(directory, "dev.s4imsg.agent.plist");
+  const plistPath = join(directory, "dev.pronto.agent.plist");
   const calls: string[][] = [];
   const waits: number[] = [];
   let printCalls = 0;
@@ -119,20 +141,20 @@ test("waits for a LaunchAgent to disappear even when bootout reports in progress
   });
 
   expect(calls).toEqual([
-    ["bootout", "gui/501/dev.s4imsg.agent"],
-    ["print", "gui/501/dev.s4imsg.agent"],
-    ["print", "gui/501/dev.s4imsg.agent"],
-    ["print", "gui/501/dev.s4imsg.agent"],
+    ["bootout", "gui/501/dev.pronto.agent"],
+    ["print", "gui/501/dev.pronto.agent"],
+    ["print", "gui/501/dev.pronto.agent"],
+    ["print", "gui/501/dev.pronto.agent"],
     ["bootstrap", "gui/501", plistPath],
-    ["kickstart", "-k", "gui/501/dev.s4imsg.agent"],
+    ["kickstart", "-k", "gui/501/dev.pronto.agent"],
   ]);
   expect(waits).toEqual([100, 100]);
 });
 
 test("keeps the replacement plist and does not bootstrap when bootout times out", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-agent-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-agent-"));
   temporaryDirectories.push(directory);
-  const plistPath = join(directory, "dev.s4imsg.agent.plist");
+  const plistPath = join(directory, "dev.pronto.agent.plist");
   const calls: string[][] = [];
   const waits: number[] = [];
   const runner: LaunchctlRunner = async (args) => {
@@ -161,9 +183,9 @@ test("keeps the replacement plist and does not bootstrap when bootout times out"
 });
 
 test("removes a partial plist when launchd bootstrap fails", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-agent-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-agent-"));
   temporaryDirectories.push(directory);
-  const plistPath = join(directory, "dev.s4imsg.agent.plist");
+  const plistPath = join(directory, "dev.pronto.agent.plist");
 
   await expect(
     installLaunchAgent({

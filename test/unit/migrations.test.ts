@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { access, lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openS4imsgDatabase } from "../../src/storage/database";
+import { openProntoDatabase } from "../../src/storage/database";
 import { CURRENT_SCHEMA_VERSION } from "../../src/storage/migrations";
 import { Database } from "bun:sqlite";
 
@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 test("retains one private recovery backup when a migration fails", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-migration-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-migration-"));
   temporaryDirectories.push(directory);
   const path = join(directory, "state.sqlite");
   const legacy = new Database(path, { create: true });
@@ -23,7 +23,7 @@ test("retains one private recovery backup when a migration fails", async () => {
   legacy.close();
 
   expect(() =>
-    openS4imsgDatabase(path, {
+    openProntoDatabase(path, {
       migrate: () => {
         throw new Error("synthetic migration failure");
       },
@@ -45,10 +45,10 @@ test("retains one private recovery backup when a migration fails", async () => {
 });
 
 test("creates the current owner-private WAL schema", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-migration-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-migration-"));
   temporaryDirectories.push(directory);
   const path = join(directory, "state.sqlite");
-  const database = openS4imsgDatabase(path);
+  const database = openProntoDatabase(path);
   try {
     expect(database.query("PRAGMA user_version").get()).toEqual({
       user_version: CURRENT_SCHEMA_VERSION,
@@ -70,7 +70,7 @@ test("creates the current owner-private WAL schema", async () => {
 });
 
 test("upgrades a version-two database without changing existing delivery rows", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-migration-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-migration-"));
   temporaryDirectories.push(directory);
   const path = join(directory, "state.sqlite");
   const legacy = new Database(path, { create: true });
@@ -101,7 +101,7 @@ test("upgrades a version-two database without changing existing delivery rows", 
   `);
   legacy.close();
 
-  const database = openS4imsgDatabase(path);
+  const database = openProntoDatabase(path);
   try {
     expect(database.query("PRAGMA user_version").get()).toEqual({
       user_version: CURRENT_SCHEMA_VERSION,
@@ -126,25 +126,25 @@ test("upgrades a version-two database without changing existing delivery rows", 
 });
 
 test("removes a recovery backup after a successful migration", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-migration-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-migration-"));
   temporaryDirectories.push(directory);
   const path = join(directory, "state.sqlite");
   const empty = new Database(path, { create: true });
   empty.exec("CREATE TABLE pre_migration_marker (value TEXT)");
   empty.close();
 
-  const database = openS4imsgDatabase(path);
+  const database = openProntoDatabase(path);
   database.close();
   await expect(access(`${path}.backup`)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 test("refuses symlinked database directories and files", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-migration-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-migration-"));
   temporaryDirectories.push(directory);
   const actual = join(directory, "actual");
   await mkdir(actual);
   await symlink(actual, join(directory, "linked"));
-  expect(() => openS4imsgDatabase(join(directory, "linked", "state.sqlite"))).toThrow(
+  expect(() => openProntoDatabase(join(directory, "linked", "state.sqlite"))).toThrow(
     "symbolic link directory",
   );
 
@@ -152,7 +152,7 @@ test("refuses symlinked database directories and files", async () => {
   const targetDatabase = new Database(target, { create: true });
   targetDatabase.close();
   await symlink(target, join(actual, "state.sqlite"));
-  expect(() => openS4imsgDatabase(join(actual, "state.sqlite"))).toThrow(
+  expect(() => openProntoDatabase(join(actual, "state.sqlite"))).toThrow(
     "symbolic link database",
   );
 });

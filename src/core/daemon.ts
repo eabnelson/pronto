@@ -1,30 +1,30 @@
-import type { S4imsgConfig } from "../config";
+import type { ProntoConfig } from "../config";
 import { ImsgCurrentChatSource } from "../imessage/current-chat-source";
 import { NdjsonRpcClient } from "../imessage/rpc-client";
 import { ImsgTransport } from "../imessage/transport";
-import type { S4imsgPaths } from "../macos/paths";
+import type { ProntoPaths } from "../macos/paths";
 import { RuntimeChain } from "../runtimes/chain";
 import { createRuntimeAdapter } from "../runtimes/factory";
-import { openS4imsgDatabase } from "../storage/database";
+import { openProntoDatabase } from "../storage/database";
 import { DeliveryJournal } from "../storage/journal";
 import { MemoryStore } from "../storage/memory";
 import { WorkspaceStore } from "../storage/workspaces";
 import { ConversationBroker } from "../tools/broker";
 import { TurnCoordinator, TurnProcessor } from "./turn";
 
-function runtimePath(config: S4imsgConfig, fallback = false): string {
+function runtimePath(config: ProntoConfig, fallback = false): string {
   const path = fallback ? config.fallbackRuntimePath : config.primaryRuntimePath;
-  if (path === undefined) throw new Error("Runtime executable path is missing; run s4imsg setup");
+  if (path === undefined) throw new Error("Runtime executable path is missing; run pronto setup");
   return path;
 }
 
-export class S4imsgDaemon {
+export class ProntoDaemon {
   #stopRequested = false;
   #stop: (() => void) | null = null;
 
   constructor(
-    readonly config: S4imsgConfig,
-    readonly paths: S4imsgPaths,
+    readonly config: ProntoConfig,
+    readonly paths: ProntoPaths,
   ) {}
 
   stop(): void {
@@ -33,7 +33,7 @@ export class S4imsgDaemon {
   }
 
   async run(): Promise<void> {
-    const database = openS4imsgDatabase(this.paths.databasePath);
+    const database = openProntoDatabase(this.paths.databasePath);
     const journal = new DeliveryJournal(database);
     const rpc = new NdjsonRpcClient(this.config.imsgPath);
     const transport = new ImsgTransport(rpc, {

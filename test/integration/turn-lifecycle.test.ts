@@ -12,7 +12,7 @@ import type {
   RuntimeInput,
 } from "../../src/runtimes/types";
 import { chatKeyForId } from "../../src/storage/chat-key";
-import { openS4imsgDatabase } from "../../src/storage/database";
+import { openProntoDatabase } from "../../src/storage/database";
 import { DeliveryJournal } from "../../src/storage/journal";
 import { MemoryStore } from "../../src/storage/memory";
 import { promoteWorkspace, WorkspaceStore } from "../../src/storage/workspaces";
@@ -99,16 +99,16 @@ const activation: ActivatedRequest = {
 };
 
 async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
-  const directory = await mkdtemp(join(tmpdir(), "s4imsg-turn-"));
+  const directory = await mkdtemp(join(tmpdir(), "pronto-turn-"));
   temporaryDirectories.push(directory);
-  const database = openS4imsgDatabase(join(directory, "state.sqlite"));
+  const database = openProntoDatabase(join(directory, "state.sqlite"));
   const journal = new DeliveryJournal(database);
   const memory = new MemoryStore(database);
   const workspaces = new WorkspaceStore(database);
   const transport = new FakeTransport();
   const broker = new ConversationBroker(source);
   const processor = new TurnProcessor({
-    bridgeExecutablePath: "/Applications/s4imsg/bin/s4imsg",
+    bridgeExecutablePath: "/Applications/pronto/bin/pronto",
     broker,
     brokerUrl: "http://127.0.0.1:1",
     journal,
@@ -471,7 +471,7 @@ describe("turn lifecycle", () => {
       expect(primary.inputs).toHaveLength(0);
       expect(h.transport.sends[0]!.text).toContain(missing);
       expect(h.transport.sends[0]!.text).toContain("use /path/to/project");
-      expect(h.transport.sends[0]!.text).toContain("s4imsg forget");
+      expect(h.transport.sends[0]!.text).toContain("pronto forget");
     } finally {
       h.close();
     }

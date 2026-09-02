@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, lstatSync, mkdirSync, unlinkSync } from "node:
 import { dirname, join, parse, resolve } from "node:path";
 import { CURRENT_SCHEMA_VERSION, migrateDatabase } from "./migrations";
 
-export function openS4imsgDatabase(
+export function openProntoDatabase(
   path: string,
   options: { migrate?: (database: Database) => void } = {},
 ): Database {

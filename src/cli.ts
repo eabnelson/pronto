@@ -11,7 +11,7 @@ import {
   restartLaunchAgent,
   stopLaunchAgent,
 } from "./macos/launch-agent";
-import { pathsForHome } from "./macos/paths";
+import { legacyPathsForHome, pathsForHome } from "./macos/paths";
 import {
   TRUST_DISCLOSURE,
   createWorkspaceDirectory,
@@ -19,16 +19,17 @@ import {
   inspectInstallation,
   installSetup,
   loadExistingSetupDefaults,
+  migrateLegacyInstallation,
   prepareSetupConfig,
   resolveWorkspaceSelection,
   setupCompletionMessage,
   uninstallInstallation,
   runCommand,
 } from "./macos/setup";
-import { openS4imsgDatabase } from "./storage/database";
+import { openProntoDatabase } from "./storage/database";
 import { MemoryStore } from "./storage/memory";
 import { brokerQuery, runMcpStdio } from "./tools/mcp";
-import { S4imsgDaemon } from "./core/daemon";
+import { ProntoDaemon } from "./core/daemon";
 import { qualifyRuntime } from "./runtimes/qualification";
 import { createRuntimeAdapter } from "./runtimes/factory";
 import { NdjsonRpcClient } from "./imessage/rpc-client";
@@ -36,9 +37,9 @@ import { ImsgTransport } from "./imessage/transport";
 import { DeliveryJournal } from "./storage/journal";
 import { LAUNCH_AGENT_LABEL } from "./macos/paths";
 
-const HELP = `s4imsg ${packageJson.version}
+const HELP = `pronto ${packageJson.version}
 
-Usage: s4imsg <command>
+Usage: pronto <command>
 
 Commands:
   setup       Configure and install the local listener
@@ -56,7 +57,7 @@ Options:
 
 async function runSetup(): Promise<number> {
   if (process.platform !== "darwin") {
-    console.error("s4imsg setup requires macOS.");
+    console.error("Pronto setup requires macOS.");
     return 1;
   }
 
@@ -72,7 +73,9 @@ async function runSetup(): Promise<number> {
   const prompt = createInterface({ input: stdin, output: stdout });
   try {
     const paths = pathsForHome(homedir());
-    const existing = await loadExistingSetupDefaults(paths.configPath);
+    const legacyPaths = legacyPathsForHome(homedir());
+    const existing = await loadExistingSetupDefaults(paths.configPath) ??
+      await loadExistingSetupDefaults(legacyPaths.configPath);
     const defaultTags = existing?.tags ?? ["@s4"];
     const tagAnswer = (await prompt.question(
       `Trigger tags, separated by commas [${defaultTags.join(", ")}]: `,
@@ -95,7 +98,7 @@ async function runSetup(): Promise<number> {
             .trim()
             .toLowerCase() === "y";
 
-    const defaultWorkspace = existing?.workingDirectory ?? join(homedir(), "s4imsg");
+    const defaultWorkspace = existing?.workingDirectory ?? join(homedir(), "pronto");
     let workspacePrompt = `Default working folder [${defaultWorkspace}]: `;
     let workspaceFallback = defaultWorkspace;
     let selection;
@@ -193,6 +196,7 @@ async function runSetup(): Promise<number> {
         return 1;
       }
     }
+    await migrateLegacyInstallation({ legacyPaths, paths });
     await installSetup({
       config,
       paths,
@@ -241,7 +245,7 @@ async function runDoctor(json = false): Promise<number> {
     } catch {
       report.checks.push({
         id: "imessage-read-watch",
-        remediation: "Grant Full Disk Access to the installed s4imsg executable and verify imsg RPC access.",
+        remediation: "Grant Full Disk Access to the installed pronto executable and verify imsg RPC access.",
         status: "failed",
       });
     } finally {
@@ -265,7 +269,7 @@ async function runDoctor(json = false): Promise<number> {
       "print",
       `gui/${process.getuid?.() ?? 0}/${LAUNCH_AGENT_LABEL}`,
     ]);
-    const database = openS4imsgDatabase(paths.databasePath);
+    const database = openProntoDatabase(paths.databasePath);
     let daemonHealth;
     try {
       daemonHealth = new DeliveryJournal(database).daemonHealth();
@@ -298,7 +302,7 @@ async function runStatus(json: boolean, includeChats: boolean): Promise<number> 
     `gui/${process.getuid?.() ?? 0}/${LAUNCH_AGENT_LABEL}`,
   ]);
   const listenerState = parseLaunchAgentState(listener);
-  const database = openS4imsgDatabase(paths.databasePath);
+  const database = openProntoDatabase(paths.databasePath);
   try {
     const journal = new DeliveryJournal(database);
     const daemonHealth = journal.daemonHealth();
@@ -333,7 +337,7 @@ async function runStatus(json: boolean, includeChats: boolean): Promise<number> 
 async function runDaemon(): Promise<number> {
   const paths = pathsForHome(homedir());
   const config = await loadConfig(paths.configPath);
-  const daemon = new S4imsgDaemon(config, paths);
+  const daemon = new ProntoDaemon(config, paths);
   const stop = () => daemon.stop();
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
@@ -361,10 +365,10 @@ async function runUninstall(args: readonly string[]): Promise<number> {
       return 2;
     }
     await uninstallInstallation({ paths, purge: true });
-    console.log("s4imsg and its private state were removed.");
+    console.log("Pronto and its private state were removed.");
   } else {
     await uninstallInstallation({ paths });
-    console.log("s4imsg was removed; configuration and conversation state were retained.");
+    console.log("Pronto was removed; configuration and conversation state were retained.");
   }
   return 0;
 }
@@ -376,14 +380,14 @@ async function runTags(args: readonly string[]): Promise<number> {
 
   if (action === "list") {
     if (value !== undefined) {
-      console.error("Usage: s4imsg tags [list|add <tag>|remove <tag>]");
+      console.error("Usage: pronto tags [list|add <tag>|remove <tag>]");
       return 2;
     }
     for (const tag of config.tags) console.log(tag);
     return 0;
   }
   if ((action !== "add" && action !== "remove") || value === undefined || extra !== undefined) {
-    console.error("Usage: s4imsg tags [list|add <tag>|remove <tag>]");
+    console.error("Usage: pronto tags [list|add <tag>|remove <tag>]");
     return 2;
   }
 
@@ -404,7 +408,7 @@ async function runTags(args: readonly string[]): Promise<number> {
   await saveConfig(paths.configPath, { ...config, tags });
   const restarted = await restartLaunchAgent();
   if (restarted.exitCode !== 0) {
-    console.error("Tags were saved, but the listener could not restart. Run s4imsg setup to repair it.");
+    console.error("Tags were saved, but the listener could not restart. Run pronto setup to repair it.");
     return 1;
   }
   console.log(`Configured tags: ${tags.join(", ")}`);
@@ -415,7 +419,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
   const [command] = args;
 
   if (command === "--version" || command === "-v") {
-    console.log(`s4imsg ${packageJson.version}`);
+    console.log(`pronto ${packageJson.version}`);
     return 0;
   }
 
@@ -426,8 +430,8 @@ export async function runCli(args: readonly string[]): Promise<number> {
 
   if (command === "setup") return runSetup();
   if (command === "mcp") {
-    const brokerUrl = process.env.S4IMSG_BROKER_URL;
-    const capability = process.env.S4IMSG_ATTEMPT_CAPABILITY;
+    const brokerUrl = process.env.PRONTO_BROKER_URL;
+    const capability = process.env.PRONTO_ATTEMPT_CAPABILITY;
     if (brokerUrl === undefined || capability === undefined) {
       console.error("The current-chat MCP server requires a turn-scoped capability.");
       return 1;
@@ -441,16 +445,16 @@ export async function runCli(args: readonly string[]): Promise<number> {
   if (command === "tags" || command === "tag") return runTags(args.slice(1));
   if (command === "stop") {
     const result = await stopLaunchAgent();
-    if (result.exitCode !== 0) console.error("s4imsg was not running.");
+    if (result.exitCode !== 0) console.error("Pronto was not running.");
     return result.exitCode === 0 ? 0 : 1;
   }
   if (command === "forget") {
     const chatKey = args[1];
     if (chatKey === undefined || !/^[A-Za-z0-9_-]{8,128}$/.test(chatKey)) {
-      console.error("Usage: s4imsg forget <chat-key>");
+      console.error("Usage: pronto forget <chat-key>");
       return 2;
     }
-    const database = openS4imsgDatabase(pathsForHome(homedir()).databasePath);
+    const database = openProntoDatabase(pathsForHome(homedir()).databasePath);
     try {
       new MemoryStore(database).forget(chatKey);
     } finally {
@@ -462,7 +466,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
   if (command === "uninstall") return runUninstall(args.slice(1));
 
   console.error(`Unknown command: ${command}`);
-  console.error("Run s4imsg --help for usage.");
+  console.error("Run pronto --help for usage.");
   return 2;
 }
 

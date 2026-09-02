@@ -26,8 +26,8 @@ jobs:
       - run: bun run typecheck
       - run: bun test
       - run: bun run build
-      - run: ./dist/s4imsg --version
-      - run: ./dist/s4imsg --help
+      - run: ./dist/pronto --version
+      - run: ./dist/pronto --help
       - run: bun run release:validate
       - name: Verify tag matches package version
         id: release-version
@@ -44,15 +44,15 @@ jobs:
       - name: Create and verify checksum
         working-directory: dist
         run: |
-          shasum -a 256 s4imsg > s4imsg.sha256
-          shasum -a 256 -c s4imsg.sha256
+          shasum -a 256 pronto > pronto.sha256
+          shasum -a 256 -c pronto.sha256
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: s4imsg-macos
+          name: pronto-macos
           retention-days: 1
           path: |
-            dist/s4imsg
-            dist/s4imsg.sha256
+            dist/pronto
+            dist/pronto.sha256
 
   publish:
     needs: build
@@ -78,19 +78,19 @@ jobs:
           fi
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: s4imsg-macos
+          name: pronto-macos
           path: release-assets
       - name: Verify downloaded checksum
         working-directory: release-assets
-        run: sha256sum -c s4imsg.sha256
+        run: sha256sum -c pronto.sha256
       - name: Create draft release
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag \
-            --prerelease="$IS_PRERELEASE" --title "s4imsg $GITHUB_REF_NAME"
+            --prerelease="$IS_PRERELEASE" --title "Pronto $GITHUB_REF_NAME"
       - name: Upload and verify draft assets
         run: |
           gh release upload "$GITHUB_REF_NAME" \
-            release-assets/s4imsg release-assets/s4imsg.sha256
+            release-assets/pronto release-assets/pronto.sha256
 
           RELEASE_ID="$(
             gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
@@ -99,7 +99,7 @@ jobs:
                 select(
                   .tag_name == $tag and
                   .draft == true and
-                  ([.assets[].name] | sort) == ["s4imsg", "s4imsg.sha256"]
+                  ([.assets[].name] | sort) == ["pronto", "pronto.sha256"]
                 ) |
                 .id
               '

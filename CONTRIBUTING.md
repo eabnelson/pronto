@@ -9,8 +9,8 @@ You need macOS, Bun 1.3.14 or newer, and the source-install requirements from
 the [README](README.md).
 
 ```sh
-git clone https://github.com/eabnelson/s4imsg.git
-cd s4imsg
+git clone https://github.com/eabnelson/pronto.git
+cd pronto
 bun install --frozen-lockfile
 bun run typecheck
 bun test

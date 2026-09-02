@@ -134,8 +134,25 @@ export async function removeLaunchAgent(
   runner: LaunchctlRunner = runLaunchctl,
   uid = process.getuid?.(),
 ): Promise<void> {
-  await stopLaunchAgent(runner, uid);
-  await unlink(plistPath).catch((error: NodeJS.ErrnoException) => {
+  await removeLaunchAgentForLabel({
+    label: LAUNCH_AGENT_LABEL,
+    plistPath,
+    runner,
+    ...(uid === undefined ? {} : { uid }),
+  });
+}
+
+export async function removeLaunchAgentForLabel(input: {
+  label: string;
+  plistPath: string;
+  runner?: LaunchctlRunner;
+  uid?: number;
+}): Promise<void> {
+  const runner = input.runner ?? runLaunchctl;
+  const uid = input.uid ?? process.getuid?.();
+  if (uid === undefined) throw new Error("Unable to determine the current user ID");
+  await runner(["bootout", `gui/${uid}/${input.label}`]);
+  await unlink(input.plistPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });
 }

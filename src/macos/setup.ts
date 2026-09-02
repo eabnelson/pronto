@@ -1,7 +1,7 @@
 import { access, chmod, copyFile, mkdir, readFile, realpath, rename, rm, stat, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import {
   atomicWritePrivate,
   createConfig,
@@ -10,16 +10,17 @@ import {
   normalizeTags,
   saveConfig,
   type RuntimeKind,
-  type S4imsgConfig,
+  type ProntoConfig,
   UNRESTRICTED_TRUST_VERSION,
 } from "../config";
 import {
   installLaunchAgent,
   removeLaunchAgent,
+  removeLaunchAgentForLabel,
   renderLaunchAgent,
   type ProcessResult,
 } from "./launch-agent";
-import type { S4imsgPaths } from "./paths";
+import { LEGACY_LAUNCH_AGENT_LABEL, type ProntoPaths } from "./paths";
 
 export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider. You are responsible for informing participants.`;
 
@@ -39,16 +40,16 @@ function shellQuote(value: string): string {
 }
 
 export function setupCompletionMessage(
-  paths: Pick<S4imsgPaths, "executablePath">,
+  paths: Pick<ProntoPaths, "executablePath">,
   tags: readonly string[],
 ): string {
   const executable = shellQuote(paths.executablePath);
-  return `s4imsg installed.
+  return `Pronto installed.
 
 Finish setup:
 1. In System Settings > Privacy & Security > Full Disk Access, add this exact file:
    ${paths.executablePath}
-   After an upgrade, remove and re-add a stale s4imsg entry if macOS no longer recognizes it.
+   After an upgrade, remove and re-add a stale pronto entry if macOS no longer recognizes it.
 2. Wait for the checks to finish:
    ${executable} doctor
 3. Confirm the background listener is ready:
@@ -93,6 +94,72 @@ export async function loadExistingSetupDefaults(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw new Error(`Unable to preserve existing setup defaults: ${(error as Error).message}`);
   }
+}
+
+export async function migrateLegacyInstallation(input: {
+  legacyPaths: ProntoPaths;
+  paths: ProntoPaths;
+  removeLegacyAgent?: (plistPath: string) => Promise<void>;
+}): Promise<"not_found" | "already_migrated" | "migrated"> {
+  const exists = async (path: string): Promise<boolean> => {
+    try {
+      await access(path);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+  };
+  const legacyConfigExists = await exists(input.legacyPaths.configPath);
+  const legacyAgentExists = await exists(input.legacyPaths.launchAgentPath);
+  const legacyArtifacts = [
+    ...(legacyConfigExists
+      ? [{ source: input.legacyPaths.configPath, target: input.paths.configPath }]
+      : []),
+    ...await Promise.all(
+      ["", "-wal", "-shm"].map(async (suffix) => {
+        const source = `${input.legacyPaths.databasePath}${suffix}`;
+        return await exists(source)
+          ? { source, target: `${input.paths.databasePath}${suffix}` }
+          : undefined;
+      }),
+    ).then((artifacts) => artifacts.filter((artifact) => artifact !== undefined)),
+  ];
+  if (legacyArtifacts.length === 0 && !legacyAgentExists) return "not_found";
+
+  if (legacyAgentExists) {
+    await (input.removeLegacyAgent ?? ((plistPath) => removeLaunchAgentForLabel({
+      label: LEGACY_LAUNCH_AGENT_LABEL,
+      plistPath,
+    })))(input.legacyPaths.launchAgentPath);
+  }
+
+  const backupDirectory = join(input.paths.appSupportDirectory, "migration-backup");
+  await ensurePrivateDirectory(input.paths.appSupportDirectory);
+  await ensurePrivateDirectory(backupDirectory);
+  let changed = legacyAgentExists;
+  for (const artifact of legacyArtifacts) {
+    const backup = join(backupDirectory, basename(artifact.source));
+    if (await exists(backup)) {
+      if (await sha256File(backup) !== await sha256File(artifact.source)) {
+        throw new Error("Legacy state changed after Pronto migration started");
+      }
+    } else {
+      await copyFile(artifact.source, backup);
+      await chmod(backup, 0o600);
+      changed = true;
+    }
+    if (await exists(artifact.target)) {
+      if (await sha256File(artifact.target) !== await sha256File(backup)) {
+        throw new Error("Pronto state conflicts with the legacy migration backup");
+      }
+    } else {
+      await copyFile(backup, artifact.target);
+      await chmod(artifact.target, 0o600);
+      changed = true;
+    }
+  }
+  return changed ? "migrated" : "already_migrated";
 }
 
 export async function resolveWorkspaceSelection(
@@ -151,7 +218,7 @@ export function prepareSetupConfig(input: {
   primaryRuntime: RuntimeKind;
   tags: readonly string[];
   workingDirectory: string;
-}): S4imsgConfig {
+}): ProntoConfig {
   const primaryRuntimePath = input.discovery.runtimes[input.primaryRuntime];
   if (primaryRuntimePath === undefined) {
     const label = input.primaryRuntime === "codex" ? "Codex" : "Claude Code";
@@ -214,7 +281,7 @@ export async function sha256File(path: string): Promise<string> {
 export interface SetupDependencies {
   buildExecutable: (outputPath: string) => Promise<void>;
   installAgent: (input: { plist: string; plistPath: string }) => Promise<void>;
-  saveConfiguration?: (path: string, config: S4imsgConfig) => Promise<void>;
+  saveConfiguration?: (path: string, config: ProntoConfig) => Promise<void>;
 }
 
 export function sourceBuild(repositoryRoot: string): (outputPath: string) => Promise<void> {
@@ -227,7 +294,7 @@ export function sourceBuild(repositoryRoot: string): (outputPath: string) => Pro
       outputPath,
     ]);
     if (result.exitCode !== 0) {
-      throw new Error(`Unable to compile s4imsg: ${result.stderr.trim() || result.exitCode}`);
+      throw new Error(`Unable to compile pronto: ${result.stderr.trim() || result.exitCode}`);
     }
   };
 }
@@ -237,11 +304,11 @@ export function executableBuild(executablePath: string): (outputPath: string) =>
 }
 
 export async function installSetup(input: {
-  config: S4imsgConfig;
+  config: ProntoConfig;
   dependencies?: SetupDependencies;
-  paths: S4imsgPaths;
+  paths: ProntoPaths;
   repositoryRoot?: string;
-}): Promise<S4imsgConfig> {
+}): Promise<ProntoConfig> {
   const dependencies: SetupDependencies =
     input.dependencies ??
     ({
@@ -254,7 +321,7 @@ export async function installSetup(input: {
   const binDirectory = join(input.paths.appSupportDirectory, "bin");
   await ensurePrivateDirectory(binDirectory);
   await ensurePrivateDirectory(input.paths.logDirectory);
-  const temporaryExecutable = join(binDirectory, `.s4imsg-${randomUUID()}.tmp`);
+  const temporaryExecutable = join(binDirectory, `.pronto-${randomUUID()}.tmp`);
 
   try {
     await dependencies.buildExecutable(temporaryExecutable);
@@ -296,7 +363,7 @@ export async function installSetup(input: {
 }
 
 export async function uninstallInstallation(input: {
-  paths: S4imsgPaths;
+  paths: ProntoPaths;
   purge?: boolean;
   removeAgent?: (plistPath: string) => Promise<void>;
 }): Promise<void> {
@@ -320,11 +387,11 @@ async function executableCheck(path: string): Promise<boolean> {
 }
 
 export async function inspectInstallation(
-  paths: S4imsgPaths,
+  paths: ProntoPaths,
   runner: CommandRunner = runCommand,
 ): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
-  let config: S4imsgConfig;
+  let config: ProntoConfig;
   try {
     config = await loadConfig(paths.configPath);
     checks.push({ id: "configuration", status: "ok" });
@@ -333,7 +400,7 @@ export async function inspectInstallation(
       checks: [
         {
           id: "configuration",
-          remediation: "Run s4imsg setup to create a valid private configuration.",
+          remediation: "Run pronto setup to create a valid private configuration.",
           status: "failed",
         },
       ],
@@ -351,7 +418,7 @@ export async function inspectInstallation(
       ? { id: "executable-integrity", status: "ok" }
       : {
           id: "executable-integrity",
-          remediation: "Re-run s4imsg setup to reinstall the stable executable and recheck macOS privacy grants.",
+          remediation: "Re-run pronto setup to reinstall the stable executable and recheck macOS privacy grants.",
           status: "failed",
         },
   );

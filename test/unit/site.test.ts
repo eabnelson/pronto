@@ -325,7 +325,7 @@ describe("public landing page", () => {
     expect(source).toContain("@plan");
     expect(source).toContain("#0a84ff");
     expect(source).toContain("#e5e5ea");
-    expect(source).not.toContain(">s4imsg<");
+    expect(source).not.toContain(">pronto<");
     expect(createHash("sha256").update(sourceBytes).digest("hex")).toBe(
       "7d3642d252cbf645f065dc39ef896d3329086548056fe7f2009b31fc4b05945b",
     );
@@ -500,7 +500,7 @@ describe("public landing page", () => {
   test("provides a complete agent-readable setup handoff", async () => {
     const setup = await read("setup.md");
 
-    expect(setup).toContain("https://github.com/eabnelson/s4imsg.git");
+    expect(setup).toContain("https://github.com/eabnelson/pronto.git");
     expect(setup).toContain("bun run src/cli.ts setup");
     expect(setup).toContain("Full Disk Access");
     expect(setup).toContain("doctor");
@@ -523,12 +523,12 @@ describe("public landing page", () => {
   test("guards an existing checkout before running repository code", async () => {
     const setup = await read("setup.md");
     const cloneWithChosenPath = setup.indexOf(
-      "git clone https://github.com/eabnelson/s4imsg.git \"$CHECKOUT\"",
+      "git clone https://github.com/eabnelson/pronto.git \"$CHECKOUT\"",
     );
     const checkoutUse = setup.indexOf('cd "$CHECKOUT"');
     const originCheck = setup.indexOf("git remote get-url origin");
     const exactOrigins = setup.indexOf(
-      "https://github.com/eabnelson/s4imsg.git|git@github.com:eabnelson/s4imsg.git)",
+      "https://github.com/eabnelson/pronto.git|git@github.com:eabnelson/pronto.git)",
     );
     const cleanCheck = setup.indexOf("git status --porcelain");
     const fastForward = setup.indexOf("git pull --ff-only");
@@ -548,7 +548,7 @@ describe("public landing page", () => {
     const finalStep = setup.slice(setup.indexOf("7. "));
 
     expect(finalStep).toContain(
-      'S4IMSG="$HOME/Library/Application Support/s4imsg/bin/s4imsg"\n   "$S4IMSG" status',
+      'PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"\n   "$PRONTO" status',
     );
   });
 });

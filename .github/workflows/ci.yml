@@ -19,6 +19,6 @@ jobs:
       - run: bun run typecheck
       - run: bun test
       - run: bun run build
-      - run: ./dist/s4imsg --version
-      - run: ./dist/s4imsg --help
+      - run: ./dist/pronto --version
+      - run: ./dist/pronto --help
       - run: bun run release:validate

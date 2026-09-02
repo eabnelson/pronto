@@ -8,7 +8,7 @@ export const TAG_PATTERN = /^@[A-Za-z0-9_-]{1,32}$/;
 
 export type RuntimeKind = "codex" | "claude";
 
-export interface S4imsgConfig {
+export interface ProntoConfig {
   version: typeof CONFIG_VERSION;
   chatKeySalt: string;
   tags: string[];
@@ -23,7 +23,7 @@ export interface S4imsgConfig {
 }
 
 export type ConfigInput = Omit<
-  S4imsgConfig,
+  ProntoConfig,
   "chatKeySalt" | "tags" | "version"
 > & {
   chatKeySalt?: string;
@@ -60,9 +60,9 @@ export function removeTag(tags: readonly string[], value: string): string[] {
   return tags.filter((candidate) => candidate !== tag);
 }
 
-export function createConfig(input: ConfigInput): S4imsgConfig {
+export function createConfig(input: ConfigInput): ProntoConfig {
   if (input.unrestrictedTrustVersion !== UNRESTRICTED_TRUST_VERSION) {
-    throw new Error("Unrestricted access consent is missing; run s4imsg setup");
+    throw new Error("Unrestricted access consent is missing; run pronto setup");
   }
   if (input.fallbackRuntime === input.primaryRuntime) {
     throw new Error("Fallback runtime must differ from the primary runtime");
@@ -126,7 +126,7 @@ export async function atomicWritePrivate(path: string, contents: string): Promis
   }
 }
 
-export async function saveConfig(path: string, config: S4imsgConfig): Promise<void> {
+export async function saveConfig(path: string, config: ProntoConfig): Promise<void> {
   await atomicWritePrivate(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
@@ -134,7 +134,7 @@ function isRuntime(value: unknown): value is RuntimeKind {
   return value === "codex" || value === "claude";
 }
 
-export async function loadConfig(path: string): Promise<S4imsgConfig> {
+export async function loadConfig(path: string): Promise<ProntoConfig> {
   const raw: unknown = JSON.parse(await readFile(path, "utf8"));
   if (raw === null || typeof raw !== "object") throw new Error("Invalid configuration");
   const value = raw as Record<string, unknown>;
@@ -156,7 +156,7 @@ export async function loadConfig(path: string): Promise<S4imsgConfig> {
   if (tags === null) throw new Error("Invalid configuration tags");
   if (typeof value.workingDirectory !== "string") throw new Error("Invalid working directory");
   if (value.unrestrictedTrustVersion !== UNRESTRICTED_TRUST_VERSION) {
-    throw new Error("Unrestricted access consent is missing; run s4imsg setup");
+    throw new Error("Unrestricted access consent is missing; run pronto setup");
   }
   if (typeof value.chatKeySalt !== "string" || value.chatKeySalt.length < 32) {
     throw new Error("Invalid chat-key salt");

@@ -11,6 +11,11 @@ execution: code
 
 # Unattended Per-Chat Workspaces - Plan
 
+> Historical implementation plan. The `s4imsg` product name is superseded by
+> [ADR 0002](../adr/0002-rename-before-the-first-public-release.md); its
+> workspace and unattended-runtime behavior remains part of Pronto unless a
+> later specification changes it.
+
 ## Goal Capsule
 
 - **Objective:** Make setup establish a useful default working folder while allowing every iMessage chat to remember and change its own folder without interrupting agent turns for permission approval.

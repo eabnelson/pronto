@@ -13,7 +13,7 @@ afterEach(async () => {
   );
 });
 
-describe("s4imsg CLI", () => {
+describe("Pronto CLI", () => {
   test("reports the package version from source", async () => {
     const process = Bun.spawn(["bun", "src/cli.ts", "--version"], {
       cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
@@ -27,11 +27,29 @@ describe("s4imsg CLI", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    expect(stdout.trim()).toBe("s4imsg 0.1.0");
+    expect(stdout.trim()).toBe("pronto 0.1.0");
+  });
+
+  test("the legacy command explains the rename and delegates safe commands", async () => {
+    const process = Bun.spawn(["bun", "src/legacy-cli.ts", "--version"], {
+      cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [exitCode, stderr, stdout] = await Promise.all([
+      process.exited,
+      new Response(process.stderr).text(),
+      new Response(process.stdout).text(),
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr.trim()).toBe("s4imsg is now Pronto; use the pronto command.");
+    expect(stdout.trim()).toBe("pronto 0.1.0");
   });
 
   test("lists every configured tag from the installed command surface", async () => {
-    const home = await mkdtemp(join(tmpdir(), "s4imsg-cli-"));
+    const home = await mkdtemp(join(tmpdir(), "pronto-cli-"));
     temporaryDirectories.push(home);
     await saveConfig(
       pathsForHome(home).configPath,

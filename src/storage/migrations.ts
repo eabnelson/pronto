@@ -88,7 +88,7 @@ ALTER TABLE delivery_events ADD COLUMN activation_tag TEXT;
 export function migrateDatabase(database: Database): void {
   const row = database.query("PRAGMA user_version").get() as { user_version: number };
   if (row.user_version > CURRENT_SCHEMA_VERSION) {
-    throw new Error(`Database version ${row.user_version} is newer than this s4imsg build`);
+    throw new Error(`Database version ${row.user_version} is newer than this pronto build`);
   }
   if (row.user_version === CURRENT_SCHEMA_VERSION) return;
 

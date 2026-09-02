@@ -29,12 +29,12 @@ const workflowPaths = [
   ".github/workflows/release.yml",
 ];
 
-if (packageJson.name !== "s4imsg") failures.push("package name must be s4imsg");
+if (packageJson.name !== "pronto") failures.push("package name must be pronto");
 if (packageJson.license !== "MIT") failures.push("package license must be MIT");
-if (packageJson.homepage !== "https://github.com/eabnelson/s4imsg#readme") {
+if (packageJson.homepage !== "https://github.com/eabnelson/pronto#readme") {
   failures.push("package homepage must point to the public repository");
 }
-if (packageJson.repository?.url !== "git+https://github.com/eabnelson/s4imsg.git") {
+if (packageJson.repository?.url !== "git+https://github.com/eabnelson/pronto.git") {
   failures.push("package repository metadata is missing");
 }
 if ("private" in packageJson && packageJson.private === true) {

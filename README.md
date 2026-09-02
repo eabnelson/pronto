@@ -1,9 +1,9 @@
-# s4imsg
+# Pronto
 
-[![CI](https://github.com/eabnelson/s4imsg/actions/workflows/ci.yml/badge.svg)](https://github.com/eabnelson/s4imsg/actions/workflows/ci.yml)
+[![CI](https://github.com/eabnelson/pronto/actions/workflows/ci.yml/badge.svg)](https://github.com/eabnelson/pronto/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`s4imsg` is a small, local macOS bridge between iMessage and the Codex or Claude
+`pronto` is a small, local macOS bridge between iMessage and the Codex or Claude
 Code CLI. Create as many tags as you want, such as `@helper`, `@plan`, or
 `@research`. When anyone uses one in an iMessage chat you have already
 participated in, the bridge gives one bounded, one-shot turn to your chosen
@@ -18,11 +18,11 @@ create project folders per chat, select a model, or keep provider sessions alive
 ## Before installing
 
 Tags are not authentication. Every current or future participant in an eligible chat can invoke
-your agent. `s4imsg` deliberately starts Claude Code and Codex with their approval
+your agent. `pronto` deliberately starts Claude Code and Codex with their approval
 and sandbox checks bypassed, so the agent can read or modify files, run commands,
 use configured tools anywhere your macOS user can access, and send conversation
 material to its model provider. Untagged chat history and attachment content are
-untrusted evidence, but can still influence the model. Only use `s4imsg` in chats
+untrusted evidence, but can still influence the model. Only use `pronto` in chats
 whose participants you trust, and tell them that tagged and nearby conversation
 material may be processed by your model provider.
 
@@ -44,8 +44,8 @@ Install Bun and `imsg` if you do not already have them, then clone and run setup
 
 ```sh
 brew install oven-sh/bun/bun steipete/tap/imsg
-git clone https://github.com/eabnelson/s4imsg.git
-cd s4imsg
+git clone https://github.com/eabnelson/pronto.git
+cd pronto
 bun install --frozen-lockfile
 bun run setup
 ```
@@ -55,7 +55,7 @@ setup`. Setup automatically detects both CLIs, lets you choose the primary and
 optional fallback, and validates that every selected runtime can complete an
 unattended tool call before installing anything.
 
-The ordinary `imsg` read, watch, and text-send path is sufficient. `s4imsg` does
+The ordinary `imsg` read, watch, and text-send path is sufficient. `pronto` does
 not require disabling System Integrity Protection or enabling `imsg`'s private
 IMCore bridge.
 
@@ -66,13 +66,13 @@ Setup asks for:
    or hyphens.
 2. A primary runtime when both Codex and Claude Code are installed.
 3. Whether to use the other runtime as a fallback.
-4. A default working folder (`~/s4imsg` by default). Existing folders are never
+4. A default working folder (`~/pronto` by default). Existing folders are never
    cleared or chmodded and must be confirmed before reuse.
 5. Explicit typed acceptance of the unrestricted trust model above.
 
 Setup then performs one temporary noninteractive file-tool probe per selected
 runtime. This uses the runtime's existing account, default model, user
-configuration, hooks, and tools. `s4imsg` supplies
+configuration, hooks, and tools. `pronto` supplies
 `--dangerously-skip-permissions` to Claude Code and
 `--dangerously-bypass-approvals-and-sandbox` to Codex so an unattended turn can
 never stall at an approval prompt.
@@ -84,15 +84,15 @@ project without a path, the agent can offer numbered directory choices; reply wi
 a number in the next tagged message to confirm one.
 
 After qualification, setup compiles a stable executable under
-`~/Library/Application Support/s4imsg/`, writes an owner-only configuration, and
-installs the `dev.s4imsg.agent` user LaunchAgent. It finishes by printing the
+`~/Library/Application Support/pronto/`, writes an owner-only configuration, and
+installs the `dev.pronto.agent` user LaunchAgent. It finishes by printing the
 exact permission, `doctor`, and `status` steps for that Mac.
 
 ## macOS permissions
 
 In System Settings → Privacy & Security:
 
-- Grant Full Disk Access to the installed `s4imsg` executable so its supervised
+- Grant Full Disk Access to the installed `pronto` executable so its supervised
   `imsg rpc` child can read `~/Library/Messages/chat.db`.
 - Allow Messages automation when macOS prompts during the first outbound smoke
   test. The approval belongs to the installed executable's process context.
@@ -102,9 +102,9 @@ In System Settings → Privacy & Security:
 After installation, run:
 
 ```sh
-S4IMSG="$HOME/Library/Application Support/s4imsg/bin/s4imsg"
-"$S4IMSG" doctor
-"$S4IMSG" status
+PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"
+"$PRONTO" doctor
+"$PRONTO" status
 ```
 
 Wait for `doctor` to finish; its runtime probes can take around a minute. A
@@ -129,7 +129,7 @@ copied into bridge storage; a verified local attachment path may be returned so
 the agent can inspect it with its normal file tools.
 
 Messages sent to your own iMessage address appear in the local database as both
-an outgoing message and an inbound mirror. `s4imsg` automatically correlates the
+an outgoing message and an inbound mirror. `pronto` automatically correlates the
 inbound mirror with its immediately preceding outgoing message and accepts only
 the outgoing copy. This requires no identity setting and stores no iMessage
 address. Ordinary one-to-one and group chats still accept tags from every
@@ -138,34 +138,34 @@ participant.
 Each turn automatically includes at most 30 recent messages, 8 confirmed tagged
 exchanges, and one compact summary, all under fixed character budgets. Provider
 sessions are never resumed. Ordinary chat messages, participant rosters,
-attachment metadata, and tool results are not archived by `s4imsg`.
+attachment metadata, and tool results are not archived by `pronto`.
 
 ## Operations
 
 ```sh
-S4IMSG="$HOME/Library/Application Support/s4imsg/bin/s4imsg"
-"$S4IMSG" status
-"$S4IMSG" status --chats
-"$S4IMSG" doctor
-"$S4IMSG" tags
-"$S4IMSG" tags add @plan
-"$S4IMSG" tags remove @plan
-"$S4IMSG" stop
-"$S4IMSG" forget <opaque-chat-key>
-"$S4IMSG" uninstall
-"$S4IMSG" uninstall --purge --confirm-purge
+PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"
+"$PRONTO" status
+"$PRONTO" status --chats
+"$PRONTO" doctor
+"$PRONTO" tags
+"$PRONTO" tags add @plan
+"$PRONTO" tags remove @plan
+"$PRONTO" stop
+"$PRONTO" forget <opaque-chat-key>
+"$PRONTO" uninstall
+"$PRONTO" uninstall --purge --confirm-purge
 ```
 
 Tag changes are normalized, deduplicated, saved atomically, and applied by
 restarting the background listener. At least one tag must remain configured. If
-one message contains two different configured tags, `s4imsg` ignores it rather
+one message contains two different configured tags, `pronto` ignores it rather
 than choosing an activation ambiguously.
 
 `status` reports only operational counts, including silently rate-limited events,
 and opaque chat keys. `forget` removes
 tagged memory for one opaque key. Normal uninstall removes the service and
 executable but retains private configuration and conversation state; the explicit
-purge form removes all `s4imsg` state.
+purge form removes all `pronto` state.
 
 The first release processes one turn at a time, admits at most 32 active events
 globally and 4 per chat, limits each runtime attempt to 10 minutes, and allows at
@@ -192,20 +192,20 @@ bounded memory. macOS may treat the replacement as a new privacy identity; run
 ### `daemon failed` immediately after setup
 
 macOS can retain the permission record for a previous build while denying the
-new executable. In Full Disk Access, remove the existing `s4imsg` entry, add the
+new executable. In Full Disk Access, remove the existing `pronto` entry, add the
 exact installed executable again, and enable it. Press Command-Shift-G in the
 file picker and paste:
 
 ```text
-~/Library/Application Support/s4imsg/bin/s4imsg
+~/Library/Application Support/pronto/bin/pronto
 ```
 
 Then restart and check the service:
 
 ```sh
-/bin/launchctl kickstart -k "gui/$(id -u)/dev.s4imsg.agent"
+/bin/launchctl kickstart -k "gui/$(id -u)/dev.pronto.agent"
 sleep 3
-"$HOME/Library/Application Support/s4imsg/bin/s4imsg" status
+"$HOME/Library/Application Support/pronto/bin/pronto" status
 ```
 
 ### No reply arrives
@@ -215,7 +215,7 @@ sleep 3
 - Run `doctor` and resolve every failed check; degraded
   `messages-send-automation` is expected until the first real send.
 - Open Messages once and approve its Automation prompt if macOS presents one.
-- Check `~/Library/Logs/s4imsg/daemon.log`; logs contain operational states, not
+- Check `~/Library/Logs/pronto/daemon.log`; logs contain operational states, not
   conversation content.
 
 ### A self-chat appears duplicated
