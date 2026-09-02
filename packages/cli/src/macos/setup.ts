@@ -343,10 +343,10 @@ export async function prepareLegacyInstallation(input: {
         if (settled) return;
         await restoreTargets();
         await restoreLegacyFiles();
+        await rm(backupDirectory, { force: true, recursive: true });
         if (state.restoreLegacyOnRollback) {
           await dependencies.restoreLegacyAgent(input.legacyPaths.launchAgentPath);
         }
-        await rm(statePath, { force: true });
         settled = true;
       },
     };
@@ -355,10 +355,10 @@ export async function prepareLegacyInstallation(input: {
     try {
       await restoreTargets();
       await restoreLegacyFiles();
+      await rm(backupDirectory, { force: true, recursive: true });
       if (state.restoreLegacyOnRollback) {
         await dependencies.restoreLegacyAgent(input.legacyPaths.launchAgentPath);
       }
-      await rm(statePath, { force: true });
     } catch (rollbackError) {
       throw new AggregateError(
         [error, rollbackError],

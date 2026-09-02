@@ -459,6 +459,33 @@ test("migration rollback restarts the retained legacy listener after a later cut
   expect(retry.status).toBe("migrated");
 });
 
+test("migration retry snapshots fresh legacy state after rollback restarts the listener", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pronto-migration-live-retry-"));
+  temporaryDirectories.push(home);
+  const legacyPaths = legacyPathsForHome(home);
+  const paths = pathsForHome(home);
+  await mkdir(legacyPaths.appSupportDirectory, { recursive: true });
+  await mkdir(join(home, "Library", "LaunchAgents"), { recursive: true });
+  await writeFile(legacyPaths.configPath, "legacy-configuration", { mode: 0o600 });
+  await writeFile(legacyPaths.databasePath, "legacy-database-before-rollback", { mode: 0o600 });
+  await writeFile(legacyPaths.launchAgentPath, "legacy-plist", { mode: 0o600 });
+
+  const dependencies = {
+    inspectLegacyAgent: async () => "running" as const,
+    stopLegacyAgent: async () => undefined,
+    restoreLegacyAgent: async () => undefined,
+    removeLegacyAgent: async () => undefined,
+  };
+  const migration = await prepareLegacyInstallation({ legacyPaths, paths, dependencies });
+  await migration.rollback();
+
+  await writeFile(legacyPaths.databasePath, "legacy-database-after-restart", { mode: 0o600 });
+  const retry = await prepareLegacyInstallation({ legacyPaths, paths, dependencies });
+
+  expect(retry.status).toBe("migrated");
+  expect(await readFile(paths.databasePath, "utf8")).toBe("legacy-database-after-restart");
+});
+
 test("migration resumes finalization after the legacy shim write is interrupted", async () => {
   const home = await mkdtemp(join(tmpdir(), "pronto-finalize-shim-"));
   temporaryDirectories.push(home);
