@@ -374,10 +374,14 @@ export type InstalledExecutableRunner = (
   args: readonly string[],
 ) => Promise<ProcessResult>;
 
+const INSTALLED_STATUS_POLL_INTERVAL_MS = 250;
+const INSTALLED_STATUS_POLL_ATTEMPTS = 40;
+
 export async function qualifyInstalledExecutable(
   executablePath: string,
   runner: InstalledExecutableRunner = runCommand,
   suspendListener: () => Promise<() => Promise<void>> = async () => async () => undefined,
+  wait: (milliseconds: number) => Promise<void> = Bun.sleep,
 ): Promise<void> {
   const restoreListener = await suspendListener();
   let result: ProcessResult;
@@ -391,12 +395,17 @@ export async function qualifyInstalledExecutable(
       `Installed Pronto qualification failed: ${result.stderr.trim() || result.stdout.trim() || result.exitCode}`,
     );
   }
-  const status = await runner(executablePath, ["status"]);
-  if (status.exitCode !== 0) {
-    throw new Error(
-      `Restored Pronto listener qualification failed: ${status.stderr.trim() || status.stdout.trim() || status.exitCode}`,
-    );
+  let status: ProcessResult | undefined;
+  for (let attempt = 0; attempt < INSTALLED_STATUS_POLL_ATTEMPTS; attempt += 1) {
+    status = await runner(executablePath, ["status"]);
+    if (status.exitCode === 0) return;
+    if (attempt < INSTALLED_STATUS_POLL_ATTEMPTS - 1) {
+      await wait(INSTALLED_STATUS_POLL_INTERVAL_MS);
+    }
   }
+  throw new Error(
+    `Restored Pronto listener qualification failed: ${status?.stderr.trim() || status?.stdout.trim() || status?.exitCode || "unknown status"}`,
+  );
 }
 
 export async function completeSetupCutover(input: {

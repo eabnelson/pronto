@@ -680,6 +680,50 @@ test("installed qualification suspends the daemon while doctor owns the Messages
   ]);
 });
 
+test("installed qualification waits for the restored daemon to become ready", async () => {
+  let statusAttempts = 0;
+
+  await qualifyInstalledExecutable(
+    "/Users/example/Library/Application Support/pronto/bin/pronto",
+    async (_executable, args) => {
+      if (args[0] === "doctor") {
+        return { exitCode: 0, stderr: "", stdout: "ok" };
+      }
+      statusAttempts += 1;
+      return statusAttempts === 1
+        ? { exitCode: 1, stderr: "daemon failed", stdout: "" }
+        : { exitCode: 0, stderr: "", stdout: "daemon ready" };
+    },
+    async () => async () => undefined,
+    async () => undefined,
+  );
+
+  expect(statusAttempts).toBe(2);
+});
+
+test("installed qualification fails closed when the restored daemon never becomes ready", async () => {
+  let statusAttempts = 0;
+  let waits = 0;
+
+  await expect(qualifyInstalledExecutable(
+    "/Users/example/Library/Application Support/pronto/bin/pronto",
+    async (_executable, args) => {
+      if (args[0] === "doctor") {
+        return { exitCode: 0, stderr: "", stdout: "ok" };
+      }
+      statusAttempts += 1;
+      return { exitCode: 1, stderr: "daemon failed", stdout: "" };
+    },
+    async () => async () => undefined,
+    async () => {
+      waits += 1;
+    },
+  )).rejects.toThrow("Restored Pronto listener qualification failed: daemon failed");
+
+  expect(statusAttempts).toBe(40);
+  expect(waits).toBe(39);
+});
+
 test("installed qualification restores the suspended daemon after offline doctor fails", async () => {
   const lifecycle: string[] = [];
 
