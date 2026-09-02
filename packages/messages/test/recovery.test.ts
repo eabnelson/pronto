@@ -106,6 +106,83 @@ test("reports bounded age recovery and resumes with live events only", async () 
   await messages.close();
 });
 
+test("adopts a verified checkpoint from a compatible legacy generation", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const statePath = join(directory, "provider-state.json");
+  await writeFile(databasePath, "database evidence");
+  const metadata = await import("node:fs/promises").then(({ stat }) => stat(databasePath));
+  const resolved = await import("node:fs/promises").then(({ realpath }) => realpath(databasePath));
+  const legacyGeneration = createHash("sha256").update(JSON.stringify({
+    path: resolved,
+    device: String(metadata.dev),
+    inode: String(metadata.ino),
+    birthtime: metadata.birthtimeMs,
+  })).digest("base64url");
+  const executable = await executableWithSource(directory, rpcLoop(`
+    let result;
+    if (request.method === "initialize") result = {
+      protocol_version: 1,
+      version: "0.14.1",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+    };
+    else if (request.method === "messages.after" && request.params.since_rowid === 39) result = {
+      has_more: false,
+      messages: [{ guid: "checkpoint-guid", id: 40 }],
+      next_rowid: 40,
+    };
+    else result = { ok: true };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+  `));
+  const messages = createProntoMessages({ imsgPath: executable, statePath });
+
+  await expect(messages.adoptCheckpoint!({
+    databaseGeneration: legacyGeneration,
+    providerMessageId: "checkpoint-guid",
+    rowId: 40,
+    version: 1,
+  })).resolves.toEqual({ status: "adopted" });
+  await expect(messages.adoptCheckpoint!({
+    databaseGeneration: legacyGeneration,
+    providerMessageId: "newer-guid",
+    rowId: 41,
+    version: 1,
+  })).resolves.toEqual({ status: "preserved" });
+  expect(await new ProviderStateStore(statePath).checkpoint(
+    await databaseGeneration(databasePath),
+  )).toMatchObject({ rowId: 40 });
+  await messages.close();
+
+  const rejectedStatePath = join(directory, "rejected-provider-state.json");
+  const rejected = createProntoMessages({ imsgPath: executable, statePath: rejectedStatePath });
+  await expect(rejected.adoptCheckpoint!({
+    databaseGeneration: "different-database-generation",
+    providerMessageId: "checkpoint-guid",
+    rowId: 40,
+    version: 1,
+  })).resolves.toEqual({
+    reason: "database-generation-mismatch",
+    status: "rejected",
+  });
+  expect(await new ProviderStateStore(rejectedStatePath).currentCheckpoint()).toBeUndefined();
+  await rejected.close();
+
+  const rebuiltStatePath = join(directory, "rebuilt-provider-state.json");
+  const rebuilt = createProntoMessages({ imsgPath: executable, statePath: rebuiltStatePath });
+  await expect(rebuilt.adoptCheckpoint!({
+    databaseGeneration: legacyGeneration,
+    providerMessageId: "guid-before-in-place-rebuild",
+    rowId: 40,
+    version: 1,
+  })).resolves.toEqual({
+    reason: "checkpoint-witness-unavailable",
+    status: "rejected",
+  });
+  expect(await new ProviderStateStore(rebuiltStatePath).currentCheckpoint()).toBeUndefined();
+  await rebuilt.close();
+});
+
 test("enforces row-count and wall-clock recovery bounds", async () => {
   const runBoundedRecovery = async (input: {
     readonly delayMs: number;

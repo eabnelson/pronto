@@ -20,3 +20,10 @@ consumer-staged outbound file. It was independently implemented in this public
 repository and verified with synthetic public transcript and fault fixtures.
 No private consumer imports, source history, fixtures, identifiers, or domain
 models were used.
+
+The versioned checkpoint-adoption seam added for `pronto-imessage` 0.2.1 was
+cleanly derived from the predecessor consumer's generation-bound cursor format.
+Only the generic database identity canonicalization was retained. Adoption
+requires the caller's pre-cutover provider-message witness and is covered by
+public replacement/rebuild rejection tests; no consumer code or private history
+was copied.

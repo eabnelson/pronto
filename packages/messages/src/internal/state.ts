@@ -33,6 +33,11 @@ export interface CheckpointStore {
   ): Promise<void>;
   checkpoint(databaseGeneration: string): Promise<ProviderCheckpoint | undefined>;
   currentCheckpoint(): Promise<ProviderCheckpoint | undefined>;
+  initialize(
+    databaseGeneration: string,
+    rowId: number,
+    witness?: ProviderCheckpointWitness,
+  ): Promise<boolean>;
 }
 
 interface ProviderStateV2 {
@@ -125,6 +130,25 @@ export class ProviderStateStore implements CheckpointStore {
     });
   }
 
+  initialize(
+    databaseGeneration: string,
+    rowId: number,
+    witness?: ProviderCheckpointWitness,
+  ): Promise<boolean> {
+    return this.#serialized(async () => {
+      const state = await this.#load();
+      if (state.checkpoint !== null) return false;
+      await this.#save({
+        checkpoint: nextCheckpoint(undefined, databaseGeneration, rowId, witness),
+        ...(state.legacyUnscopedCursor === undefined
+          ? {}
+          : { legacyUnscopedCursor: state.legacyUnscopedCursor }),
+        version: 2,
+      });
+      return true;
+    });
+  }
+
   async #load(): Promise<ProviderStateV2> {
     await mkdir(dirname(this.#path), { mode: 0o700, recursive: true });
     let source: string;
@@ -213,6 +237,16 @@ export class MemoryCheckpointStore implements CheckpointStore {
 
   async currentCheckpoint(): Promise<ProviderCheckpoint | undefined> {
     return this.#checkpoint;
+  }
+
+  async initialize(
+    databaseGeneration: string,
+    rowId: number,
+    witness?: ProviderCheckpointWitness,
+  ): Promise<boolean> {
+    if (this.#checkpoint !== undefined) return false;
+    this.#checkpoint = nextCheckpoint(undefined, databaseGeneration, rowId, witness);
+    return true;
   }
 
   async advance(

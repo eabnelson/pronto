@@ -73,6 +73,26 @@ test("advances only within one proven generation and never reuses a replaced gen
   expect(await store.checkpoint("generation-one")).toBeUndefined();
 });
 
+test("initializes a generation-bound checkpoint exactly once", async () => {
+  const path = await statePath();
+  const store = new ProviderStateStore(path);
+
+  expect(await store.initialize("generation-one", 40, {
+    providerMessageDigest: "digest-40",
+    rowId: 40,
+  })).toBe(true);
+  expect(await store.initialize("generation-one", 41, {
+    providerMessageDigest: "digest-41",
+    rowId: 41,
+  })).toBe(false);
+  expect(await store.currentCheckpoint()).toEqual({
+    databaseGeneration: "generation-one",
+    rowId: 40,
+    version: 1,
+    witnesses: [{ providerMessageDigest: "digest-40", rowId: 40 }],
+  });
+});
+
 test("retains a bounded set of recent checkpoint witnesses", async () => {
   const path = await statePath();
   const store = new ProviderStateStore(path);
