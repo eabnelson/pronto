@@ -54,7 +54,7 @@ export function setupCompletionMessage(
 Next steps:
 1. Confirm the background listener is ready:
    ${executable} status
-2. Send ${tags[0]} ping in an iMessage chat where this Mac owner has already sent a message.
+2. Send ${tags[0]} ping in an iMessage or RCS chat where this Mac owner has already sent a message.
 
 Configured tags: ${tags.join(", ")}
 Add or remove tags later with ${executable} tags add <tag> and ${executable} tags remove <tag>.`;

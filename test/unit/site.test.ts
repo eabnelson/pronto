@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 const repoRoot = new URL("../../", import.meta.url);
 const siteRoot = new URL("site/", repoRoot);
 const setupPrompt =
-  "Help me set up iMessage Tags on this Mac. Follow https://studiofour.io/imessage-setup.md and stay with me until one tagged iMessage gets exactly one agent reply.";
+  "Help me set up iMessage Tags on this Mac. Follow https://studiofour.io/imessage-setup.md and stay with me until one tagged iMessage or RCS message gets exactly one agent reply.";
 
 async function read(name: string): Promise<string> {
   return Bun.file(new URL(name, siteRoot)).text();

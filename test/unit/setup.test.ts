@@ -44,6 +44,7 @@ describe("setup discovery", () => {
       "'/Users/example/Library/Application Support/pronto/bin/pronto' status",
     );
     expect(message).toContain("@helper ping");
+    expect(message).toContain("iMessage or RCS chat");
     expect(message).toContain("@helper, @plan");
     expect(message).toContain("tags add <tag>");
   });
