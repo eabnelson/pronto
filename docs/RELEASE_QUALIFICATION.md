@@ -17,7 +17,7 @@ file records capability evidence, not private conversation data.
 | Claude effective local probe | 2.1.226 | Setup noninteractive file-tool probe | Pass |
 | Messages Automation | Owner test chats, 2026-09-02 | Exactly one self-chat send and one RCS send; expected self-chat display mirror only | Pass |
 | Self-chat mirror handling | Owner self-chat, 2026-09-02 | One tagged activation and one agent send with no echo turn | Pass |
-| Full remote tagged flow | v0.2.0 | Awaiting one exact-release remote canary after the consumer routing contract change | Pending |
+| Full remote tagged flow | v0.2.0 | Owner RCS chat, 2026-09-02: exact re-resolution, one tagged activation, one confirmed reply, no echo turn | Pass |
 
 The automated matrix and owner smoke record versions tested on 2026-09-02.
 Capability checks, not version
@@ -47,8 +47,7 @@ strings alone, determine whether setup and startup proceed.
 
 ## Owner-only gate
 
-Run `docs/LIVE_SMOKE.md` after installing the exact release candidate. Replace
-the remaining Pending cell with the date and Pass only after a remote
-participant's exactly-one reply, recent context, tagged continuity, restart
-suppression, and content-free logs are observed. Do not publish a GitHub release
-while any cell is Pending or Blocked.
+Run `docs/LIVE_SMOKE.md` after installing the exact release candidate. Mark the
+remote row Pass only after a remote participant's exactly-one reply, recent
+context, tagged continuity, restart suppression, and content-free logs are
+observed. Do not publish a GitHub release while any cell is Pending or Blocked.
