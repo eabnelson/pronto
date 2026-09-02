@@ -62,7 +62,10 @@ for await (const chunk of Bun.stdin.stream()) {
     if (line.trim() === "") continue;
     const request = JSON.parse(line);
     if (scenario.rpcLogPath) appendFileSync(scenario.rpcLogPath, request.method + "\\n");
-    if (scenario.rpcParamsLogPath) appendFileSync(scenario.rpcParamsLogPath, JSON.stringify(request) + "\\n");
+    if (scenario.rpcParamsLogPath) appendFileSync(scenario.rpcParamsLogPath, JSON.stringify({
+      method: request.method,
+      hasIncludeReactions: Object.prototype.hasOwnProperty.call(request.params ?? {}, "include_reactions"),
+    }) + "\\n");
     let result;
     if (request.method === "initialize") result = {
       protocol_version: 1,
@@ -138,6 +141,21 @@ const observedEvent = {
   text: "observed",
 };
 
+const reactionEvent = {
+  attachments: [],
+  chat_id: 42,
+  created_at: "2026-09-01T11:00:00.000Z",
+  guid: "reaction-guid",
+  id: 1,
+  is_from_me: false,
+  is_reaction: true,
+  is_reaction_add: true,
+  reacted_to_guid: "target-guid",
+  reaction_type: "heart",
+  service: "iMessage",
+  text: "",
+};
+
 const historyBudget = {
   maxBytes: 128 * 1024,
   maxMessages: 1,
@@ -181,20 +199,6 @@ test("sealed conversation history preserves reactions, previews, pagination, and
   const rpcLogPath = join(directory, "rpc.log");
   await writeFile(databasePath, "database evidence");
   await writeFile(rpcLogPath, "");
-  const reaction = {
-    attachments: [],
-    chat_id: 42,
-    created_at: "2026-09-01T11:00:00.000Z",
-    guid: "reaction-guid",
-    id: 1,
-    is_from_me: false,
-    is_reaction: true,
-    is_reaction_add: true,
-    reacted_to_guid: "target-guid",
-    reaction_type: "heart",
-    service: "iMessage",
-    text: "",
-  };
   const preview = {
     attachments: [],
     chat_id: 42,
@@ -210,7 +214,7 @@ test("sealed conversation history preserves reactions, previews, pagination, and
     databasePath,
     event: observedEvent,
     forwardPages: {
-      "0": { has_more: true, messages: [reaction], next_rowid: 1 },
+      "0": { has_more: true, messages: [reactionEvent], next_rowid: 1 },
       "1": { has_more: false, messages: [preview], next_rowid: 2 },
     },
     recent: [preview],
@@ -259,24 +263,10 @@ test("recent history omits the unsupported imsg reaction parameter", async () =>
   const rpcParamsLogPath = join(directory, "rpc-params.log");
   await writeFile(databasePath, "database evidence");
   await writeFile(rpcParamsLogPath, "");
-  const reaction = {
-    attachments: [],
-    chat_id: 42,
-    created_at: "2026-09-01T11:00:00.000Z",
-    guid: "reaction-guid",
-    id: 1,
-    is_from_me: false,
-    is_reaction: true,
-    is_reaction_add: true,
-    reacted_to_guid: "target-guid",
-    reaction_type: "heart",
-    service: "iMessage",
-    text: "",
-  };
   const messages = await scopedClient({
     databasePath,
     event: observedEvent,
-    recent: [reaction],
+    recent: [reactionEvent],
     recentOmitsHasMore: true,
     rpcParamsLogPath,
   });
@@ -292,7 +282,7 @@ test("recent history omits the unsupported imsg reaction parameter", async () =>
 
   const request = JSON.parse((await readFile(rpcParamsLogPath, "utf8")).trim());
   expect(request).toMatchObject({ method: "messages.history" });
-  expect(request.params).not.toHaveProperty("include_reactions");
+  expect(request.hasIncludeReactions).toBeFalse();
   expect(page.messages[0]?.message.kind).toBe("reaction");
   expect(page.hasMore).toBeFalse();
   await messages.close();
