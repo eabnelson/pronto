@@ -4,6 +4,7 @@ import { validateReleaseQualification } from "../../scripts/release-qualificatio
 const surfaces = [
   "macOS",
   "Bun",
+  "Node.js",
   "imsg",
   "Codex CLI",
   "Claude Code",

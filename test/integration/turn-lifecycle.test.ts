@@ -67,12 +67,21 @@ class FakeTransport {
   async recentMessages(): Promise<unknown[]> {
     return [
       {
-        attachments: [{ transfer_name: "brief.pdf" }],
-        chat_id: 42,
-        guid: "RECENT-1",
-        is_from_me: false,
+        attachments: [{
+          available: true,
+          mimeType: "application/pdf",
+          name: "brief.pdf",
+          sizeBytes: 12,
+        }],
+        fromMe: false,
+        kind: "message",
+        messageGuid: "RECENT-1",
+        occurredAt: "2026-09-01T12:00:00.000Z",
+        reaction: null,
+        sender: "+15555550100",
         service: "iMessage",
         text: "The launch is Friday.",
+        urlPreview: false,
       },
     ];
   }
@@ -90,7 +99,6 @@ const source: CurrentChatSource = {
 
 const activation: ActivatedRequest = {
   activationTag: "@helper",
-  attachments: [],
   chatId: 42,
   isFromMe: false,
   providerGuid: "IN-1",

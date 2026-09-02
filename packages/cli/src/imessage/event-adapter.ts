@@ -1,29 +1,59 @@
 import type { MessagesAttachment, MessagesEvent } from "pronto-imessage";
 
-export function rawFromMessagesEvent(
+export interface CurrentChatMessage {
+  readonly attachments: readonly {
+    readonly attachmentId?: string;
+    readonly available: boolean;
+    readonly mimeType: string | null;
+    readonly name: string | null;
+    readonly sizeBytes: number | null;
+  }[];
+  readonly fromMe: boolean;
+  readonly kind: "message" | "poll" | "reaction";
+  readonly messageGuid: string;
+  readonly occurredAt: string | null;
+  readonly reaction: MessagesEvent["message"]["reaction"];
+  readonly sender: string | null;
+  readonly service: string | null;
+  readonly text: string | null;
+  readonly urlPreview: boolean;
+}
+
+export function currentChatMessageFromEvent(
   event: MessagesEvent,
   attachmentId?: (attachment: MessagesAttachment) => string | undefined,
-): Record<string, unknown> {
+): CurrentChatMessage {
   return {
     attachments: event.message.attachments.map((attachment) => {
       const id = attachmentId?.(attachment);
       return {
-        ...(id === undefined ? {} : { attachment_id: id }),
+        ...(id === undefined ? {} : { attachmentId: id }),
         available: attachment.available,
-        mime_type: attachment.mimeType,
+        mimeType: attachment.mimeType,
         name: attachment.name,
-        total_bytes: attachment.sizeBytes,
+        sizeBytes: attachment.sizeBytes,
       };
     }),
-    chat_id: event.conversation.chatId,
-    created_at: event.message.occurredAt,
-    guid: event.message.providerMessageId,
-    id: event.message.rowId,
-    is_from_me: event.message.fromMe,
+    fromMe: event.message.fromMe,
+    kind: event.message.kind,
+    messageGuid: event.message.providerMessageId,
+    occurredAt: event.message.occurredAt,
     reaction: event.message.reaction,
     sender: event.message.sender,
     service: event.message.service,
     text: event.message.text,
-    url_preview: event.message.urlPreview,
+    urlPreview: event.message.urlPreview,
   };
+}
+
+export function parseCurrentChatMessage(value: unknown): CurrentChatMessage | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const message = value as Partial<CurrentChatMessage>;
+  if (
+    !Array.isArray(message.attachments) || typeof message.fromMe !== "boolean" ||
+    (message.kind !== "message" && message.kind !== "poll" && message.kind !== "reaction") ||
+    typeof message.messageGuid !== "string" || message.messageGuid.length === 0 ||
+    (message.text !== null && typeof message.text !== "string")
+  ) return null;
+  return message as CurrentChatMessage;
 }

@@ -1,13 +1,12 @@
-import type { NormalizedMessage } from "./imessage/message";
+import type { MessagesEvent } from "pronto-imessage";
 
 export interface ActivatedRequest {
   activationTag: string;
-  attachments: ReadonlyArray<Record<string, unknown>>;
   chatId: number;
   isFromMe: boolean;
   providerGuid: string;
   request: string;
-  rowId: number | null;
+  rowId: number;
 }
 
 function escapeRegExp(value: string): string {
@@ -53,24 +52,21 @@ function removeOneMatchedTag(
 }
 
 export function activatedRequest(
-  message: NormalizedMessage,
+  event: MessagesEvent,
   tags: readonly string[],
-  ownerParticipated: boolean,
 ): ActivatedRequest | null {
-  if (!ownerParticipated) return null;
-  if (message.kind !== "message") return null;
-  if (message.service?.toLowerCase() !== "imessage") return null;
-  if (message.chatId === null || message.providerGuid === null || message.text === null) {
-    return null;
-  }
+  const message = event.message;
+  if (!event.conversationFacts.ownerParticipated) return null;
+  if (message.kind !== "message" || message.selfChatMirror) return null;
+  if ((message.service ?? event.conversationFacts.service)?.toLowerCase() !== "imessage") return null;
+  if (message.text === null) return null;
   const activation = removeOneMatchedTag(message.text, tags);
   if (activation === null) return null;
   return {
     activationTag: activation.activationTag,
-    attachments: message.attachments,
-    chatId: message.chatId,
-    isFromMe: message.isFromMe,
-    providerGuid: message.providerGuid,
+    chatId: event.conversation.chatId,
+    isFromMe: message.fromMe,
+    providerGuid: message.providerMessageId,
     request: activation.request,
     rowId: message.rowId,
   };

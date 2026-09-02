@@ -1,461 +1,104 @@
-import { createHash } from "node:crypto";
 import { activatedRequest, type ActivatedRequest } from "../activation";
-import { normalizeMessage, type NormalizedMessage } from "./message";
-import { qualifyImsgStatus, type QualifiedImsg } from "./probe";
-import { ImsgRpcError, type ImsgRpc, type WatchableImsgRpc } from "./rpc-client";
-import type { ConversationReference, MessagesEvent, ProntoMessages } from "pronto-imessage";
-import { rawFromMessagesEvent } from "./event-adapter";
+import type {
+  ConversationFacts,
+  ConversationReference,
+  MessagesEvent,
+  MessagesSubscription,
+  ProntoMessages,
+} from "pronto-imessage";
+import { currentChatMessageFromEvent } from "./event-adapter";
 
 export type SendDisposition =
   | { disposition: "confirmed"; guid: string }
   | { disposition: "ambiguous" }
   | { disposition: "failed"; retrySafe: boolean };
 
-function object(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function fromMessagesEvent(event: MessagesEvent): NormalizedMessage {
-  return {
-    attachments: event.message.attachments.map((attachment) => ({
-      attachment_id: attachment.providerAttachmentId,
-      mime_type: attachment.mimeType,
-      name: attachment.name,
-      total_bytes: attachment.sizeBytes,
-    })),
-    chatId: event.conversation.chatId,
-    date: event.message.occurredAt,
-    isFromMe: event.message.fromMe,
-    kind: event.message.kind,
-    providerGuid: event.message.providerMessageId,
-    replyToGuid: event.message.replyToProviderMessageId,
-    replyToText: event.message.replyToText,
-    rowId: event.message.rowId,
-    sender: event.message.sender,
-    service: event.message.service,
-    text: event.message.text,
-  };
-}
-
-interface ChatEligibility {
-  ownerParticipated: boolean;
-  service: string | null;
-}
-
-function messageDateMs(value: string | null): number | null {
-  if (value === null) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function isMirrorPair(message: NormalizedMessage, original: NormalizedMessage): boolean {
-  if (
-    message.chatId === null ||
-    message.rowId === null ||
-    message.text === null ||
-    original.chatId !== message.chatId ||
-    original.rowId === null ||
-    !original.isFromMe ||
-    original.text !== message.text
-  ) {
-    return false;
-  }
-  const rowDistance = message.rowId - original.rowId;
-  if (rowDistance < 1) return false;
-  const messageTime = messageDateMs(message.date);
-  const originalTime = messageDateMs(original.date);
-  return (
-    messageTime !== null &&
-    originalTime !== null &&
-    messageTime <= originalTime &&
-    originalTime - messageTime <= 1_000
-  );
-}
-
-function isCorrelatedMirror(message: NormalizedMessage, original: NormalizedMessage): boolean {
-  return (
-    message.replyToGuid !== null &&
-    message.replyToText === message.text &&
-    original.providerGuid === message.replyToGuid &&
-    isMirrorPair(message, original)
-  );
+interface ConversationContext {
+  readonly facts: ConversationFacts;
+  readonly reference: ConversationReference;
 }
 
 export class ImsgTransport {
-  readonly #recentOutgoing = new Map<string, NormalizedMessage>();
-  readonly #conversations = new Map<number, {
-    readonly facts: ChatEligibility;
-    readonly reference: ConversationReference;
-  }>();
+  readonly #conversations = new Map<number, ConversationContext>();
 
   constructor(
-    readonly rpc: ImsgRpc,
+    readonly messages: ProntoMessages,
     readonly options: {
       matchesOutboundEcho?: (chatId: number, text: string) => boolean;
-      messages?: ProntoMessages;
     } = {},
   ) {}
 
-  async qualify(): Promise<QualifiedImsg> {
-    if (this.options.messages !== undefined) {
-      const qualification = await this.options.messages.qualify();
-      return {
-        degraded: [...qualification.degradedCapabilities],
-        version: qualification.providerVersion,
-      };
-    }
-    const status = await this.rpc.call("initialize", { protocol_version: 1 });
-    return qualifyImsgStatus(status);
-  }
-
-  async ownerParticipated(chatId: number): Promise<boolean> {
-    return (await this.#chatEligibility(chatId)).ownerParticipated;
-  }
-
-  conversationContext(chatId: number) {
-    return this.#conversations.get(chatId);
-  }
-
-  async #chatEligibility(chatId: number): Promise<ChatEligibility> {
-    const result = object(await this.rpc.call("messages.stats", { chat_id: chatId }));
-    const chat = (Array.isArray(result.chats) ? result.chats : [])
-      .map(object)
-      .find((candidate) => candidate.chat_id === chatId);
+  async qualify(): Promise<{ degraded: readonly string[]; version: string }> {
+    const qualification = await this.messages.qualify();
     return {
-      ownerParticipated:
-        typeof result.sent_messages === "number" && result.sent_messages > 0,
-      service: chat !== undefined && typeof chat.service === "string" ? chat.service : null,
+      degraded: qualification.degradedCapabilities,
+      version: qualification.providerVersion,
     };
   }
 
-  async activationFor(raw: unknown, tags: readonly string[]): Promise<ActivatedRequest | null> {
-    return this.#activationForMessage(normalizeMessage(raw), tags);
+  conversationContext(chatId: number): ConversationContext | undefined {
+    return this.#conversations.get(chatId);
   }
 
-  async #activationForMessage(
-    message: NormalizedMessage,
-    tags: readonly string[],
-    observedEligibility?: ChatEligibility,
-    observedSelfChatMirror?: boolean,
-  ): Promise<ActivatedRequest | null> {
-    this.#rememberOutgoing(message);
+  activationFor(event: MessagesEvent, tags: readonly string[]): ActivatedRequest | null {
+    this.#conversations.set(event.conversation.chatId, {
+      facts: event.conversationFacts,
+      reference: event.conversation,
+    });
     if (
-      message.isFromMe &&
-      message.chatId !== null &&
-      message.text !== null &&
-      this.options.matchesOutboundEcho?.(message.chatId, message.text) === true
-    ) {
-      return null;
-    }
-    let candidate = activatedRequest(message, tags, true);
-    let eligibility: ChatEligibility | null = observedEligibility ?? null;
-    if (candidate === null && message.service === null) {
-      const potentialCandidate = activatedRequest({ ...message, service: "iMessage" }, tags, true);
-      if (potentialCandidate === null) return null;
-      eligibility ??= await this.#chatEligibility(potentialCandidate.chatId);
-      if (
-        !eligibility.ownerParticipated ||
-        eligibility.service?.toLowerCase() !== "imessage"
-      ) {
-        return null;
-      }
-      candidate = potentialCandidate;
-    }
-    if (candidate === null) return null;
-    eligibility ??= await this.#chatEligibility(candidate.chatId);
-    if (!eligibility.ownerParticipated) return null;
-    if (observedSelfChatMirror === true) return null;
-    if (observedSelfChatMirror === undefined && await this.#isSelfChatMirror(message)) return null;
-    return candidate;
-  }
-
-  async #isSelfChatMirror(message: NormalizedMessage): Promise<boolean> {
-    if (
-      message.isFromMe ||
-      message.chatId === null ||
-      message.rowId === null ||
-      message.text === null
-    ) {
-      return false;
-    }
-    for (const cached of this.#recentOutgoing.values()) {
-      if (isMirrorPair(message, cached)) return true;
-    }
-    const hasReplyLink = message.replyToGuid !== null && message.replyToText === message.text;
-    try {
-      const nearby = await this.#messagesNear(message.rowId);
-      return nearby.some((raw) => {
-        const original = normalizeMessage(raw);
-        return hasReplyLink
-          ? isCorrelatedMirror(message, original)
-          : isMirrorPair(message, original);
-      });
-    } catch {
-      if (!hasReplyLink) return false;
-      // Re-running an unrestricted agent is riskier than dropping this narrowly
-      // mirror-shaped event when restart-boundary correlation is unavailable.
-      console.error(
-        JSON.stringify({ component: "imsg-transport", state: "mirror-correlation-unavailable" }),
-      );
-      return true;
-    }
-  }
-
-  async #messagesNear(rowId: number): Promise<unknown[]> {
-    const result = object(
-      await this.rpc.call("messages.after", {
-        attachments: false,
-        include_reactions: true,
-        limit: 100,
-        since_rowid: Math.max(0, rowId - 101),
-      }),
-    );
-    return Array.isArray(result.messages) ? result.messages : [];
-  }
-
-  #outgoingKey(chatId: number, guid: string): string {
-    return `${chatId}:${guid}`;
-  }
-
-  #rememberOutgoing(message: NormalizedMessage): void {
-    if (!message.isFromMe || message.chatId === null || message.providerGuid === null) return;
-    const key = this.#outgoingKey(message.chatId, message.providerGuid);
-    this.#recentOutgoing.delete(key);
-    this.#recentOutgoing.set(key, message);
-    while (this.#recentOutgoing.size > 64) {
-      const oldest = this.#recentOutgoing.keys().next().value;
-      if (oldest === undefined) break;
-      this.#recentOutgoing.delete(oldest);
-    }
+      event.message.fromMe && event.message.text !== null &&
+      this.options.matchesOutboundEcho?.(event.conversation.chatId, event.message.text) === true
+    ) return null;
+    return activatedRequest(event, tags);
   }
 
   async recentMessages(chatId: number, limit = 30): Promise<unknown[]> {
-    if (this.options.messages !== undefined) {
-      const conversation = this.#conversations.get(chatId)?.reference;
-      if (conversation === undefined) throw new Error("Current conversation scope is unavailable");
-      const page = await this.options.messages.history({
-        budget: {
-          maxBytes: 2 * 1024 * 1024,
-          maxMessages: Math.max(1, Math.min(limit, 100)),
-          maxRows: Math.max(1, Math.min(limit, 100)),
-          maxRpcCalls: 1,
-        },
-        conversation,
-        includeReactions: true,
-        mode: "recent",
-      });
-      return page.messages.map((event) => rawFromMessagesEvent(event));
-    }
-    const result = object(
-      await this.rpc.call("messages.history", {
-        attachments: true,
-        chat_id: chatId,
-        limit: Math.max(1, Math.min(limit, 100)),
-      }),
-    );
-    return Array.isArray(result.messages) ? result.messages : [];
+    const conversation = this.#conversations.get(chatId)?.reference;
+    if (conversation === undefined) throw new Error("Current conversation scope is unavailable");
+    const page = await this.messages.history({
+      budget: {
+        maxBytes: 2 * 1024 * 1024,
+        maxMessages: Math.max(1, Math.min(limit, 100)),
+        maxRows: Math.max(1, Math.min(limit, 100)),
+        maxRpcCalls: 1,
+      },
+      conversation,
+      includeReactions: true,
+      mode: "recent",
+    });
+    return page.messages.map((event) => currentChatMessageFromEvent(event));
   }
 
   async watch(input: {
     onActivation: (request: ActivatedRequest) => void | Promise<void>;
     onMessageRowId?: (rowId: number) => void | Promise<void>;
-    onOverflow: (resumeAfterRowId: number) => void | Promise<void>;
-    sinceRowId?: number;
     tags: readonly string[];
-  }): Promise<{ close: () => Promise<void>; terminated: Promise<void> }> {
-    if (this.options.messages !== undefined) {
-      return await this.options.messages.subscribe({
-        onEvent: async (event) => {
-          this.#conversations.set(event.conversation.chatId, {
-            facts: event.conversationFacts,
-            reference: event.conversation,
-          });
-          const message = fromMessagesEvent(event);
-          const request = await this.#activationForMessage(
-            message,
-            input.tags,
-            event.conversationFacts,
-            event.message.selfChatMirror,
-          );
-          if (request !== null) await input.onActivation(request);
-          await input.onMessageRowId?.(message.rowId!);
-        },
-        onRecovery: (outcome) => {
-          console.error(JSON.stringify({
-            component: "pronto-messages",
-            ...(outcome.status === "degraded" ? { reason: outcome.reason } : {}),
-            rows: outcome.rows,
-            state: outcome.status,
-          }));
-        },
-      });
-    }
-    if (!("on" in this.rpc) || typeof this.rpc.on !== "function") {
-      throw new Error("imsg RPC client does not support notifications");
-    }
-    const rpc = this.rpc as WatchableImsgRpc;
-    let subscription: number | null = null;
-    const disposeMessage = rpc.on("message", async (params) => {
-      const notification = object(params);
-      if (notification.subscription !== subscription) return;
-      const message = normalizeMessage(notification.message);
-      const request = await this.#activationForMessage(message, input.tags);
-      if (request !== null) await input.onActivation(request);
-      if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
-    });
-    const disposeOverflow = rpc.on("watch.overflow", async (params) => {
-      const notification = object(params);
-      if (notification.subscription !== subscription) return;
-      if (
-        notification.terminal === true &&
-        typeof notification.resume_after_rowid === "number" &&
-        Number.isSafeInteger(notification.resume_after_rowid)
-      ) {
-        await input.onOverflow(notification.resume_after_rowid);
-      }
-    });
-
-    try {
-      const result = object(
-        await rpc.call("watch.subscribe", {
-          attachments: true,
-          buffer_limit: 256,
-          include_reactions: true,
-          ...(input.sinceRowId === undefined ? {} : { since_rowid: input.sinceRowId }),
-        }),
-      );
-      if (typeof result.subscription !== "number") {
-        throw new Error("imsg returned an invalid watch subscription");
-      }
-      subscription = result.subscription;
-      return {
-        close: async () => {
-          const active = subscription;
-          subscription = null;
-          disposeMessage();
-          disposeOverflow();
-          if (active !== null) await rpc.call("watch.unsubscribe", { subscription: active });
-        },
-        terminated:
-          "terminated" in rpc && rpc.terminated instanceof Promise
-            ? (rpc.terminated as Promise<void>)
-            : new Promise<void>(() => undefined),
-      };
-    } catch (error) {
-      disposeMessage();
-      disposeOverflow();
-      throw error;
-    }
-  }
-
-  async catchUp(input: {
-    onActivation: (request: ActivatedRequest) => void | Promise<void>;
-    onMessageRowId?: (rowId: number) => void | Promise<void>;
-    sinceRowId: number;
-    tags: readonly string[];
-  }): Promise<number> {
-    let cursor = input.sinceRowId;
-    while (true) {
-      const previousCursor = cursor;
-      const result = object(
-        await this.rpc.call("messages.after", {
-          attachments: true,
-          include_reactions: true,
-          limit: 100,
-          since_rowid: cursor,
-        }),
-      );
-      const next = result.next_rowid;
-      if (typeof next !== "number" || !Number.isSafeInteger(next) || next < cursor) {
-        throw new Error("imsg returned an invalid catch-up cursor");
-      }
-      for (const raw of Array.isArray(result.messages) ? result.messages : []) {
-        const message = normalizeMessage(raw);
-        const request = await this.#activationForMessage(message, input.tags);
+  }): Promise<MessagesSubscription> {
+    return await this.messages.subscribe({
+      onEvent: async (event) => {
+        const request = this.activationFor(event, input.tags);
         if (request !== null) await input.onActivation(request);
-        if (message.rowId !== null) await input.onMessageRowId?.(message.rowId);
-      }
-      cursor = next;
-      if (result.has_more !== true) return cursor;
-      if (next === previousCursor) throw new Error("imsg catch-up cursor did not advance");
-    }
+        await input.onMessageRowId?.(event.message.rowId);
+      },
+      onRecovery: (outcome) => {
+        console.error(JSON.stringify({
+          component: "pronto-messages",
+          ...(outcome.status === "degraded" ? { reason: outcome.reason } : {}),
+          rows: outcome.rows,
+          state: outcome.status,
+        }));
+      },
+    });
   }
 
   async sendText(chatId: number, text: string): Promise<SendDisposition> {
-    if (this.options.messages !== undefined) {
-      const conversation = this.#conversations.get(chatId)?.reference;
-      if (conversation === undefined) throw new Error("Current conversation scope is unavailable");
-      const outcome = await this.options.messages.reply({
-        conversation,
-        text,
-      });
-      if (outcome.status === "confirmed") {
-        return { disposition: "confirmed", guid: outcome.providerMessageId };
-      }
-      if (outcome.status === "ambiguous") return { disposition: "ambiguous" };
-      return { disposition: "failed", retrySafe: outcome.retryable };
+    const conversation = this.#conversations.get(chatId)?.reference;
+    if (conversation === undefined) throw new Error("Current conversation scope is unavailable");
+    const outcome = await this.messages.reply({ conversation, text });
+    if (outcome.status === "confirmed") {
+      return { disposition: "confirmed", guid: outcome.providerMessageId };
     }
-    try {
-      const result = object(await this.rpc.call("send", { chat_id: chatId, text }));
-      if (result.ok !== true) return { disposition: "failed", retrySafe: false };
-      return typeof result.guid === "string" && result.guid.length > 0
-        ? { disposition: "confirmed", guid: result.guid }
-        : { disposition: "ambiguous" };
-    } catch (error) {
-      if (error instanceof ImsgRpcError) {
-        const data = object(error.data);
-        if (data.disposition === "may_have_completed" || data.disposition === "still_in_flight") {
-          return { disposition: "ambiguous" };
-        }
-        return { disposition: "failed", retrySafe: data.retry_safe === true };
-      }
-      return { disposition: "failed", retrySafe: false };
-    }
-  }
-}
-
-interface FingerprintEntry {
-  expiresAt: number;
-  value: string;
-}
-
-export class OutboundEchoTracker {
-  readonly #entries: FingerprintEntry[] = [];
-  readonly #maxEntries: number;
-  readonly #now: () => number;
-  readonly #ttlMs: number;
-
-  constructor(input: { maxEntries?: number; now?: () => number; ttlMs?: number } = {}) {
-    this.#maxEntries = input.maxEntries ?? 256;
-    this.#now = input.now ?? Date.now;
-    this.#ttlMs = input.ttlMs ?? 24 * 60 * 60 * 1_000;
-  }
-
-  record(chatId: number, text: string): void {
-    this.#prune();
-    this.#entries.push({ expiresAt: this.#now() + this.#ttlMs, value: this.#hash(chatId, text) });
-    while (this.#entries.length > this.#maxEntries) this.#entries.shift();
-  }
-
-  matches(chatId: number, text: string): boolean {
-    this.#prune();
-    const value = this.#hash(chatId, text);
-    const index = this.#entries.findIndex((entry) => entry.value === value);
-    if (index < 0) return false;
-    this.#entries.splice(index, 1);
-    return true;
-  }
-
-  #hash(chatId: number, text: string): string {
-    return createHash("sha256").update(`${chatId}\0${text}`).digest("base64url");
-  }
-
-  #prune(): void {
-    const now = this.#now();
-    for (let index = this.#entries.length - 1; index >= 0; index--) {
-      if (this.#entries[index]!.expiresAt <= now) this.#entries.splice(index, 1);
-    }
+    if (outcome.status === "ambiguous") return { disposition: "ambiguous" };
+    return { disposition: "failed", retrySafe: outcome.retryable };
   }
 }

@@ -1,6 +1,6 @@
 import type { ActivatedRequest } from "../activation";
 import { assembleContext, type ContextEnvelope, type RecentMessage } from "../context/assemble";
-import { normalizeMessage } from "../imessage/message";
+import { parseCurrentChatMessage } from "../imessage/event-adapter";
 import type { SendDisposition } from "../imessage/transport";
 import {
   formatImessageReplyText,
@@ -22,27 +22,20 @@ import { MAX_RUNTIME_TEXT_CHARACTERS, MAX_WORKSPACE_CANDIDATES } from "../worksp
 
 export const FAILURE_NOTICE = "I couldn't complete that request.";
 
-function attachmentName(value: Record<string, unknown>): string | null {
-  for (const key of ["name", "transfer_name", "filename"]) {
-    const candidate = value[key];
-    if (typeof candidate === "string" && candidate.length > 0) return candidate;
-  }
-  return null;
-}
-
 function recentContext(rawMessages: readonly unknown[]): RecentMessage[] {
   return rawMessages.flatMap((raw) => {
-    const message = normalizeMessage(raw);
-    if (message.kind !== "message") return [];
+    const message = parseCurrentChatMessage(raw);
+    if (message === null || message.kind !== "message") return [];
     const attachmentNames = message.attachments.flatMap((attachment) => {
-      const name = attachmentName(attachment);
-      return name === null ? [] : [name];
+      return typeof attachment.name === "string" && attachment.name.length > 0
+        ? [attachment.name]
+        : [];
     });
     return [
       {
         ...(attachmentNames.length === 0 ? {} : { attachmentNames }),
-        isFromMe: message.isFromMe,
-        senderLabel: message.isFromMe ? "owner" : "participant",
+        isFromMe: message.fromMe,
+        senderLabel: message.fromMe ? "owner" : "participant",
         text: message.text,
       },
     ];

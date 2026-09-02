@@ -1,654 +1,165 @@
-import { describe, expect, test } from "bun:test";
-import {
-  ImsgRpcError,
-  type ImsgRpc,
-} from "../../packages/cli/src/imessage/rpc-client";
-import { ImsgTransport, OutboundEchoTracker } from "../../packages/cli/src/imessage/transport";
-import type { MessagesEvent, ProntoMessages } from "pronto-imessage";
+import { expect, test } from "bun:test";
+import { ImsgTransport } from "../../packages/cli/src/imessage/transport";
+import type {
+  DeliveryOutcome,
+  MessagesEvent,
+  MessagesHistoryPage,
+  MessagesQualification,
+  MessagesSubscription,
+  ProntoMessages,
+} from "pronto-imessage";
 
-class FakeRpc implements ImsgRpc {
-  after: unknown = { has_more: false, messages: [], next_rowid: 0 };
-  nearby: unknown | Error = { messages: [] };
-  calls: Array<{ method: string; params: Record<string, unknown> }> = [];
-  handlers = new Map<string, Set<(params: unknown) => void | Promise<void>>>();
-  history: unknown[] | Error = [];
-  result: unknown = { guid: "OUT-1", ok: true };
-  stats: unknown = {
-    chats: [{ chat_id: 42, service: "iMessage" }],
-    sent_messages: 1,
+function event(overrides: {
+  readonly fromMe?: boolean;
+  readonly guid?: string;
+  readonly selfChatMirror?: boolean;
+  readonly text?: string | null;
+} = {}): MessagesEvent {
+  return {
+    conversation: {
+      chatId: 42,
+      expiresAt: "2026-09-01T13:00:00.000Z",
+      provider: "apple-messages",
+      token: "conversation-token",
+      version: 1,
+    },
+    conversationFacts: { ownerParticipated: true, service: "iMessage" },
+    message: {
+      attachments: [],
+      fromMe: overrides.fromMe ?? false,
+      kind: "message",
+      occurredAt: "2026-09-01T12:00:00.000Z",
+      providerMessageId: overrides.guid ?? "message-guid",
+      reaction: null,
+      replyToProviderMessageId: null,
+      replyToText: null,
+      rowId: 101,
+      selfChatMirror: overrides.selfChatMirror ?? false,
+      sender: "+15555550100",
+      service: "iMessage",
+      text: overrides.text === undefined ? "@helper do this" : overrides.text,
+      urlPreview: false,
+    },
+    provider: "apple-messages",
+    version: 1,
   };
+}
 
-  async call(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
-    this.calls.push({ method, params });
-    if (method === "messages.stats") {
-      if (this.stats instanceof Error) throw this.stats;
-      return this.stats;
-    }
-    if (method === "messages.history") {
-      if (this.history instanceof Error) throw this.history;
-      return { messages: this.history };
-    }
-    if (method === "messages.after") {
-      if (params.attachments === false) {
-        if (this.nearby instanceof Error) throw this.nearby;
-        return this.nearby;
-      }
-      return this.after;
-    }
-    if (method === "watch.subscribe") return { subscription: 7 };
-    if (method === "watch.unsubscribe") return { ok: true };
-    if (this.result instanceof Error) throw this.result;
-    return this.result;
+class FakeMessages implements ProntoMessages {
+  events: MessagesEvent[] = [];
+  historyPage: MessagesHistoryPage = {
+    hasMore: false,
+    messages: [],
+    scannedBytes: 0,
+    scannedRows: 0,
+  };
+  qualification: MessagesQualification = {
+    databaseGeneration: "generation",
+    degradedCapabilities: ["polls"],
+    providerVersion: "0.14.1",
+    status: "ready",
+  };
+  replyOutcome: DeliveryOutcome = { providerMessageId: "sent-guid", status: "confirmed" };
+  historyInput: Parameters<ProntoMessages["history"]>[0] | undefined;
+  replyInput: Parameters<ProntoMessages["reply"]>[0] | undefined;
+
+  async close(): Promise<void> {}
+  diagnostics(): ReturnType<ProntoMessages["diagnostics"]> {
+    return { attempt: 0, catchUpRows: 0, restartCount: 0, state: "ready" };
   }
-
-  on(method: string, handler: (params: unknown) => void | Promise<void>): () => void {
-    const handlers = this.handlers.get(method) ?? new Set();
-    handlers.add(handler);
-    this.handlers.set(method, handlers);
-    return () => handlers.delete(handler);
+  async history(input: Parameters<ProntoMessages["history"]>[0]): Promise<MessagesHistoryPage> {
+    this.historyInput = input;
+    return this.historyPage;
   }
-
-  async emit(method: string, params: unknown): Promise<void> {
-    for (const handler of this.handlers.get(method) ?? []) await handler(params);
+  async materializeAttachment(
+    _input: Parameters<ProntoMessages["materializeAttachment"]>[0],
+  ): ReturnType<ProntoMessages["materializeAttachment"]> {
+    throw new Error("not used");
+  }
+  async qualify(): Promise<MessagesQualification> {
+    return this.qualification;
+  }
+  async reply(input: Parameters<ProntoMessages["reply"]>[0]): Promise<DeliveryOutcome> {
+    this.replyInput = input;
+    return this.replyOutcome;
+  }
+  async subscribe(
+    input: Parameters<ProntoMessages["subscribe"]>[0],
+  ): Promise<MessagesSubscription> {
+    for (const value of this.events) await input.onEvent(value);
+    return { close: async () => undefined, terminated: new Promise<void>(() => undefined) };
   }
 }
 
-describe("activation routing", () => {
-  const messageWithoutService = {
-    chat_id: 42,
-    guid: "IN-1",
-    id: 11,
-    text: "@helper continue",
+test("standalone activation consumes normalized Pronto events and caches exact scope", () => {
+  const messages = new FakeMessages();
+  const transport = new ImsgTransport(messages);
+  expect(transport.activationFor(event(), ["@helper"])?.request).toBe("do this");
+  expect(transport.conversationContext(42)).toEqual({
+    facts: { ownerParticipated: true, service: "iMessage" },
+    reference: event().conversation,
+  });
+  expect(transport.activationFor(event({ selfChatMirror: true }), ["@helper"])).toBeNull();
+});
+
+test("standalone echo suppression remains product policy around Pronto", () => {
+  const messages = new FakeMessages();
+  const transport = new ImsgTransport(messages, {
+    matchesOutboundEcho: (chatId, text) => chatId === 42 && text === "@helper sent",
+  });
+  expect(transport.activationFor(
+    event({ fromMe: true, text: "@helper sent" }),
+    ["@helper"],
+  )).toBeNull();
+});
+
+test("watch, history, qualification, and delivery use only the public Messages interface", async () => {
+  const messages = new FakeMessages();
+  messages.events = [event()];
+  messages.historyPage = {
+    hasMore: false,
+    messages: [event({ guid: "history-guid", text: "context" })],
+    scannedBytes: 20,
+    scannedRows: 1,
   };
-
-  test("uses the matching chat service when an imsg message omits its service", async () => {
-    const rpc = new FakeRpc();
-
-    expect(await new ImsgTransport(rpc).activationFor(messageWithoutService, ["@helper"])).toMatchObject({
-      chatId: 42,
-      providerGuid: "IN-1",
-      request: "continue",
-    });
-    expect(rpc.calls.map((call) => call.method)).toEqual(["messages.stats", "messages.after"]);
-  });
-
-  test("still rejects owner-absent, missing, or non-iMessage chat routing", async () => {
-    for (const stats of [
-      { chats: [{ chat_id: 42, service: "iMessage" }], sent_messages: 0 },
-      { chats: [{ chat_id: 42, service: "SMS" }], sent_messages: 1 },
-      { chats: [{ chat_id: 42 }], sent_messages: 1 },
-      { chats: [{ chat_id: 99, service: "iMessage" }], sent_messages: 1 },
-    ]) {
-      const rpc = new FakeRpc();
-      rpc.stats = stats;
-
-      expect(await new ImsgTransport(rpc).activationFor(messageWithoutService, ["@helper"])).toBeNull();
-      expect(rpc.calls.map((call) => call.method)).toEqual(["messages.stats"]);
-    }
-  });
-
-  test("surfaces routing lookup failures instead of treating them as ineligible", async () => {
-    const rpc = new FakeRpc();
-    rpc.stats = new Error("stats unavailable");
-
-    await expect(
-      new ImsgTransport(rpc).activationFor(messageWithoutService, ["@helper"]),
-    ).rejects.toThrow("stats unavailable");
-  });
-
-  test("does not query history for an untagged reply-shaped event", async () => {
-    const rpc = new FakeRpc();
-
-    expect(
-      await new ImsgTransport(rpc).activationFor(
-        {
-          ...messageWithoutService,
-          guid: "UNTAGGED-REPLY",
-          reply_to_guid: "OUT-1",
-          reply_to_text: "continue",
-          text: "continue",
-        },
-        ["@helper"],
-      ),
-    ).toBeNull();
-    expect(
-      rpc.calls.some(
-        (call) => call.method === "messages.history" || call.method === "messages.after",
-      ),
-    ).toBeFalse();
-  });
-
-  test("does not query nearby messages before the owner-participation gate", async () => {
-    const rpc = new FakeRpc();
-    rpc.stats = {
-      chats: [{ chat_id: 42, service: "iMessage" }],
-      sent_messages: 0,
-    };
-
-    expect(
-      await new ImsgTransport(rpc).activationFor(
-        {
-          ...messageWithoutService,
-          is_from_me: false,
-          reply_to_guid: "OUT-1",
-          reply_to_text: "@helper continue",
-          service: "iMessage",
-        },
-        ["@helper"],
-      ),
-    ).toBeNull();
-    expect(rpc.calls.map((call) => call.method)).toEqual(["messages.stats"]);
-  });
-
-  test("correlates a self-chat mirror without filtering ordinary participant replies", async () => {
-    const rpc = new FakeRpc();
-    rpc.stats = {
-      chats: [{ chat_id: 42, identifier: "+14145551212", service: "iMessage" }],
-      sent_messages: 1,
-    };
-    const transport = new ImsgTransport(rpc);
-    const text = "@helper continue";
-
-    expect(
-      await transport.activationFor(
-        {
-          ...messageWithoutService,
-          created_at: "2026-08-18T20:02:35.763Z",
-          guid: "SELF-OUT",
-          is_from_me: true,
-          text,
-        },
-        ["@helper"],
-      ),
-    ).toMatchObject({ providerGuid: "SELF-OUT", request: "continue" });
-    expect(
-      await transport.activationFor(
-        {
-          ...messageWithoutService,
-          created_at: "2026-08-18T20:02:35.635Z",
-          guid: "SELF-MIRROR",
-          id: 12,
-          is_from_me: false,
-          reply_to_guid: "SELF-OUT",
-          reply_to_text: text,
-          text,
-        },
-        ["@helper"],
-      ),
-    ).toBeNull();
-    expect(rpc.calls.some((call) => call.method === "messages.history")).toBeFalse();
-
-    expect(
-      await transport.activationFor(
-        {
-          ...messageWithoutService,
-          created_at: "2026-08-18T20:02:35.900Z",
-          guid: "REMOTE-IN",
-          id: 13,
-          is_from_me: false,
-          reply_to_guid: "SELF-OUT",
-          reply_to_text: text,
-          text,
-        },
-        ["@helper"],
-      ),
-    ).toMatchObject({ providerGuid: "REMOTE-IN", request: "continue" });
-
-    expect(
-      await transport.activationFor(
-        {
-          ...messageWithoutService,
-          guid: "REMOTE-IN-NO-DATE",
-          id: 14,
-          is_from_me: false,
-          reply_to_guid: "SELF-OUT",
-          reply_to_text: text,
-          text,
-        },
-        ["@helper"],
-      ),
-    ).toMatchObject({ providerGuid: "REMOTE-IN-NO-DATE", request: "continue" });
-
-    expect(
-      await transport.activationFor(
-        {
-          ...messageWithoutService,
-          created_at: "2026-08-18T20:02:35.635Z",
-          guid: "SELF-MIRROR-NO-REPLY",
-          id: 20,
-          is_from_me: false,
-          text,
-        },
-        ["@helper"],
-      ),
-    ).toBeNull();
-  });
-
-  test("caches an outbound agent echo so its inbound mirror cannot self-activate", async () => {
-    const rpc = new FakeRpc();
-    let echoAvailable = true;
-    const transport = new ImsgTransport(rpc, {
-      matchesOutboundEcho: () => {
-        const matched = echoAvailable;
-        echoAvailable = false;
-        return matched;
-      },
-    });
-    const text = "The configured tag is @helper.";
-
-    expect(
-      await transport.activationFor(
-        {
-          chat_id: 42,
-          created_at: "2026-08-18T20:02:35.763Z",
-          guid: "AGENT-OUT",
-          id: 30,
-          is_from_me: true,
-          service: "iMessage",
-          text,
-        },
-        ["@helper"],
-      ),
-    ).toBeNull();
-    expect(
-      await transport.activationFor(
-        {
-          chat_id: 42,
-          created_at: "2026-08-18T20:02:35.635Z",
-          guid: "AGENT-MIRROR",
-          id: 31,
-          is_from_me: false,
-          service: "iMessage",
-          text,
-        },
-        ["@helper"],
-      ),
-    ).toBeNull();
-  });
-
-  test("admits a metadata-free tagged message when nearby lookup is unavailable", async () => {
-    const rpc = new FakeRpc();
-    rpc.nearby = new Error("history unavailable");
-
-    expect(
-      await new ImsgTransport(rpc).activationFor(
-        {
-          ...messageWithoutService,
-          created_at: "2026-08-18T20:02:35.635Z",
-          is_from_me: false,
-          service: "iMessage",
-        },
-        ["@helper"],
-      ),
-    ).toMatchObject({ providerGuid: "IN-1", request: "continue" });
-  });
-});
-
-describe("text delivery", () => {
-  test("standalone activation and reply consume the public Messages interface", async () => {
-    const rpc = new FakeRpc();
-    const replies: Array<{ chatId: number; text: string }> = [];
-    const event: MessagesEvent = {
-      conversation: {
-        chatId: 42,
-        expiresAt: "2026-09-01T12:15:00.000Z",
-        provider: "apple-messages",
-        token: "conversation-token",
-        version: 1,
-      },
-      conversationFacts: { ownerParticipated: true, service: "iMessage" },
-      message: {
-        attachments: [],
-        fromMe: false,
-        kind: "message",
-        occurredAt: "2026-09-01T12:00:00.000Z",
-        providerMessageId: "IN-MODULE",
-        reaction: null,
-        replyToProviderMessageId: null,
-        replyToText: null,
-        rowId: 101,
-        sender: null,
-        selfChatMirror: false,
-        service: "iMessage",
-        text: "@helper continue",
-        urlPreview: false,
-      },
-      provider: "apple-messages",
-      version: 1,
-    };
-    const messages: ProntoMessages = {
-      close: async () => undefined,
-      diagnostics: () => ({
-        attempt: 0,
-        catchUpRows: 0,
-        restartCount: 0,
-        state: "ready",
-      }),
-      history: async () => ({
-        hasMore: false,
-        messages: [event],
-        scannedBytes: 1,
-        scannedRows: 1,
-      }),
-      materializeAttachment: async () => {
-        throw new Error("not used");
-      },
-      qualify: async () => ({
-        databaseGeneration: "generation-one",
-        degradedCapabilities: [],
-        providerVersion: "0.14.1",
-        status: "ready",
-      }),
-      reply: async (input) => {
-        replies.push({ chatId: input.conversation.chatId, text: input.text });
-        return { providerMessageId: "OUT-MODULE", status: "confirmed" };
-      },
-      subscribe: async (input) => {
-        await input.onEvent(event);
-        return { close: async () => undefined, terminated: new Promise<void>(() => undefined) };
-      },
-    };
-    const transport = new ImsgTransport(rpc, { messages });
-    const activations: string[] = [];
-
-    const watch = await transport.watch({
-      onActivation: (request) => {
-        activations.push(request.providerGuid);
-      },
-      onOverflow: () => undefined,
-      tags: ["@helper"],
-    });
-    expect(activations).toEqual(["IN-MODULE"]);
-    expect(await transport.sendText(42, "hello back")).toEqual({
-      disposition: "confirmed",
-      guid: "OUT-MODULE",
-    });
-    expect(replies).toEqual([{ chatId: 42, text: "hello back" }]);
-    expect(rpc.calls).toEqual([]);
-    await watch.close();
-  });
-
-  test("targets the originating chat and confirms only a GUID-bearing result", async () => {
-    const rpc = new FakeRpc();
-    const result = await new ImsgTransport(rpc).sendText(42, "hello");
-    expect(rpc.calls).toEqual([
-      { method: "send", params: { chat_id: 42, text: "hello" } },
-    ]);
-    expect(result).toEqual({ disposition: "confirmed", guid: "OUT-1" });
-
-    rpc.result = { ok: true };
-    expect(await new ImsgTransport(rpc).sendText(42, "hello")).toEqual({
-      disposition: "ambiguous",
-    });
-  });
-
-  test("preserves imsg retry-safe and uncertain error dispositions", async () => {
-    const rpc = new FakeRpc();
-    rpc.result = new ImsgRpcError(-32001, "unknown", {
-      disposition: "may_have_completed",
-      retry_safe: false,
-    });
-    expect(await new ImsgTransport(rpc).sendText(42, "hello")).toEqual({
-      disposition: "ambiguous",
-    });
-
-    rpc.result = new ImsgRpcError(-32603, "not started", {
-      disposition: "not_started",
-      retry_safe: true,
-    });
-    expect(await new ImsgTransport(rpc).sendText(42, "hello")).toEqual({
-      disposition: "failed",
-      retrySafe: true,
-    });
-  });
-});
-
-test("outbound echo fingerprints expire and remain bounded", () => {
-  let now = 1_000;
-  const tracker = new OutboundEchoTracker({ maxEntries: 2, now: () => now, ttlMs: 100 });
-  tracker.record(1, "first");
-  tracker.record(2, "second");
-  tracker.record(3, "third");
-  expect(tracker.matches(1, "first")).toBeFalse();
-  expect(tracker.matches(3, "third")).toBeTrue();
-  now += 101;
-  expect(tracker.matches(3, "third")).toBeFalse();
-});
-
-test("watch filters activations and surfaces a resumable overflow cursor", async () => {
-  const rpc = new FakeRpc();
+  const transport = new ImsgTransport(messages);
   const activations: string[] = [];
   const rows: number[] = [];
-  const overflows: number[] = [];
-  const watch = await new ImsgTransport(rpc).watch({
-    onActivation: (request) => {
-      activations.push(request.request);
-    },
-    onOverflow: (cursor) => {
-      overflows.push(cursor);
-    },
-    onMessageRowId: (rowId) => {
-      rows.push(rowId);
-    },
-    sinceRowId: 10,
-    tags: ["@helper", "@plan"],
-  });
-
-  await rpc.emit("message", {
-    message: {
-      chat_id: 42,
-      guid: "IN-UNTAGGED",
-      id: 10,
-      service: "iMessage",
-      text: "ordinary conversation",
-    },
-    subscription: 7,
-  });
-  expect(rpc.calls.some((call) => call.method === "messages.stats")).toBeFalse();
-
-  await rpc.emit("message", {
-    message: {
-      chat_id: 42,
-      guid: "IN-1",
-      id: 11,
-      text: "@helper continue",
-    },
-    subscription: 7,
-  });
-  const selfText = "@helper ping";
-  const selfOutgoing = {
-    chat_id: 42,
-    created_at: "2026-08-18T20:02:35.763Z",
-    guid: "SELF-WATCH-OUT",
-    id: 12,
-    is_from_me: true,
-    service: "iMessage",
-    text: selfText,
-  };
-  await rpc.emit("message", { message: selfOutgoing, subscription: 7 });
-  await rpc.emit("message", {
-    message: {
-      chat_id: 42,
-      created_at: "2026-08-18T20:02:35.635Z",
-      guid: "SELF-WATCH-MIRROR",
-      id: 13,
-      is_from_me: false,
-      reply_to_guid: "SELF-WATCH-OUT",
-      reply_to_text: selfText,
-      service: "iMessage",
-      text: selfText,
-    },
-    subscription: 7,
-  });
-  await rpc.emit("watch.overflow", {
-    resume_after_rowid: 13,
-    subscription: 7,
-    terminal: true,
-  });
-
-  expect(activations).toEqual(["continue", "ping"]);
-  expect(rows).toEqual([10, 11, 12, 13]);
-  expect(overflows).toEqual([13]);
-  await watch.close();
-  expect(rpc.calls.at(-1)).toEqual({
-    method: "watch.unsubscribe",
-    params: { subscription: 7 },
-  });
-});
-
-test("catch-up correlates a self-chat mirror even when the outgoing row predates the cursor", async () => {
-  const rpc = new FakeRpc();
-  const text = "@helper ping";
-  rpc.nearby = {
-    messages: [
-      {
-        chat_id: 42,
-        created_at: "2026-08-18T20:02:35.763Z",
-        guid: "SELF-CATCHUP-OUT",
-        id: 12,
-        is_from_me: true,
-        text,
-      },
-    ],
-  };
-  rpc.after = {
-    has_more: false,
-    messages: [
-      {
-        chat_id: 42,
-        created_at: "2026-08-18T20:02:35.635Z",
-        guid: "SELF-CATCHUP-MIRROR",
-        id: 13,
-        is_from_me: false,
-        reply_to_guid: "SELF-CATCHUP-OUT",
-        reply_to_text: text,
-        service: "iMessage",
-        text,
-      },
-    ],
-    next_rowid: 13,
-  };
-  const activations: string[] = [];
-
-  expect(
-    await new ImsgTransport(rpc).catchUp({
-      onActivation: (request) => {
-        activations.push(request.request);
-      },
-      sinceRowId: 12,
-      tags: ["@helper"],
-    }),
-  ).toBe(13);
-  expect(activations).toEqual([]);
-  expect(rpc.calls).toContainEqual({
-    method: "messages.after",
-    params: {
-      attachments: false,
-      include_reactions: true,
-      limit: 100,
-      since_rowid: 0,
-    },
-  });
-});
-
-test("catch-up correlates a restart-boundary mirror without reply metadata", async () => {
-  const rpc = new FakeRpc();
-  const text = "@helper ping";
-  rpc.nearby = {
-    messages: [
-      {
-        chat_id: 42,
-        created_at: "2026-08-18T20:02:35.763Z",
-        guid: "SELF-NO-REPLY-OUT",
-        id: 12,
-        is_from_me: true,
-        text,
-      },
-    ],
-  };
-  rpc.after = {
-    has_more: false,
-    messages: [
-      {
-        chat_id: 42,
-        created_at: "2026-08-18T20:02:35.635Z",
-        guid: "SELF-NO-REPLY-MIRROR",
-        id: 13,
-        is_from_me: false,
-        service: "iMessage",
-        text,
-      },
-    ],
-    next_rowid: 13,
-  };
-  const activations: string[] = [];
-
-  expect(
-    await new ImsgTransport(rpc).catchUp({
-      onActivation: (request) => {
-        activations.push(request.request);
-      },
-      sinceRowId: 12,
-      tags: ["@helper"],
-    }),
-  ).toBe(13);
-  expect(activations).toEqual([]);
-});
-
-test("correlation lookup failure suppresses a mirror-shaped restart row without stalling cursors", async () => {
-  const text = "@helper ping";
-  const mirror = {
-    chat_id: 42,
-    created_at: "2026-08-18T20:02:35.635Z",
-    guid: "UNCERTAIN-MIRROR",
-    id: 13,
-    is_from_me: false,
-    reply_to_guid: "MISSING-OUT",
-    reply_to_text: text,
-    service: "iMessage",
-    text,
-  };
-  const watchRpc = new FakeRpc();
-  watchRpc.nearby = new Error("history unavailable");
-  const watchActivations: string[] = [];
-  const watchRows: number[] = [];
-  const watch = await new ImsgTransport(watchRpc).watch({
-    onActivation: (request) => {
-      watchActivations.push(request.request);
-    },
-    onMessageRowId: (rowId) => {
-      watchRows.push(rowId);
-    },
-    onOverflow: () => undefined,
+  const watch = await transport.watch({
+    onActivation: (activation) => { activations.push(activation.providerGuid); },
+    onMessageRowId: (rowId) => { rows.push(rowId); },
     tags: ["@helper"],
   });
-
-  await watchRpc.emit("message", { message: mirror, subscription: 7 });
-  expect(watchActivations).toEqual([]);
-  expect(watchRows).toEqual([13]);
   await watch.close();
 
-  const catchUpRpc = new FakeRpc();
-  catchUpRpc.nearby = new Error("history unavailable");
-  catchUpRpc.after = {
-    has_more: false,
-    messages: [mirror],
-    next_rowid: 13,
-  };
-  const catchUpActivations: string[] = [];
-  const catchUpRows: number[] = [];
-  expect(
-    await new ImsgTransport(catchUpRpc).catchUp({
-      onActivation: (request) => {
-        catchUpActivations.push(request.request);
-      },
-      onMessageRowId: (rowId) => {
-        catchUpRows.push(rowId);
-      },
-      sinceRowId: 12,
-      tags: ["@helper"],
-    }),
-  ).toBe(13);
-  expect(catchUpActivations).toEqual([]);
-  expect(catchUpRows).toEqual([13]);
+  expect(activations).toEqual(["message-guid"]);
+  expect(rows).toEqual([101]);
+  expect(await transport.qualify()).toEqual({ degraded: ["polls"], version: "0.14.1" });
+  expect(await transport.recentMessages(42, 4)).toEqual([expect.objectContaining({
+    messageGuid: "history-guid",
+    text: "context",
+  })]);
+  expect(messages.historyInput).toMatchObject({
+    budget: { maxMessages: 4, maxRows: 4, maxRpcCalls: 1 },
+    conversation: event().conversation,
+  });
+  expect(await transport.sendText(42, "reply")).toEqual({
+    disposition: "confirmed",
+    guid: "sent-guid",
+  });
+  expect(messages.replyInput).toEqual({ conversation: event().conversation, text: "reply" });
+
+  messages.replyOutcome = { status: "ambiguous" };
+  expect(await transport.sendText(42, "reply")).toEqual({ disposition: "ambiguous" });
+  messages.replyOutcome = { retryable: true, status: "failed" };
+  expect(await transport.sendText(42, "reply")).toEqual({
+    disposition: "failed",
+    retrySafe: true,
+  });
+});
+
+test("delivery and history require an observed exact conversation", async () => {
+  const transport = new ImsgTransport(new FakeMessages());
+  await expect(transport.sendText(42, "reply")).rejects.toThrow("scope is unavailable");
+  await expect(transport.recentMessages(42)).rejects.toThrow("scope is unavailable");
 });

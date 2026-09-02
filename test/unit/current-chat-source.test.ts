@@ -94,12 +94,12 @@ test("queries details, rich history, and materialized attachments through public
     service: "iMessage",
   });
   const history = await source.history(42, 30) as {
-    messages: Array<{ attachments: Array<{ attachment_id: string }>; url_preview: boolean }>;
+    messages: Array<{ attachments: Array<{ attachmentId: string }>; urlPreview: boolean }>;
   };
-  expect(history.messages[0]?.url_preview).toBeTrue();
+  expect(history.messages[0]?.urlPreview).toBeTrue();
   expect(JSON.stringify(history)).not.toContain("attachment-token");
   expect(JSON.stringify(history)).not.toContain("/tmp/pronto-photo.png");
-  const attachmentId = history.messages[0]!.attachments[0]!.attachment_id;
+  const attachmentId = history.messages[0]!.attachments[0]!.attachmentId;
   expect(attachmentId).toEqual(expect.any(String));
   expect(await source.attachment(42, "MSG-1", attachmentId)).toEqual({
     attachmentId,

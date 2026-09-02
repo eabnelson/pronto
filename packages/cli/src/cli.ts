@@ -35,7 +35,6 @@ import { brokerQuery, runMcpStdio } from "./tools/mcp";
 import { ProntoDaemon } from "./core/daemon";
 import { qualifyRuntime } from "./runtimes/qualification";
 import { createRuntimeAdapter } from "./runtimes/factory";
-import { NdjsonRpcClient } from "./imessage/rpc-client";
 import { ImsgTransport } from "./imessage/transport";
 import { DeliveryJournal } from "./storage/journal";
 import { LAUNCH_AGENT_LABEL } from "./macos/paths";
@@ -156,14 +155,12 @@ async function runSetup(): Promise<number> {
       tags,
       workingDirectory,
     });
-    const imsgRpc = new NdjsonRpcClient(discovery.imsgPath);
     const messages = createProntoMessages({ imsgPath: discovery.imsgPath });
     try {
-      const transport = new ImsgTransport(imsgRpc, { messages });
+      const transport = new ImsgTransport(messages);
       const imsg = await transport.qualify();
       const watch = await transport.watch({
         onActivation: () => undefined,
-        onOverflow: () => undefined,
         tags: config.tags,
       });
       await watch.close();
@@ -180,7 +177,6 @@ async function runSetup(): Promise<number> {
       console.error("Setup stopped before installation because iMessage qualification failed.");
       return 1;
     } finally {
-      await imsgRpc.close().catch(() => undefined);
       await messages.close().catch(() => undefined);
     }
     console.log("Qualifying each selected runtime with one temporary, noninteractive file-tool probe...");
@@ -242,14 +238,12 @@ async function runDoctor(json = false): Promise<number> {
   const report = await inspectInstallation(paths);
   if (report.healthy) {
     const config = await loadConfig(paths.configPath);
-    const rpc = new NdjsonRpcClient(config.imsgPath);
     const messages = createProntoMessages({ imsgPath: config.imsgPath });
     try {
-      const transport = new ImsgTransport(rpc, { messages });
+      const transport = new ImsgTransport(messages);
       const imsg = await transport.qualify();
       const watch = await transport.watch({
         onActivation: () => undefined,
-        onOverflow: () => undefined,
         tags: config.tags,
       });
       await watch.close();
@@ -273,7 +267,6 @@ async function runDoctor(json = false): Promise<number> {
         status: "failed",
       });
     } finally {
-      await rpc.close().catch(() => undefined);
       await messages.close().catch(() => undefined);
     }
 

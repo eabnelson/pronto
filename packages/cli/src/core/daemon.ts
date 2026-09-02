@@ -1,6 +1,5 @@
 import type { ProntoConfig } from "../config";
 import { ImsgCurrentChatSource } from "../imessage/current-chat-source";
-import { NdjsonRpcClient } from "../imessage/rpc-client";
 import { ImsgTransport } from "../imessage/transport";
 import type { ProntoPaths } from "../macos/paths";
 import { RuntimeChain } from "../runtimes/chain";
@@ -36,16 +35,14 @@ export class ProntoDaemon {
   async run(): Promise<void> {
     const database = openProntoDatabase(this.paths.databasePath);
     const journal = new DeliveryJournal(database);
-    const rpc = new NdjsonRpcClient(this.config.imsgPath);
     const legacyUnscopedCursor = journal.cursor();
     const messages = createProntoMessages({
       imsgPath: this.config.imsgPath,
       ...(legacyUnscopedCursor === undefined ? {} : { legacyUnscopedCursor }),
       statePath: this.paths.providerStatePath,
     });
-    const transport = new ImsgTransport(rpc, {
+    const transport = new ImsgTransport(messages, {
       matchesOutboundEcho: (chatId, text) => journal.matchesOutboundEcho(chatId, text),
-      messages,
     });
     const currentChatSource = new ImsgCurrentChatSource(
       messages,
@@ -92,49 +89,26 @@ export class ProntoDaemon {
         }),
       );
 
-      let stopped = false;
       const stopSignal = new Promise<"stop">((resolve) => {
         this.#stop = () => {
-          stopped = true;
           resolve("stop");
         };
         if (this.#stopRequested) this.#stop();
       });
-
-      while (!stopped) {
-        let overflow: ((cursor: number) => void) | null = null;
-        const overflowSignal = new Promise<number>((resolve) => {
-          overflow = resolve;
-        });
-        const sinceRowId = journal.cursor();
-        activeWatch = await transport.watch({
-          onActivation: (request) => {
-            coordinator.admit(request);
-          },
-          onMessageRowId: (rowId) => journal.advanceCursor(rowId),
-          onOverflow: (cursor) => overflow?.(cursor),
-          ...(sinceRowId === undefined ? {} : { sinceRowId }),
-          tags: this.config.tags,
-        });
-        const outcome = await Promise.race([
-          stopSignal,
-          overflowSignal,
-          activeWatch.terminated.then(() => "transport-closed" as const),
-        ]);
-        await activeWatch.close().catch(() => undefined);
-        activeWatch = null;
-        if (outcome === "stop") break;
-        if (outcome === "transport-closed") throw new Error("imsg RPC transport closed");
-        const cursor = await transport.catchUp({
-          onActivation: (request) => {
-            coordinator.admit(request);
-          },
-          onMessageRowId: (rowId) => journal.advanceCursor(rowId),
-          sinceRowId: outcome,
-          tags: this.config.tags,
-        });
-        journal.advanceCursor(cursor);
-      }
+      activeWatch = await transport.watch({
+        onActivation: (request) => {
+          coordinator.admit(request);
+        },
+        onMessageRowId: (rowId) => journal.advanceCursor(rowId),
+        tags: this.config.tags,
+      });
+      const outcome = await Promise.race([
+        stopSignal,
+        activeWatch.terminated.then(() => "transport-closed" as const),
+      ]);
+      if (outcome === "transport-closed") throw new Error("Pronto Messages transport closed");
+      await activeWatch.close().catch(() => undefined);
+      activeWatch = null;
       await coordinator.idle();
       journal.recordDaemonHealth("stopped");
     } catch (error) {
@@ -145,7 +119,6 @@ export class ProntoDaemon {
       await activeWatch?.close().catch(() => undefined);
       brokerServer?.close();
       await currentChatSource.close().catch(() => undefined);
-      await rpc.close().catch(() => undefined);
       await messages.close().catch(() => undefined);
       database.close();
     }

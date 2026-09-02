@@ -8,7 +8,7 @@ import type {
   MessagesEvent,
   ProntoMessages,
 } from "pronto-imessage";
-import { rawFromMessagesEvent } from "./event-adapter";
+import { currentChatMessageFromEvent } from "./event-adapter";
 
 interface ConversationContext {
   readonly facts: ConversationFacts;
@@ -57,7 +57,7 @@ export class ImsgCurrentChatSource implements CurrentChatSource {
     });
     return {
       has_more: page.hasMore,
-      messages: page.messages.map((event) => rawFromMessagesEvent(event, (attachment) => {
+      messages: page.messages.map((event) => currentChatMessageFromEvent(event, (attachment) => {
         if (attachment.reference === undefined) return undefined;
         const id = opaqueAttachmentId(attachment.reference);
         const key = `${chatId}:${event.message.providerMessageId}:${id}`;

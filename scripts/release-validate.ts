@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import packageJson from "../package.json" with { type: "json" };
 import messagesPackageJson from "../packages/messages/package.json" with { type: "json" };
+import { providerOwnershipViolations } from "./provider-ownership";
 import { mutableActionReferences } from "./workflow-validation";
 
 const root = join(import.meta.dir, "..");
@@ -91,6 +92,21 @@ const requiredFileChecks = await Promise.all(
 for (const required of requiredFileChecks) {
   if (!required.exists) failures.push(`${required.path} is missing`);
 }
+for (const [path, args] of [
+  ["dist/pronto", ["--version"]],
+  ["dist/pronto", ["--help"]],
+  ["dist/s4imsg", ["--version"]],
+] as const) {
+  if (!(await Bun.file(join(root, path)).exists())) continue;
+  const command = Bun.spawn([join(root, path), ...args], {
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  if (await command.exited !== 0) {
+    failures.push(`${path} ${args.join(" ")} failed after compilation`);
+  }
+}
+failures.push(...await providerOwnershipViolations(root));
 
 if (!license.startsWith("MIT License")) failures.push("MIT license text is missing");
 if (!notices.includes("Copyright (c) 2026 Peter Steinberger")) {
