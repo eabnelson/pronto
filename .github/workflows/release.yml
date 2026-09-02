@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing immutable tag to rebuild and publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -11,16 +17,20 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     permissions:
       contents: read
     outputs:
       package-file: ${{ steps.release-version.outputs.package-file }}
       package-version: ${{ steps.release-version.outputs.package-version }}
       prerelease: ${{ steps.release-version.outputs.prerelease }}
+      release-tag: ${{ steps.release-version.outputs.release-tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.14
@@ -41,17 +51,18 @@ jobs:
         run: |
           VERSION="$(bun -e 'import packageJson from "./package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
           PACKAGE_VERSION="$(bun -e 'import packageJson from "./packages/messages/package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
-          test "v$VERSION" = "$GITHUB_REF_NAME"
+          test "v$VERSION" = "$RELEASE_TAG"
           test "$VERSION" = "$PACKAGE_VERSION"
           echo "package-file=pronto-imessage-$PACKAGE_VERSION.tgz" >> "$GITHUB_OUTPUT"
           echo "package-version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "release-tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *-* ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Verify owner qualification is complete
-        run: bun ./scripts/release-qualification.ts docs/RELEASE_QUALIFICATION.md "$GITHUB_REF_NAME"
+        run: bun ./scripts/release-qualification.ts docs/RELEASE_QUALIFICATION.md "$RELEASE_TAG"
       - name: Create and verify checksum
         run: |
           npm pack ./packages/messages --pack-destination ./dist
@@ -88,16 +99,17 @@ jobs:
       NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       PACKAGE_FILE: ${{ needs.build.outputs.package-file }}
       PACKAGE_VERSION: ${{ needs.build.outputs.package-version }}
+      RELEASE_TAG: ${{ needs.build.outputs.release-tag }}
     steps:
       - name: Refuse to mutate an existing release
         run: |
           EXISTING_RELEASE_ID="$(
             gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
-              jq -r --arg tag "$GITHUB_REF_NAME" \
+              jq -r --arg tag "$RELEASE_TAG" \
                 '.[] | select(.tag_name == $tag) | .id'
           )"
           if [[ -n "$EXISTING_RELEASE_ID" ]]; then
-            echo "Release $GITHUB_REF_NAME already exists; releases and their assets are immutable."
+            echo "Release $RELEASE_TAG already exists; releases and their assets are immutable."
             echo "If a previous attempt left a draft, delete that draft explicitly before rerunning."
             exit 1
           fi
@@ -117,18 +129,18 @@ jobs:
           sha256sum -c pronto-imessage.sha256
       - name: Create draft release
         run: |
-          gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag \
-            --prerelease="$IS_PRERELEASE" --title "Pronto $GITHUB_REF_NAME"
+          gh release create "$RELEASE_TAG" --draft --generate-notes --verify-tag \
+            --prerelease="$IS_PRERELEASE" --title "Pronto $RELEASE_TAG"
       - name: Upload and verify draft assets
         run: |
-          gh release upload "$GITHUB_REF_NAME" \
+          gh release upload "$RELEASE_TAG" \
             release-assets/pronto release-assets/pronto.sha256 \
             release-assets/s4imsg release-assets/s4imsg.sha256 \
             "release-assets/$PACKAGE_FILE" release-assets/pronto-imessage.sha256
 
           RELEASE_ID="$(
             gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
-              jq -r --arg tag "$GITHUB_REF_NAME" --arg package "$PACKAGE_FILE" '
+              jq -r --arg tag "$RELEASE_TAG" --arg package "$PACKAGE_FILE" '
                 .[] |
                 select(
                   .tag_name == $tag and
@@ -146,10 +158,10 @@ jobs:
           if [[ -n "$REMOTE_SHASUM" ]]; then
             test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"
           else
-            npm publish "release-assets/$PACKAGE_FILE" --provenance --access public
+            npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public
           fi
           test "$(npm view "pronto-imessage@$PACKAGE_VERSION" version)" = "$PACKAGE_VERSION"
       - name: Publish verified release
         run: |
-          gh release edit "$GITHUB_REF_NAME" --draft=false
-          test "$(gh api "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME" --jq '.draft')" = "false"
+          gh release edit "$RELEASE_TAG" --draft=false
+          test "$(gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq '.draft')" = "false"
