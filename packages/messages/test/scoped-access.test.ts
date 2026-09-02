@@ -39,6 +39,7 @@ async function scopedClient(input: {
   readonly event: Record<string, unknown>;
   readonly forwardPages?: Readonly<Record<string, unknown>>;
   readonly recent?: readonly Record<string, unknown>[];
+  readonly referenceKey?: string;
   readonly rpcLogPath?: string;
   readonly scopeLimits?: MessagesScopeLimits;
   readonly scratchRoot?: string;
@@ -95,6 +96,7 @@ for await (const chunk of Bun.stdin.stream()) {
   return createProntoMessages({
     ...(input.attachmentsRoot === undefined ? {} : { attachmentsRoot: input.attachmentsRoot }),
     imsgPath: executable,
+    ...(input.referenceKey === undefined ? {} : { referenceKey: input.referenceKey }),
     scopeLimits: {
       maxAttachmentBytes: 1_024 * 1_024,
       maxAttachmentCount: 8,
@@ -140,6 +142,36 @@ const historyBudget = {
   maxRows: 1,
   maxRpcCalls: 1,
 } as const;
+
+test("a keyed conversation reference survives a client restart", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const referenceKey = "0123456789abcdef0123456789abcdef";
+  await writeFile(databasePath, "database evidence");
+  const first = await scopedClient({ databasePath, event: observedEvent, referenceKey });
+  const observed = await nextEvent(first);
+  await first.close();
+
+  const resumed = await scopedClient({ databasePath, event: observedEvent, referenceKey });
+  await resumed.qualify();
+  expect(await resumed.reply({ conversation: observed.conversation, text: "resume" }))
+    .toEqual({ providerMessageId: "sent-guid", status: "confirmed" });
+  await expect(resumed.history({
+    budget: historyBudget,
+    conversation: observed.conversation,
+  })).rejects.toThrow("messages_conversation_reference_invalid");
+  await resumed.close();
+
+  const wrongKey = await scopedClient({
+    databasePath,
+    event: observedEvent,
+    referenceKey: "fedcba9876543210fedcba9876543210",
+  });
+  await wrongKey.qualify();
+  await expect(wrongKey.reply({ conversation: observed.conversation, text: "reject" }))
+    .rejects.toThrow("messages_conversation_reference_invalid");
+  await wrongKey.close();
+});
 
 test("sealed conversation history preserves reactions, previews, pagination, and scope", async () => {
   const directory = await fixtureDirectory();
@@ -222,6 +254,7 @@ test("sealed conversation history preserves reactions, previews, pagination, and
 test("scope expiry and cumulative budgets fail closed", async () => {
   const directory = await fixtureDirectory();
   const databasePath = join(directory, "chat.db");
+  const rpcLogPath = join(directory, "rpc.log");
   await writeFile(databasePath, "database evidence");
   const recent = [{
     ...observedEvent,
@@ -246,6 +279,7 @@ test("scope expiry and cumulative budgets fail closed", async () => {
     databasePath,
     event: observedEvent,
     recent,
+    rpcLogPath,
     scopeLimits: { ttlMs: 500 },
   });
   const expiringEvent = await nextEvent(expiring);
@@ -254,6 +288,11 @@ test("scope expiry and cumulative budgets fail closed", async () => {
     budget: historyBudget,
     conversation: expiringEvent.conversation,
   })).rejects.toThrow("reference_invalid");
+  expect(await expiring.reply({
+    conversation: expiringEvent.conversation,
+    text: "must remain unsent",
+  })).toEqual({ retryable: false, status: "failed" });
+  expect(await readFile(rpcLogPath, "utf8")).not.toContain("send\n");
   await expiring.close();
 });
 

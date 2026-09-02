@@ -1,8 +1,9 @@
-import type { MessagesEvent } from "pronto-imessage";
+import type { ConversationReference, MessagesEvent } from "pronto-imessage";
 
 export interface ActivatedRequest {
   activationTag: string;
   chatId: number;
+  conversation: ConversationReference;
   isFromMe: boolean;
   providerGuid: string;
   request: string;
@@ -65,6 +66,7 @@ export function activatedRequest(
   return {
     activationTag: activation.activationTag,
     chatId: event.conversation.chatId,
+    conversation: event.conversation,
     isFromMe: message.fromMe,
     providerGuid: message.providerMessageId,
     request: activation.request,

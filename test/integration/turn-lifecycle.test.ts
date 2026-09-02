@@ -100,6 +100,13 @@ const source: CurrentChatSource = {
 const activation: ActivatedRequest = {
   activationTag: "@helper",
   chatId: 42,
+  conversation: {
+    chatId: 42,
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    provider: "apple-messages",
+    token: "persisted-conversation-reference",
+    version: 1,
+  },
   isFromMe: false,
   providerGuid: "IN-1",
   request: "Draft the launch note.",
@@ -308,6 +315,7 @@ describe("turn lifecycle", () => {
       h.coordinator.admit({
         ...activation,
         chatId: 99,
+        conversation: { ...activation.conversation, chatId: 99 },
         providerGuid: "IN-OTHER-CHAT",
         request: "1",
       });
@@ -658,6 +666,7 @@ describe("turn lifecycle", () => {
         activationTag: "@plan",
         chatId: 42,
         chatKey: chatKeyForId(42, h.salt),
+        conversation: activation.conversation,
         providerGuid: "IN-RECOVER",
         request: "recover me",
       });
@@ -670,6 +679,35 @@ describe("turn lifecycle", () => {
       expect(primary.inputs).toHaveLength(0);
       expect(h.transport.sends).toEqual([{ chatId: 42, text: "Plan\nalready accepted" }]);
       expect(h.journal.state("IN-RECOVER")).toBe("delivered");
+    } finally {
+      h.close();
+    }
+  });
+
+  test("fails a legacy accepted reply without marking an unattempted send ambiguous", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "must not run" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    try {
+      h.journal.admit({
+        activationTag: "@plan",
+        chatId: 42,
+        chatKey: chatKeyForId(42, h.salt),
+        providerGuid: "IN-LEGACY-RECOVER",
+        request: "recover me",
+      });
+      const lease = h.journal.lease("IN-LEGACY-RECOVER")!;
+      h.journal.accept("IN-LEGACY-RECOVER", lease, { reply: "already accepted" });
+
+      expect(h.coordinator.start()).toEqual({ ambiguous: 0, parked: 0, resumed: 1 });
+      await h.coordinator.idle();
+
+      expect(primary.inputs).toHaveLength(0);
+      expect(h.transport.sends).toEqual([]);
+      expect(h.journal.state("IN-LEGACY-RECOVER")).toBe("failed");
     } finally {
       h.close();
     }

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { validSummary } from "../context/compact";
 import type { RuntimeKind } from "../config";
 import type { RuntimeAttemptResult, ToolActivity } from "../runtimes/types";
+import type { ConversationReference } from "pronto-imessage";
 import { promoteMemory } from "./memory";
 import { promoteWorkspace } from "./workspaces";
 import { MAX_RUNTIME_TEXT_CHARACTERS, MAX_WORKSPACE_CANDIDATES } from "../workspace";
@@ -23,6 +24,7 @@ export interface AdmissionInput {
   activationTag?: string;
   chatId: number;
   chatKey: string;
+  conversation?: ConversationReference;
   providerGuid: string;
   request: string;
 }
@@ -48,6 +50,27 @@ export interface DaemonHealth {
 }
 
 const ACTIVE_STATES = ["admitted", "running", "ready_to_send", "sending"] as const;
+
+function parseConversationReference(value: string, chatId: number): ConversationReference {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("Stored conversation reference is invalid");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Stored conversation reference is invalid");
+  }
+  const reference = parsed as Record<string, unknown>;
+  if (
+    reference.chatId !== chatId || reference.provider !== "apple-messages" ||
+    reference.version !== 1 || typeof reference.expiresAt !== "string" ||
+    typeof reference.token !== "string" || reference.token.length === 0
+  ) {
+    throw new Error("Stored conversation reference is invalid");
+  }
+  return reference as unknown as ConversationReference;
+}
 
 export class DeliveryJournal {
   constructor(
@@ -77,14 +100,17 @@ export class DeliveryJournal {
       this.database
         .query(
           `INSERT INTO delivery_events
-           (provider_guid, chat_key, chat_id, activation_tag, tagged_request, state,
-            created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (provider_guid, chat_key, chat_id, conversation_reference, activation_tag,
+            tagged_request, state, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.providerGuid,
           input.chatKey,
           input.chatId,
+          rateLimited || input.conversation === undefined
+            ? null
+            : JSON.stringify(input.conversation),
           rateLimited ? null : input.activationTag ?? null,
           rateLimited ? null : input.request,
           rateLimited ? "rate_limited" : "admitted",
@@ -110,8 +136,8 @@ export class DeliveryJournal {
   nextRunnable(): QueuedEvent | null {
     const row = this.database
       .query(
-        `SELECT provider_guid, chat_key, chat_id, activation_tag, tagged_request, state,
-                accepted_reply, lease_token
+        `SELECT provider_guid, chat_key, chat_id, conversation_reference, activation_tag,
+                tagged_request, state, accepted_reply, lease_token
          FROM delivery_events
          WHERE state IN ('admitted', 'ready_to_send') AND tagged_request IS NOT NULL
          ORDER BY created_at ASC, rowid ASC
@@ -121,6 +147,7 @@ export class DeliveryJournal {
       | {
           chat_id: number;
           chat_key: string;
+          conversation_reference: string | null;
           activation_tag: string | null;
           provider_guid: string;
           tagged_request: string;
@@ -133,6 +160,9 @@ export class DeliveryJournal {
     const event = {
       chatId: row.chat_id,
       chatKey: row.chat_key,
+      ...(row.conversation_reference === null
+        ? {}
+        : { conversation: parseConversationReference(row.conversation_reference, row.chat_id) }),
       providerGuid: row.provider_guid,
       request: row.tagged_request,
       ...(row.activation_tag === null ? {} : { activationTag: row.activation_tag }),
@@ -407,6 +437,7 @@ export class DeliveryJournal {
         .query(
           `UPDATE delivery_events
            SET state = 'delivered', outbound_guid = ?, activation_tag = NULL,
+               conversation_reference = NULL,
                tagged_request = NULL,
                accepted_reply = NULL, proposed_summary = NULL,
                proposed_working_directory = NULL, proposed_workspace_candidates = NULL,
@@ -421,7 +452,8 @@ export class DeliveryJournal {
     this.#requireChange(
       this.database
         .query(
-          `UPDATE delivery_events SET state = 'ambiguous', updated_at = ?
+          `UPDATE delivery_events
+           SET state = 'ambiguous', conversation_reference = NULL, updated_at = ?
            WHERE provider_guid = ? AND lease_token = ? AND state = 'sending'`,
         )
         .run(this.now(), providerGuid, lease).changes,
@@ -435,7 +467,7 @@ export class DeliveryJournal {
         .query(
           `UPDATE delivery_events
            SET state = 'failed', activation_tag = NULL, tagged_request = NULL,
-               accepted_reply = NULL,
+               accepted_reply = NULL, conversation_reference = NULL,
                proposed_summary = NULL, proposed_working_directory = NULL,
                proposed_workspace_candidates = NULL, outbound_fingerprint = NULL,
                outbound_fingerprint_expires_at = NULL, updated_at = ?
@@ -451,7 +483,8 @@ export class DeliveryJournal {
     this.#requireChange(
       this.database
         .query(
-          `UPDATE delivery_events SET state = 'parked', updated_at = ?
+          `UPDATE delivery_events
+           SET state = 'parked', conversation_reference = NULL, updated_at = ?
            WHERE provider_guid = ? AND lease_token = ? AND state = 'running'`,
         )
         .run(this.now(), providerGuid, lease).changes,

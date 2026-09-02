@@ -52,8 +52,12 @@ export class ImsgTransport {
     return activatedRequest(event, tags);
   }
 
-  async recentMessages(chatId: number, limit = 30): Promise<unknown[]> {
-    const conversation = this.#conversations.get(chatId)?.reference;
+  async recentMessages(
+    chatId: number,
+    limit = 30,
+    restoredConversation?: ConversationReference,
+  ): Promise<unknown[]> {
+    const conversation = this.#conversations.get(chatId)?.reference ?? restoredConversation;
     if (conversation === undefined) throw new Error("Current conversation scope is unavailable");
     const page = await this.messages.history({
       budget: {
@@ -91,9 +95,14 @@ export class ImsgTransport {
     });
   }
 
-  async sendText(chatId: number, text: string): Promise<SendDisposition> {
-    const conversation = this.#conversations.get(chatId)?.reference;
+  async sendText(
+    chatId: number,
+    text: string,
+    restoredConversation?: ConversationReference,
+  ): Promise<SendDisposition> {
+    const conversation = this.#conversations.get(chatId)?.reference ?? restoredConversation;
     if (conversation === undefined) throw new Error("Current conversation scope is unavailable");
+    if (conversation.chatId !== chatId) throw new Error("Current conversation scope is unavailable");
     const outcome = await this.messages.reply({ conversation, text });
     if (outcome.status === "confirmed") {
       return { disposition: "confirmed", guid: outcome.providerMessageId };

@@ -7,10 +7,13 @@ import { dirname, join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import { addTag, loadConfig, normalizeTags, removeTag, saveConfig } from "./config";
 import {
+  launchAgentStateForLabel,
   parseLaunchAgentState,
   removeLaunchAgent,
+  restoreLaunchAgentForLabel,
   restartLaunchAgent,
   stopLaunchAgent,
+  stopLaunchAgentForLabel,
 } from "./macos/launch-agent";
 import { legacyPathsForHome, pathsForHome } from "./macos/paths";
 import {
@@ -155,54 +158,10 @@ async function runSetup(): Promise<number> {
       tags,
       workingDirectory,
     });
-    const messages = createProntoMessages({ imsgPath: discovery.imsgPath });
-    try {
-      const transport = new ImsgTransport(messages);
-      const imsg = await transport.qualify();
-      const watch = await transport.watch({
-        onActivation: () => undefined,
-        tags: config.tags,
-      });
-      await watch.close();
-      printCheck({ id: "imessage-read-watch", status: "ok" });
-      for (const capability of imsg.degraded) {
-        printCheck({ id: `imessage-${capability}`, status: "degraded" });
-      }
-    } catch {
-      printCheck({
-        id: "imessage-read-watch",
-        remediation: "Grant Full Disk Access to this setup terminal and verify imsg RPC access.",
-        status: "failed",
-      });
-      console.error("Setup stopped before installation because iMessage qualification failed.");
-      return 1;
-    } finally {
-      await messages.close().catch(() => undefined);
-    }
-    console.log("Qualifying each selected runtime with one temporary, noninteractive file-tool probe...");
     const sourceEntry = process.argv[1];
     const sourceInvocation = sourceEntry !== undefined && sourceEntry.endsWith(".ts");
     const bridgeExecutablePath = process.execPath;
     const bridgeExecutableArgs = sourceInvocation ? [resolve(sourceEntry)] : undefined;
-    for (const [kind, executablePath] of [
-      [config.primaryRuntime, config.primaryRuntimePath],
-      [config.fallbackRuntime, config.fallbackRuntimePath],
-    ] as const) {
-      if (kind === undefined || executablePath === undefined) continue;
-      const result = await qualifyRuntime({
-        adapter: createRuntimeAdapter(kind, executablePath),
-        ...(bridgeExecutableArgs === undefined ? {} : { bridgeExecutableArgs }),
-        bridgeExecutablePath,
-        commandRunner: runCommand,
-        workingDirectory: config.workingDirectory,
-      });
-      for (const check of result.checks) printCheck(check);
-      if (!result.qualified) {
-        console.error("Setup stopped before installation because runtime qualification failed.");
-        return 1;
-      }
-    }
-    const migration = await prepareLegacyInstallation({ legacyPaths, paths });
     await completeSetupCutover({
       install: async () => {
         await installSetup({
@@ -213,13 +172,78 @@ async function runSetup(): Promise<number> {
             : {}),
         });
       },
-      migration,
+      prepareMigration: () => prepareLegacyInstallation({ legacyPaths, paths }),
+      preflight: async () => {
+        const messages = createProntoMessages({ imsgPath: discovery.imsgPath });
+        try {
+          const transport = new ImsgTransport(messages);
+          const imsg = await transport.qualify();
+          const watch = await transport.watch({
+            onActivation: () => undefined,
+            tags: config.tags,
+          });
+          await watch.close();
+          printCheck({ id: "imessage-read-watch", status: "ok" });
+          for (const capability of imsg.degraded) {
+            printCheck({ id: `imessage-${capability}`, status: "degraded" });
+          }
+        } catch (error) {
+          printCheck({
+            id: "imessage-read-watch",
+            remediation: "Grant Full Disk Access to this setup terminal and verify imsg RPC access.",
+            status: "failed",
+          });
+          throw new Error(
+            "Setup stopped before installation because iMessage qualification failed.",
+            { cause: error },
+          );
+        } finally {
+          await messages.close().catch(() => undefined);
+        }
+        console.log("Qualifying each selected runtime with one temporary, noninteractive file-tool probe...");
+        for (const [kind, executablePath] of [
+          [config.primaryRuntime, config.primaryRuntimePath],
+          [config.fallbackRuntime, config.fallbackRuntimePath],
+        ] as const) {
+          if (kind === undefined || executablePath === undefined) continue;
+          const result = await qualifyRuntime({
+            adapter: createRuntimeAdapter(kind, executablePath),
+            ...(bridgeExecutableArgs === undefined ? {} : { bridgeExecutableArgs }),
+            bridgeExecutablePath,
+            commandRunner: runCommand,
+            workingDirectory: config.workingDirectory,
+          });
+          for (const check of result.checks) printCheck(check);
+          if (!result.qualified) {
+            throw new Error(
+              "Setup stopped before installation because runtime qualification failed.",
+            );
+          }
+        }
+      },
       qualify: async () => {
         console.log(`Before setup can finish, grant Full Disk Access to this exact file:\n${paths.executablePath}`);
         await prompt.question("After granting access, press Enter to qualify the installed Pronto executable: ");
-        await qualifyInstalledExecutable(paths.executablePath);
+        await qualifyInstalledExecutable(paths.executablePath, runCommand, async () => {
+          const state = await launchAgentStateForLabel({ label: LAUNCH_AGENT_LABEL });
+          if (state === "stopped") return async () => undefined;
+          await stopLaunchAgentForLabel({ label: LAUNCH_AGENT_LABEL });
+          return async () => await restoreLaunchAgentForLabel({
+            label: LAUNCH_AGENT_LABEL,
+            plistPath: paths.launchAgentPath,
+          });
+        });
       },
       removeProntoAgent: () => removeLaunchAgent(paths.launchAgentPath),
+      suspendProntoAgent: async () => {
+        const state = await launchAgentStateForLabel({ label: LAUNCH_AGENT_LABEL });
+        if (state === "stopped") return async () => undefined;
+        await stopLaunchAgentForLabel({ label: LAUNCH_AGENT_LABEL });
+        return async () => await restoreLaunchAgentForLabel({
+          label: LAUNCH_AGENT_LABEL,
+          plistPath: paths.launchAgentPath,
+        });
+      },
     });
     console.log(setupCompletionMessage(paths, config.tags));
     return 0;
@@ -233,7 +257,7 @@ function printCheck(check: { id: string; remediation?: string; status: string })
   if (check.remediation !== undefined) console.log(`         ${check.remediation}`);
 }
 
-async function runDoctor(json = false): Promise<number> {
+async function runDoctor(json = false, offline = false): Promise<number> {
   const paths = pathsForHome(homedir());
   const report = await inspectInstallation(paths);
   if (report.healthy) {
@@ -283,27 +307,29 @@ async function runDoctor(json = false): Promise<number> {
       });
       report.checks.push(...qualification.checks);
     }
-    const listener = await runCommand("/bin/launchctl", [
-      "print",
-      `gui/${process.getuid?.() ?? 0}/${LAUNCH_AGENT_LABEL}`,
-    ]);
-    const database = openProntoDatabase(paths.databasePath);
-    let daemonHealth;
-    try {
-      daemonHealth = new DeliveryJournal(database).daemonHealth();
-    } finally {
-      database.close();
+    if (!offline) {
+      const listener = await runCommand("/bin/launchctl", [
+        "print",
+        `gui/${process.getuid?.() ?? 0}/${LAUNCH_AGENT_LABEL}`,
+      ]);
+      const database = openProntoDatabase(paths.databasePath);
+      let daemonHealth;
+      try {
+        daemonHealth = new DeliveryJournal(database).daemonHealth();
+      } finally {
+        database.close();
+      }
+      report.checks.push(
+        parseLaunchAgentState(listener) === "running" && daemonHealth?.state === "ready"
+          ? { id: "installed-service-runtime", status: "ok" }
+          : {
+            id: "installed-service-runtime",
+            remediation:
+              "The installed launchd process has not reported ready. Check the private log and re-grant Full Disk Access to the installed executable.",
+            status: "failed",
+          },
+      );
     }
-    report.checks.push(
-      parseLaunchAgentState(listener) === "running" && daemonHealth?.state === "ready"
-        ? { id: "installed-service-runtime", status: "ok" }
-        : {
-          id: "installed-service-runtime",
-          remediation:
-            "The installed launchd process has not reported ready. Check the private log and re-grant Full Disk Access to the installed executable.",
-          status: "failed",
-        },
-    );
     report.healthy = report.checks.every((check) => check.status !== "failed");
   }
   if (json) console.log(JSON.stringify(report));
@@ -458,7 +484,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
     return 0;
   }
   if (command === "run") return runDaemon();
-  if (command === "doctor") return runDoctor(args.includes("--json"));
+  if (command === "doctor") return runDoctor(args.includes("--json"), args.includes("--offline"));
   if (command === "status") return runStatus(args.includes("--json"), args.includes("--chats"));
   if (command === "tags" || command === "tag") return runTags(args.slice(1));
   if (command === "stop") {

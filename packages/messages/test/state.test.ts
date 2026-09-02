@@ -72,3 +72,22 @@ test("advances only within one proven generation and never reuses a replaced gen
   expect(await store.checkpoint("generation-two")).toMatchObject({ rowId: 7 });
   expect(await store.checkpoint("generation-one")).toBeUndefined();
 });
+
+test("retains a bounded set of recent checkpoint witnesses", async () => {
+  const path = await statePath();
+  const store = new ProviderStateStore(path);
+
+  for (let rowId = 1; rowId <= 6; rowId += 1) {
+    await store.advance("generation-one", rowId, {
+      providerMessageDigest: `digest-${rowId}`,
+      rowId,
+    });
+  }
+
+  expect((await store.checkpoint("generation-one"))?.witnesses).toEqual([
+    { providerMessageDigest: "digest-3", rowId: 3 },
+    { providerMessageDigest: "digest-4", rowId: 4 },
+    { providerMessageDigest: "digest-5", rowId: 5 },
+    { providerMessageDigest: "digest-6", rowId: 6 },
+  ]);
+});

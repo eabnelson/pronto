@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { chmod, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -45,12 +46,23 @@ for await (const chunk of Bun.stdin.stream()) {
 `;
 }
 
+function checkpointWitness(rowId = 40, providerMessageId = "checkpoint-guid") {
+  return {
+    providerMessageDigest: createHash("sha256").update(providerMessageId).digest("base64url"),
+    rowId,
+  };
+}
+
 test("reports bounded age recovery and resumes with live events only", async () => {
   const directory = await fixtureDirectory();
   const databasePath = join(directory, "chat.db");
   const statePath = join(directory, "provider-state.json");
   await writeFile(databasePath, "database evidence");
-  await new ProviderStateStore(statePath).advance(await databaseGeneration(databasePath), 40);
+  await new ProviderStateStore(statePath).advance(
+    await databaseGeneration(databasePath),
+    40,
+    checkpointWitness(),
+  );
   const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1_000).toISOString();
   const executable = await executableWithSource(directory, rpcLoop(`
     let result;
@@ -59,6 +71,11 @@ test("reports bounded age recovery and resumes with live events only", async () 
       version: "0.14.1",
       database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
       methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+    };
+    else if (request.method === "messages.after" && request.params.since_rowid === 39) result = {
+      has_more: false,
+      messages: [{ guid: "checkpoint-guid", id: 40 }],
+      next_rowid: 40,
     };
     else if (request.method === "messages.after") result = {
       has_more: false,
@@ -101,7 +118,11 @@ test("enforces row-count and wall-clock recovery bounds", async () => {
     const databasePath = join(directory, "chat.db");
     const statePath = join(directory, "provider-state.json");
     await writeFile(databasePath, "database evidence");
-    await new ProviderStateStore(statePath).advance(await databaseGeneration(databasePath), 40);
+    await new ProviderStateStore(statePath).advance(
+      await databaseGeneration(databasePath),
+      40,
+      checkpointWitness(),
+    );
     const occurredAt = new Date().toISOString();
     const rows = Array.from({ length: input.rowCount }, (_, index) => ({
       chat_id: 42,
@@ -121,6 +142,11 @@ ${rpcLoop(`
         version: "0.14.1",
         database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
         methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+      };
+      else if (request.method === "messages.after" && request.params.since_rowid === 39) result = {
+        has_more: false,
+        messages: [{ guid: "checkpoint-guid", id: 40 }],
+        next_rowid: 40,
       };
       else if (request.method === "messages.after") {
         writeFileSync(${JSON.stringify(catchUpStartedPath)}, String(Date.now()));
@@ -214,6 +240,218 @@ ${rpcLoop(`
   await messages.close();
 });
 
+test("rejects an old checkpoint after an in-place database rebuild", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const requestLog = join(directory, "requests.log");
+  const statePath = join(directory, "provider-state.json");
+  await writeFile(databasePath, "same file identity after rebuild");
+  const generation = await databaseGeneration(databasePath);
+  await new ProviderStateStore(statePath).advance(generation, 40, {
+    providerMessageDigest: "checkpoint-before-rebuild-digest",
+    rowId: 40,
+  });
+  const occurredAt = new Date().toISOString();
+  const executable = await executableWithSource(directory, `
+import { appendFileSync } from "node:fs";
+${rpcLoop(`
+    appendFileSync(${JSON.stringify(requestLog)}, JSON.stringify(request) + "\\n");
+    let result;
+    if (request.method === "initialize") result = {
+      protocol_version: 1,
+      version: "0.14.1",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+    };
+    else if (request.method === "messages.after" && request.params.since_rowid === 39) result = {
+      has_more: false,
+      messages: [{ chat_id: 42, created_at: ${JSON.stringify(occurredAt)}, guid: "different-message-after-rebuild", id: 40, is_from_me: true, service: "iMessage", text: "replacement" }],
+      next_rowid: 40,
+    };
+    else if (request.method === "messages.after") result = {
+      has_more: false,
+      messages: [],
+      next_rowid: request.params.since_rowid,
+    };
+    else if (request.method === "watch.subscribe") result = { subscription: 10 };
+    else result = { ok: true };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+  `)}
+  `);
+  const messages = createProntoMessages({ imsgPath: executable, statePath });
+  const outcomes: MessagesRecoveryOutcome[] = [];
+  const subscription = await messages.subscribe({
+    onEvent: () => undefined,
+    onRecovery: (outcome) => { outcomes.push(outcome); },
+  });
+
+  const requests = (await readFile(requestLog, "utf8")).trim().split("\n")
+    .map((line) => JSON.parse(line));
+  const watch = requests.find((request) => request.method === "watch.subscribe");
+  expect(watch.params).not.toHaveProperty("since_rowid");
+  expect(outcomes).toContainEqual(expect.objectContaining({
+    reason: "database-generation-changed",
+    status: "degraded",
+  }));
+  await subscription.close();
+  await messages.close();
+});
+
+test("rejects a same-file snapshot rolled back behind the checkpoint", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const requestLog = join(directory, "requests.log");
+  const statePath = join(directory, "provider-state.json");
+  await writeFile(databasePath, "same file identity after snapshot restore");
+  const generation = await databaseGeneration(databasePath);
+  const store = new ProviderStateStore(statePath);
+  for (let rowId = 97; rowId <= 100; rowId += 1) {
+    await store.advance(generation, rowId, checkpointWitness(rowId, `guid-${rowId}`));
+  }
+  const executable = await executableWithSource(directory, `
+import { appendFileSync } from "node:fs";
+${rpcLoop(`
+    appendFileSync(${JSON.stringify(requestLog)}, JSON.stringify(request) + "\\n");
+    let result;
+    if (request.method === "initialize") result = {
+      protocol_version: 1,
+      version: "0.14.1",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+    };
+    else if (request.method === "messages.after" && request.params.since_rowid === 97) result = {
+      has_more: false,
+      messages: [{ guid: "guid-98", id: 98 }],
+      next_rowid: 98,
+    };
+    else if (request.method === "messages.after") result = { has_more: false, messages: [], next_rowid: request.params.since_rowid };
+    else if (request.method === "watch.subscribe") result = { subscription: 10 };
+    else result = { ok: true };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+  `)}
+  `);
+  const messages = createProntoMessages({ imsgPath: executable, statePath });
+  const outcomes: MessagesRecoveryOutcome[] = [];
+  const subscription = await messages.subscribe({
+    onEvent: () => undefined,
+    onRecovery: (outcome) => { outcomes.push(outcome); },
+  });
+
+  const requests = (await readFile(requestLog, "utf8")).trim().split("\n")
+    .map((line) => JSON.parse(line));
+  const watch = requests.find((request) => request.method === "watch.subscribe");
+  expect(watch.params).not.toHaveProperty("since_rowid");
+  expect(outcomes).toContainEqual(expect.objectContaining({
+    reason: "database-generation-changed",
+    status: "degraded",
+  }));
+  await subscription.close();
+  await messages.close();
+});
+
+test("fails closed for a generation checkpoint without a message witness", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const requestLog = join(directory, "requests.log");
+  const statePath = join(directory, "provider-state.json");
+  await writeFile(databasePath, "database evidence");
+  const generation = await databaseGeneration(databasePath);
+  await new ProviderStateStore(statePath).advance(generation, 40);
+  const executable = await executableWithSource(directory, `
+import { appendFileSync } from "node:fs";
+${rpcLoop(`
+    appendFileSync(${JSON.stringify(requestLog)}, JSON.stringify(request) + "\\n");
+    const result = request.method === "initialize" ? {
+      protocol_version: 1,
+      version: "0.14.1",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+    } : request.method === "watch.subscribe" ? { subscription: 11 } : { ok: true };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+  `)}
+  `);
+  const messages = createProntoMessages({ imsgPath: executable, statePath });
+  const outcomes: MessagesRecoveryOutcome[] = [];
+  const subscription = await messages.subscribe({
+    onEvent: () => undefined,
+    onRecovery: (outcome) => { outcomes.push(outcome); },
+  });
+
+  const requests = (await readFile(requestLog, "utf8")).trim().split("\n")
+    .map((line) => JSON.parse(line));
+  const watch = requests.find((request) => request.method === "watch.subscribe");
+  expect(watch.params).not.toHaveProperty("since_rowid");
+  expect(outcomes).toContainEqual(expect.objectContaining({
+    reason: "database-generation-changed",
+    status: "degraded",
+  }));
+  await subscription.close();
+  await messages.close();
+});
+
+test("continues recovery when the witnessed message was deleted", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const requestLog = join(directory, "requests.log");
+  const statePath = join(directory, "provider-state.json");
+  await writeFile(databasePath, "database evidence");
+  const generation = await databaseGeneration(databasePath);
+  await new ProviderStateStore(statePath).advance(generation, 39, {
+    providerMessageDigest: createHash("sha256").update("surviving-guid").digest("base64url"),
+    rowId: 39,
+  });
+  await new ProviderStateStore(statePath).advance(generation, 40, {
+    providerMessageDigest: createHash("sha256").update("deleted-guid").digest("base64url"),
+    rowId: 40,
+  });
+  const occurredAt = new Date().toISOString();
+  const executable = await executableWithSource(directory, `
+import { appendFileSync } from "node:fs";
+${rpcLoop(`
+    appendFileSync(${JSON.stringify(requestLog)}, JSON.stringify(request) + "\\n");
+    let result;
+    if (request.method === "initialize") result = {
+      protocol_version: 1,
+      version: "0.14.1",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+    };
+    else if (request.method === "messages.after" && request.params.since_rowid === 38) result = {
+      has_more: false,
+      messages: [{ guid: "surviving-guid", id: 39 }],
+      next_rowid: 39,
+    };
+    else if (request.method === "messages.after") result = {
+      has_more: false,
+      messages: [{ chat_id: 42, created_at: ${JSON.stringify(occurredAt)}, guid: "future-guid", id: 41, is_from_me: true, service: "iMessage", text: "future" }],
+      next_rowid: 41,
+    };
+    else if (request.method === "messages.stats") result = { chats: [{ chat_id: 42, service: "iMessage" }], sent_messages: 1 };
+    else if (request.method === "watch.subscribe") result = { subscription: 12 };
+    else result = { ok: true };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+  `)}
+  `);
+  const messages = createProntoMessages({ imsgPath: executable, statePath });
+  const rowIds: number[] = [];
+  const outcomes: MessagesRecoveryOutcome[] = [];
+  const subscription = await messages.subscribe({
+    onEvent: (event) => { rowIds.push(event.message.rowId); },
+    onRecovery: (outcome) => { outcomes.push(outcome); },
+  });
+
+  const requests = (await readFile(requestLog, "utf8")).trim().split("\n")
+    .map((line) => JSON.parse(line));
+  const watch = requests.find((request) => request.method === "watch.subscribe");
+  expect(rowIds).toEqual([41]);
+  expect(outcomes).not.toContainEqual(expect.objectContaining({
+    reason: "database-generation-changed",
+  }));
+  expect(watch.params.since_rowid).toBe(41);
+  await subscription.close();
+  await messages.close();
+});
+
 test("discards a catch-up page when the database changes while the request is in flight", async () => {
   const directory = await fixtureDirectory();
   const databasePath = join(directory, "chat.db");
@@ -221,7 +459,11 @@ test("discards a catch-up page when the database changes while the request is in
   const requestLog = join(directory, "requests.log");
   const statePath = join(directory, "provider-state.json");
   await writeFile(databasePath, "first database evidence");
-  await new ProviderStateStore(statePath).advance(await databaseGeneration(databasePath), 40);
+  await new ProviderStateStore(statePath).advance(
+    await databaseGeneration(databasePath),
+    40,
+    checkpointWitness(),
+  );
   const occurredAt = new Date().toISOString();
   const executable = await executableWithSource(directory, `
 import { appendFileSync, writeFileSync } from "node:fs";
@@ -233,6 +475,11 @@ ${rpcLoop(`
       version: "0.14.1",
       database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
       methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+    };
+    else if (request.method === "messages.after" && request.params.since_rowid === 39) result = {
+      has_more: false,
+      messages: [{ guid: "checkpoint-guid", id: 40 }],
+      next_rowid: 40,
     };
     else if (request.method === "messages.after") {
       writeFileSync(${JSON.stringify(pageStartedPath)}, "started");
@@ -397,7 +644,7 @@ test("suppresses a live duplicate while a timed-out catch-up callback is still r
   const statePath = join(directory, "provider-state.json");
   await writeFile(databasePath, "stable database evidence");
   const generation = await databaseGeneration(databasePath);
-  await new ProviderStateStore(statePath).advance(generation, 40);
+  await new ProviderStateStore(statePath).advance(generation, 40, checkpointWitness());
   const occurredAt = new Date().toISOString();
   const row = { chat_id: 42, created_at: occurredAt, guid: "guid-41", id: 41, is_from_me: true, service: "iMessage", text: "once" };
   const executable = await executableWithSource(directory, rpcLoop(`
@@ -408,6 +655,7 @@ test("suppresses a live duplicate while a timed-out catch-up callback is still r
       database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
       methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
     };
+    else if (request.method === "messages.after" && request.params.since_rowid === 39) result = { has_more: false, messages: [{ guid: "checkpoint-guid", id: 40 }], next_rowid: 40 };
     else if (request.method === "messages.after") result = { has_more: false, messages: [${JSON.stringify(row)}], next_rowid: 41 };
     else if (request.method === "messages.stats") result = { chats: [{ chat_id: 42, service: "iMessage" }], sent_messages: 1 };
     else if (request.method === "watch.subscribe") result = { subscription: 14 };
@@ -469,11 +717,18 @@ ${rpcLoop(`
       database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
       methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
     };
+    else if (request.method === "messages.after" && request.params.since_rowid === 39) result = {
+      has_more: false,
+      messages: [{ guid: "checkpoint-guid", id: 40 }],
+      next_rowid: 40,
+    };
     else if (request.method === "messages.after") {
       const since = Number(request.params.since_rowid);
-      result = since < 2
-        ? { has_more: false, messages: [${JSON.stringify(second)}], next_rowid: 2 }
-        : { has_more: false, messages: [], next_rowid: since };
+      result = since === 0
+        ? { has_more: false, messages: [${JSON.stringify(first)}], next_rowid: 1 }
+        : since === 1
+          ? { has_more: false, messages: [${JSON.stringify(second)}], next_rowid: 2 }
+          : { has_more: false, messages: [], next_rowid: since };
     } else if (request.method === "messages.stats") result = { chats: [{ chat_id: 42, service: "iMessage" }], sent_messages: 1 };
     else if (request.method === "watch.subscribe") {
       subscriptions += 1;
@@ -518,7 +773,11 @@ test("retries transient catch-up and resubscribe failures after terminal overflo
   const databasePath = join(directory, "chat.db");
   const statePath = join(directory, "provider-state.json");
   await writeFile(databasePath, "stable database evidence");
-  await new ProviderStateStore(statePath).advance(await databaseGeneration(databasePath), 40);
+  await new ProviderStateStore(statePath).advance(
+    await databaseGeneration(databasePath),
+    40,
+    checkpointWitness(),
+  );
   const occurredAt = new Date().toISOString();
   const row = { chat_id: 42, created_at: occurredAt, guid: "guid-41", id: 41, is_from_me: true, service: "iMessage", text: "recovered" };
   const executable = await executableWithSource(directory, `
@@ -531,6 +790,16 @@ ${rpcLoop(`
       version: "0.14.1",
       database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
       methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+    };
+    else if (request.method === "messages.after" && request.params.since_rowid === 39) result = {
+      has_more: false,
+      messages: [{ guid: "checkpoint-guid", id: 40 }],
+      next_rowid: 40,
+    };
+    else if (request.method === "messages.after" && request.params.since_rowid === 40 && afterCalls >= 3) result = {
+      has_more: false,
+      messages: [${JSON.stringify(row)}],
+      next_rowid: 41,
     };
     else if (request.method === "messages.after") {
       afterCalls += 1;
@@ -592,7 +861,11 @@ test("coalesced recovery replaces every watch when the provider dies during over
   const requestLog = join(directory, "requests.log");
   const statePath = join(directory, "provider-state.json");
   await writeFile(databasePath, "stable database evidence");
-  await new ProviderStateStore(statePath).advance(await databaseGeneration(databasePath), 40);
+  await new ProviderStateStore(statePath).advance(
+    await databaseGeneration(databasePath),
+    40,
+    checkpointWitness(),
+  );
   const executable = await executableWithSource(directory, `
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 const counterPath = ${JSON.stringify(counterPath)};
@@ -686,9 +959,11 @@ ${rpcLoop(`
     else if (request.method === "messages.stats") result = { chats: [{ chat_id: 42, service: "iMessage" }], sent_messages: 1 };
     else if (request.method === "messages.after") {
       const since = Number(request.params.since_rowid);
-      result = run > 1 && since === 101
-        ? { has_more: false, messages: [{ chat_id: 42, created_at: ${JSON.stringify(occurredAt)}, guid: "guid-102", id: 102, is_from_me: true, service: "iMessage", text: "second" }], next_rowid: 102 }
-        : { has_more: false, messages: [], next_rowid: since };
+      result = run > 1 && since === 100
+        ? { has_more: false, messages: [{ chat_id: 42, created_at: ${JSON.stringify(occurredAt)}, guid: "guid-101", id: 101, is_from_me: true, service: "iMessage", text: "first" }], next_rowid: 101 }
+        : run > 1 && since === 101
+          ? { has_more: false, messages: [{ chat_id: 42, created_at: ${JSON.stringify(occurredAt)}, guid: "guid-102", id: 102, is_from_me: true, service: "iMessage", text: "second" }], next_rowid: 102 }
+          : { has_more: false, messages: [], next_rowid: since };
     } else result = { ok: true };
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
     if (run === 1 && request.method === "messages.stats" && !exitScheduled) {

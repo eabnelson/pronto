@@ -10,7 +10,29 @@ import { MemoryStore } from "../storage/memory";
 import { WorkspaceStore } from "../storage/workspaces";
 import { ConversationBroker } from "../tools/broker";
 import { TurnCoordinator, TurnProcessor } from "./turn";
-import { createProntoMessages } from "pronto-imessage";
+import {
+  createProntoMessages,
+  type CreateProntoMessagesOptions,
+} from "pronto-imessage";
+
+export const STANDALONE_SCOPE_TTL_MS = 24 * 60 * 60 * 1_000;
+
+export function standaloneMessagesOptions(input: {
+  readonly chatKeySalt: string;
+  readonly imsgPath: string;
+  readonly legacyUnscopedCursor?: number;
+  readonly providerStatePath: string;
+}): CreateProntoMessagesOptions {
+  return {
+    imsgPath: input.imsgPath,
+    ...(input.legacyUnscopedCursor === undefined
+      ? {}
+      : { legacyUnscopedCursor: input.legacyUnscopedCursor }),
+    referenceKey: input.chatKeySalt,
+    scopeLimits: { ttlMs: STANDALONE_SCOPE_TTL_MS },
+    statePath: input.providerStatePath,
+  };
+}
 
 function runtimePath(config: ProntoConfig, fallback = false): string {
   const path = fallback ? config.fallbackRuntimePath : config.primaryRuntimePath;
@@ -36,11 +58,12 @@ export class ProntoDaemon {
     const database = openProntoDatabase(this.paths.databasePath);
     const journal = new DeliveryJournal(database);
     const legacyUnscopedCursor = journal.cursor();
-    const messages = createProntoMessages({
+    const messages = createProntoMessages(standaloneMessagesOptions({
+      chatKeySalt: this.config.chatKeySalt,
       imsgPath: this.config.imsgPath,
       ...(legacyUnscopedCursor === undefined ? {} : { legacyUnscopedCursor }),
-      statePath: this.paths.providerStatePath,
-    });
+      providerStatePath: this.paths.providerStatePath,
+    }));
     const transport = new ImsgTransport(messages, {
       matchesOutboundEcho: (chatId, text) => journal.matchesOutboundEcho(chatId, text),
     });

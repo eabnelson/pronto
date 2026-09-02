@@ -48,6 +48,7 @@ describe("activation", () => {
     expect(activatedRequest(event(), ["@helper"])).toEqual({
       activationTag: "@helper",
       chatId: 42,
+      conversation: event().conversation,
       isFromMe: false,
       providerGuid: "message-guid",
       request: "summarize this",

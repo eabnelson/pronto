@@ -142,6 +142,7 @@ export interface CreateProntoMessagesOptions {
   readonly imsgPath: string;
   readonly legacyUnscopedCursor?: number;
   readonly recoveryLimits?: MessagesRecoveryLimits;
+  readonly referenceKey?: string;
   readonly scopeLimits?: MessagesScopeLimits;
   readonly scratchRoot?: string;
   readonly statePath?: string;

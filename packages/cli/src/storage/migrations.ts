@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS delivery_events (
@@ -85,6 +85,16 @@ const SCHEMA_V4 = `
 ALTER TABLE delivery_events ADD COLUMN activation_tag TEXT;
 `;
 
+const SCHEMA_V5 = `
+ALTER TABLE delivery_events ADD COLUMN conversation_reference TEXT;
+
+UPDATE delivery_events
+SET state = 'failed', activation_tag = NULL, tagged_request = NULL,
+    accepted_reply = NULL, proposed_summary = NULL,
+    proposed_working_directory = NULL, proposed_workspace_candidates = NULL
+WHERE state IN ('admitted', 'ready_to_send');
+`;
+
 export function migrateDatabase(database: Database): void {
   const row = database.query("PRAGMA user_version").get() as { user_version: number };
   if (row.user_version > CURRENT_SCHEMA_VERSION) {
@@ -97,6 +107,7 @@ export function migrateDatabase(database: Database): void {
     if (row.user_version < 2) database.exec(SCHEMA_V2);
     if (row.user_version < 3) database.exec(SCHEMA_V3);
     if (row.user_version < 4) database.exec(SCHEMA_V4);
+    if (row.user_version < 5) database.exec(SCHEMA_V5);
     database.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION}`);
   })();
 }

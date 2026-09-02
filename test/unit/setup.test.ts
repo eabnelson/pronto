@@ -633,10 +633,75 @@ test("installed qualification runs doctor through the exact installed executable
     },
   );
 
-  expect(calls).toEqual([{
-    executable: "/Users/example/Library/Application Support/pronto/bin/pronto",
-    args: ["doctor"],
-  }]);
+  expect(calls).toEqual([
+    {
+      executable: "/Users/example/Library/Application Support/pronto/bin/pronto",
+      args: ["doctor", "--offline"],
+    },
+    {
+      executable: "/Users/example/Library/Application Support/pronto/bin/pronto",
+      args: ["status"],
+    },
+  ]);
+});
+
+test("installed qualification suspends the daemon while doctor owns the Messages watch", async () => {
+  const lifecycle: string[] = [];
+  let listenerRunning = true;
+
+  await qualifyInstalledExecutable(
+    "/Users/example/Library/Application Support/pronto/bin/pronto",
+    async (_executable, args) => {
+      if (args[0] === "doctor") {
+        expect(listenerRunning).toBeFalse();
+        lifecycle.push("doctor-offline");
+      } else {
+        expect(listenerRunning).toBeTrue();
+        lifecycle.push("status");
+      }
+      return { exitCode: 0, stderr: "", stdout: "ok" };
+    },
+    async () => {
+      listenerRunning = false;
+      lifecycle.push("stop-listener");
+      return async () => {
+        listenerRunning = true;
+        lifecycle.push("restore-listener");
+      };
+    },
+  );
+
+  expect(listenerRunning).toBeTrue();
+  expect(lifecycle).toEqual([
+    "stop-listener",
+    "doctor-offline",
+    "restore-listener",
+    "status",
+  ]);
+});
+
+test("installed qualification restores the suspended daemon after offline doctor fails", async () => {
+  const lifecycle: string[] = [];
+
+  await expect(qualifyInstalledExecutable(
+    "/Users/example/Library/Application Support/pronto/bin/pronto",
+    async (_executable, args) => {
+      lifecycle.push(args.join(" "));
+      return { exitCode: 1, stderr: "qualification failed", stdout: "" };
+    },
+    async () => {
+      lifecycle.push("stop-listener");
+      return async () => {
+        lifecycle.push("restore-listener");
+      };
+    },
+  )).rejects.toThrow("qualification failed");
+
+  expect(lifecycle).toEqual([
+    "stop-listener",
+    "doctor --offline",
+    "restore-listener",
+  ]);
 });
 
 test("cutover qualifies the installed executable before finalizing legacy removal", async () => {
@@ -646,7 +711,7 @@ test("cutover qualifies the installed executable before finalizing legacy remova
     install: async () => {
       lifecycle.push("install");
     },
-    migration: {
+    prepareMigration: async () => ({
       status: "migrated",
       finalize: async () => {
         lifecycle.push("finalize");
@@ -654,7 +719,8 @@ test("cutover qualifies the installed executable before finalizing legacy remova
       rollback: async () => {
         lifecycle.push("rollback");
       },
-    },
+    }),
+    preflight: async () => undefined,
     qualify: async () => {
       lifecycle.push("qualify-installed");
     },
@@ -666,6 +732,141 @@ test("cutover qualifies the installed executable before finalizing legacy remova
   expect(lifecycle).toEqual(["install", "qualify-installed", "finalize"]);
 });
 
+test("cutover stops the legacy listener before provider preflight", async () => {
+  const lifecycle: string[] = [];
+  let legacyRunning = true;
+
+  await completeSetupCutover({
+    install: async () => {
+      lifecycle.push("install");
+    },
+    prepareMigration: async () => {
+      legacyRunning = false;
+      lifecycle.push("stop-legacy");
+      return {
+        status: "migrated",
+        finalize: async () => {
+          lifecycle.push("finalize");
+        },
+        rollback: async () => {
+          lifecycle.push("rollback");
+        },
+      };
+    },
+    preflight: async () => {
+      expect(legacyRunning).toBeFalse();
+      lifecycle.push("provider-preflight");
+    },
+    qualify: async () => {
+      lifecycle.push("qualify-installed");
+    },
+    removeProntoAgent: async () => {
+      lifecycle.push("remove-pronto");
+    },
+  });
+
+  expect(lifecycle).toEqual([
+    "stop-legacy",
+    "provider-preflight",
+    "install",
+    "qualify-installed",
+    "finalize",
+  ]);
+});
+
+test("cutover suspends an existing Pronto listener before provider preflight", async () => {
+  const lifecycle: string[] = [];
+  let prontoRunning = true;
+
+  await completeSetupCutover({
+    install: async () => {
+      lifecycle.push("install");
+    },
+    prepareMigration: async () => ({
+      status: "not_found",
+      finalize: async () => {
+        lifecycle.push("finalize");
+      },
+      rollback: async () => {
+        lifecycle.push("rollback");
+      },
+    }),
+    preflight: async () => {
+      expect(prontoRunning).toBeFalse();
+      lifecycle.push("provider-preflight");
+    },
+    qualify: async () => {
+      lifecycle.push("qualify-installed");
+    },
+    removeProntoAgent: async () => {
+      lifecycle.push("remove-pronto");
+    },
+    suspendProntoAgent: async () => {
+      prontoRunning = false;
+      lifecycle.push("stop-pronto");
+      return async () => {
+        prontoRunning = true;
+        lifecycle.push("restore-pronto");
+      };
+    },
+  });
+
+  expect(prontoRunning).toBeFalse();
+  expect(lifecycle).toEqual([
+    "stop-pronto",
+    "provider-preflight",
+    "install",
+    "qualify-installed",
+    "finalize",
+  ]);
+});
+
+test("cutover restores legacy and the suspended Pronto listener after preflight fails", async () => {
+  const lifecycle: string[] = [];
+
+  await expect(completeSetupCutover({
+    install: async () => {
+      lifecycle.push("install");
+    },
+    prepareMigration: async () => {
+      lifecycle.push("stop-legacy");
+      return {
+        status: "migrated",
+        finalize: async () => {
+          lifecycle.push("finalize");
+        },
+        rollback: async () => {
+          lifecycle.push("restore-legacy");
+        },
+      };
+    },
+    preflight: async () => {
+      lifecycle.push("provider-preflight");
+      throw new Error("preflight failed");
+    },
+    qualify: async () => {
+      lifecycle.push("qualify-installed");
+    },
+    removeProntoAgent: async () => {
+      lifecycle.push("remove-pronto");
+    },
+    suspendProntoAgent: async () => {
+      lifecycle.push("stop-pronto");
+      return async () => {
+        lifecycle.push("restore-pronto");
+      };
+    },
+  })).rejects.toThrow("preflight failed");
+
+  expect(lifecycle).toEqual([
+    "stop-legacy",
+    "stop-pronto",
+    "provider-preflight",
+    "restore-legacy",
+    "restore-pronto",
+  ]);
+});
+
 test("cutover stops Pronto and restores legacy after installed qualification fails", async () => {
   const lifecycle: string[] = [];
 
@@ -673,7 +874,7 @@ test("cutover stops Pronto and restores legacy after installed qualification fai
     install: async () => {
       lifecycle.push("install");
     },
-    migration: {
+    prepareMigration: async () => ({
       status: "migrated",
       finalize: async () => {
         lifecycle.push("finalize");
@@ -681,7 +882,8 @@ test("cutover stops Pronto and restores legacy after installed qualification fai
       rollback: async () => {
         lifecycle.push("rollback");
       },
-    },
+    }),
+    preflight: async () => undefined,
     qualify: async () => {
       lifecycle.push("qualify-installed");
       throw new Error("qualification failed");

@@ -63,6 +63,10 @@ test("creates the current owner-private WAL schema", async () => {
       database.query("PRAGMA table_info(delivery_events)").all()
         .some((column) => (column as { name: string }).name === "activation_tag"),
     ).toBeTrue();
+    expect(
+      database.query("PRAGMA table_info(delivery_events)").all()
+        .some((column) => (column as { name: string }).name === "conversation_reference"),
+    ).toBeTrue();
     expect((await lstat(path)).mode & 0o777).toBe(0o600);
   } finally {
     database.close();
@@ -97,6 +101,11 @@ test("upgrades a version-two database without changing existing delivery rows", 
     INSERT INTO delivery_events
       (provider_guid, chat_key, chat_id, state, created_at, updated_at)
       VALUES ('existing', 'chat-a', 42, 'delivered', 1, 1);
+    INSERT INTO delivery_events
+      (provider_guid, chat_key, chat_id, tagged_request, state, lease_token,
+       accepted_reply, created_at, updated_at)
+      VALUES ('queued', 'chat-a', 42, 'private request', 'ready_to_send',
+              'lease', 'accepted reply', 2, 2);
     PRAGMA user_version = 2;
   `);
   legacy.close();
@@ -111,6 +120,17 @@ test("upgrades a version-two database without changing existing delivery rows", 
         .query("SELECT provider_guid, state FROM delivery_events WHERE provider_guid = 'existing'")
         .get(),
     ).toEqual({ provider_guid: "existing", state: "delivered" });
+    expect(
+      database
+        .query(`SELECT state, tagged_request, accepted_reply, conversation_reference
+                FROM delivery_events WHERE provider_guid = 'queued'`)
+        .get(),
+    ).toEqual({
+      accepted_reply: null,
+      conversation_reference: null,
+      state: "failed",
+      tagged_request: null,
+    });
     expect(
       database
         .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chat_workspaces'")

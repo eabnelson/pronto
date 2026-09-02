@@ -37,10 +37,16 @@ Private state is stored below `~/Library/Application Support/pronto` with
 owner-only permissions. The database retains at most eight confirmed tagged
 request/reply exchanges and one compact summary per chat. It does not archive
 ordinary messages, participant rosters, attachment metadata, attachment bytes,
-tool results, or raw provider output. In-flight and ambiguous delivery records
-may temporarily retain a tagged request and accepted reply so recovery can avoid
-duplicate local work or sends. Use `forget` for tagged memory and the confirmed
-purge form of `uninstall` for all local bridge state and logs.
+tool results, or raw provider output. In-flight delivery records may temporarily
+retain a tagged request, accepted reply, and an encrypted, expiring reference
+that authorizes a reply to the exact observed conversation. The reference
+contains no participant handle or message text. It is removed when delivery
+settles as delivered, failed, ambiguous, or parked, and `forget` removes it while
+cancelling active work for that chat. Its owner-private key is stable across
+daemon restarts so a proven ready-to-send reply can resume without widening
+access; rotating that key invalidates queued references. Use `forget` for tagged
+memory and queued chat state and the confirmed purge form of `uninstall` for all
+local bridge state and logs.
 
 Possible-side-effect runtime failures and uncertain sends are never replayed
 automatically. Trigger tags and prompt labels reduce accidental activation and

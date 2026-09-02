@@ -91,6 +91,7 @@ export class MemoryStore {
                  ELSE state
                END,
                activation_tag = NULL, tagged_request = NULL, accepted_reply = NULL,
+               conversation_reference = NULL,
                proposed_summary = NULL,
                proposed_working_directory = NULL, proposed_workspace_candidates = NULL
            WHERE chat_key = ?`,

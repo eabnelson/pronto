@@ -2,6 +2,7 @@ import type { ActivatedRequest } from "../activation";
 import { assembleContext, type ContextEnvelope, type RecentMessage } from "../context/assemble";
 import { parseCurrentChatMessage } from "../imessage/event-adapter";
 import type { SendDisposition } from "../imessage/transport";
+import type { ConversationReference } from "pronto-imessage";
 import {
   formatImessageReplyText,
   imessageReplyBodyCharacterLimit,
@@ -145,8 +146,16 @@ export function confirmedWorkspaceDirectory(
 }
 
 export interface TurnTransport {
-  recentMessages(chatId: number, limit?: number): Promise<unknown[]>;
-  sendText(chatId: number, text: string): Promise<SendDisposition>;
+  recentMessages(
+    chatId: number,
+    limit?: number,
+    conversation?: ConversationReference,
+  ): Promise<unknown[]>;
+  sendText(
+    chatId: number,
+    text: string,
+    conversation?: ConversationReference,
+  ): Promise<SendDisposition>;
 }
 
 export class TurnProcessor {
@@ -172,6 +181,10 @@ export class TurnProcessor {
     if (lease === null) return;
 
     if (event.state === "ready_to_send") {
+      if (event.conversation === undefined) {
+        this.dependencies.journal.markFailed(event.providerGuid, lease);
+        return;
+      }
       try {
         await this.#deliver(event, lease, event.acceptedReply);
       } catch {
@@ -212,7 +225,7 @@ export class TurnProcessor {
         currentRequest: event.request,
         exactExchanges: memory.exchanges,
         recentMessages: recentContext(
-          await this.dependencies.transport.recentMessages(event.chatId, 30),
+          await this.dependencies.transport.recentMessages(event.chatId, 30, event.conversation),
         ),
         summary: memory.summary,
       });
@@ -350,7 +363,11 @@ export class TurnProcessor {
       ? text
       : formatImessageReplyText(event.activationTag, text);
     this.dependencies.journal.beginSend(event.providerGuid, lease, event.chatId, replyText);
-    const disposition = await this.dependencies.transport.sendText(event.chatId, replyText);
+    const disposition = await this.dependencies.transport.sendText(
+      event.chatId,
+      replyText,
+      event.conversation,
+    );
     if (disposition.disposition === "confirmed") {
       this.dependencies.journal.confirmDelivery(event.providerGuid, lease, disposition.guid);
     } else if (disposition.disposition === "ambiguous") {
@@ -381,6 +398,7 @@ export class TurnCoordinator {
       activationTag: request.activationTag,
       chatId: request.chatId,
       chatKey: chatKeyForId(request.chatId, this.chatKeySalt),
+      conversation: request.conversation,
       providerGuid: request.providerGuid,
       request: request.request,
     });

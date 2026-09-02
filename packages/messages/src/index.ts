@@ -4,6 +4,7 @@ import {
   RpcSubmissionUncertainError,
   type RpcNotification,
 } from "./internal/rpc.js";
+import { createHash } from "node:crypto";
 import {
   databasePath,
   normalizeConversationFacts,
@@ -12,11 +13,15 @@ import {
   record,
 } from "./internal/normalize.js";
 import { databaseGeneration } from "./internal/generation.js";
-import { ScopedMessagesAccess } from "./internal/scoped.js";
+import {
+  ConversationReferenceExpiredError,
+  ScopedMessagesAccess,
+} from "./internal/scoped.js";
 import {
   MemoryCheckpointStore,
   ProviderStateStore,
   type CheckpointStore,
+  type ProviderCheckpoint,
 } from "./internal/state.js";
 import type {
   DeliveryOutcome,
@@ -134,6 +139,7 @@ class ProntoMessagesClient implements ProntoMessages {
       ...(input.attachmentsRoot === undefined ? {} : { attachmentsRoot: input.attachmentsRoot }),
       generation: async () => await this.#refreshGeneration(),
       ...(input.scopeLimits === undefined ? {} : { limits: input.scopeLimits }),
+      ...(input.referenceKey === undefined ? {} : { referenceKey: input.referenceKey }),
       rpc: this.#rpc,
       ...(input.scratchRoot === undefined ? {} : { scratchRoot: input.scratchRoot }),
     });
@@ -267,6 +273,16 @@ class ProntoMessagesClient implements ProntoMessages {
         previous !== undefined &&
         previous.databaseGeneration !== qualification.databaseGeneration
       ) {
+        await report({
+          action: "live-events-only",
+          reason: "database-generation-changed",
+          rows: 0,
+          status: "degraded",
+        });
+        await subscribeProvider(false);
+        return;
+      }
+      if (previous !== undefined && !(await this.#checkpointWitnessMatches(previous))) {
         await report({
           action: "live-events-only",
           reason: "database-generation-changed",
@@ -465,7 +481,13 @@ class ProntoMessagesClient implements ProntoMessages {
   }
 
   async reply(input: Parameters<ProntoMessages["reply"]>[0]): Promise<DeliveryOutcome> {
-    const conversation = await this.#scoped.conversation(input.conversation);
+    const conversation = await this.#scoped.conversation(input.conversation, true).catch((error) => {
+      if (error instanceof ConversationReferenceExpiredError) {
+        return null;
+      }
+      throw error;
+    });
+    if (conversation === null) return { retryable: false, status: "failed" };
     try {
       const result = record(await this.#rpc.request("send", {
         chat_id: conversation.chatId,
@@ -537,7 +559,12 @@ class ProntoMessagesClient implements ProntoMessages {
       if (observedGeneration !== generation) {
         throw new RecoveryBoundaryError("database-generation-changed", budget?.rows ?? 0);
       }
-      await this.#state.advance(generation, rowId);
+      await this.#state.advance(generation, rowId, {
+        providerMessageDigest: this.#providerMessageDigest(
+          normalizedEvent.message.providerMessageId,
+        ),
+        rowId,
+      });
     })();
     const trackedDelivery = delivery.finally(() => {
       if (this.#inFlightDeliveries.get(deliveryKey) === trackedDelivery) {
@@ -740,6 +767,52 @@ class ProntoMessagesClient implements ProntoMessages {
   async #refreshGeneration(): Promise<string> {
     if (this.#databasePath === undefined) throw new Error("messages_database_generation_unavailable");
     return await databaseGeneration(this.#databasePath);
+  }
+
+  async #checkpointWitnessMatches(checkpoint: ProviderCheckpoint): Promise<boolean> {
+    if (checkpoint.witnesses === undefined || checkpoint.witnesses.length === 0) return false;
+    const highWatermark = record(await this.#rpc.request("messages.after", {
+      attachments: false,
+      include_reactions: true,
+      limit: 1,
+      since_rowid: Math.max(0, checkpoint.rowId - 1),
+    }));
+    if (!Array.isArray(highWatermark.messages)) {
+      throw new Error("imsg returned invalid checkpoint evidence");
+    }
+    const tip = highWatermark.messages[0];
+    if (tip === undefined) return false;
+    const tipMessage = record(tip);
+    if (typeof tipMessage.id !== "number" || !Number.isSafeInteger(tipMessage.id) ||
+      tipMessage.id < checkpoint.rowId) {
+      throw new Error("imsg returned invalid checkpoint evidence");
+    }
+    if (tipMessage.id === checkpoint.rowId) {
+      const witness = checkpoint.witnesses.find((candidate) => candidate.rowId === checkpoint.rowId);
+      return witness !== undefined && typeof tipMessage.guid === "string" &&
+        this.#providerMessageDigest(tipMessage.guid) === witness.providerMessageDigest;
+    }
+    for (const witness of [...checkpoint.witnesses].reverse()) {
+      const result = record(await this.#rpc.request("messages.after", {
+        attachments: false,
+        include_reactions: true,
+        limit: 1,
+        since_rowid: Math.max(0, witness.rowId - 1),
+      }));
+      if (!Array.isArray(result.messages)) {
+        throw new Error("imsg returned invalid checkpoint evidence");
+      }
+      const matchingRow = result.messages.find((value) => record(value).id === witness.rowId);
+      if (matchingRow === undefined) continue;
+      const message = record(matchingRow);
+      return typeof message.guid === "string" &&
+        this.#providerMessageDigest(message.guid) === witness.providerMessageDigest;
+    }
+    return false;
+  }
+
+  #providerMessageDigest(providerMessageId: string): string {
+    return createHash("sha256").update(providerMessageId).digest("base64url");
   }
 
   #rememberOutgoing(event: MessagesEvent): void {

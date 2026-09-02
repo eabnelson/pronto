@@ -7,6 +7,9 @@ import { createProntoMessages } from "pronto-imessage";
 
 const messages = createProntoMessages({
   imsgPath: "/opt/homebrew/bin/imsg",
+  // Use an owner-private stable value of at least 32 bytes when queued work
+  // must retain an exact conversation reference across a process restart.
+  referenceKey: process.env.PRONTO_MESSAGES_REFERENCE_KEY,
   statePath: "/private/application-state/provider-state.json",
 });
 await messages.qualify();
@@ -40,7 +43,7 @@ const subscription = await messages.subscribe({
 
 The package binds durable checkpoints to a fingerprint of the current Messages database. It restarts and resubscribes after provider failure, performs catch-up within row-count, age, and wall-clock limits, and reports privacy-safe recovery diagnostics. A send that may have reached the provider is returned as `ambiguous` and is never automatically replayed.
 
-Every observed conversation carries a module-issued, versioned, tamper-evident reference with an expiry. History requires that exact reference plus an explicit message, row, byte, and RPC-call budget. Pagination continuations remain bound to the same conversation capability and database generation. They cannot be used to search another conversation.
+Every observed conversation carries a module-issued, versioned, tamper-evident reference with an expiry. References are process-local by default. A consumer with durable queued work can provide a stable owner-private `referenceKey` of at least 32 bytes; that permits an unexpired observed reference to be revalidated after restart without granting access to a different chat. Rotating the key invalidates outstanding references. History requires that exact reference plus an explicit message, row, byte, and RPC-call budget. Pagination continuations remain bound to the same conversation capability and database generation. They cannot be used to search another conversation.
 
 Attachment metadata never exposes the Messages source path. Available attachments carry an expiring sealed reference. `materializeAttachment` revalidates the conversation, database generation, provider metadata, containment under the Messages attachments root, regular-file identity, size, and MIME evidence before copying bytes into owner-private scratch. The returned scratch file has an explicit `dispose()` lifecycle.
 

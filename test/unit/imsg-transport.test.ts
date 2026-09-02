@@ -163,3 +163,19 @@ test("delivery and history require an observed exact conversation", async () => 
   await expect(transport.sendText(42, "reply")).rejects.toThrow("scope is unavailable");
   await expect(transport.recentMessages(42)).rejects.toThrow("scope is unavailable");
 });
+
+test("delivery can resume from a persisted exact conversation reference", async () => {
+  const messages = new FakeMessages();
+  const transport = new ImsgTransport(messages);
+
+  expect(await transport.sendText(42, "resumed reply", event().conversation)).toEqual({
+    disposition: "confirmed",
+    guid: "sent-guid",
+  });
+  expect(messages.replyInput).toEqual({
+    conversation: event().conversation,
+    text: "resumed reply",
+  });
+  await expect(transport.sendText(7, "wrong chat", event().conversation))
+    .rejects.toThrow("scope is unavailable");
+});

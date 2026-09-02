@@ -377,33 +377,58 @@ export type InstalledExecutableRunner = (
 export async function qualifyInstalledExecutable(
   executablePath: string,
   runner: InstalledExecutableRunner = runCommand,
+  suspendListener: () => Promise<() => Promise<void>> = async () => async () => undefined,
 ): Promise<void> {
-  const result = await runner(executablePath, ["doctor"]);
+  const restoreListener = await suspendListener();
+  let result: ProcessResult;
+  try {
+    result = await runner(executablePath, ["doctor", "--offline"]);
+  } finally {
+    await restoreListener();
+  }
   if (result.exitCode !== 0) {
     throw new Error(
       `Installed Pronto qualification failed: ${result.stderr.trim() || result.stdout.trim() || result.exitCode}`,
+    );
+  }
+  const status = await runner(executablePath, ["status"]);
+  if (status.exitCode !== 0) {
+    throw new Error(
+      `Restored Pronto listener qualification failed: ${status.stderr.trim() || status.stdout.trim() || status.exitCode}`,
     );
   }
 }
 
 export async function completeSetupCutover(input: {
   install: () => Promise<void>;
-  migration: LegacyMigration;
+  prepareMigration: () => Promise<LegacyMigration>;
+  preflight: () => Promise<void>;
   qualify: () => Promise<void>;
   removeProntoAgent: () => Promise<void>;
+  suspendProntoAgent?: () => Promise<() => Promise<void>>;
 }): Promise<void> {
+  const migration = await input.prepareMigration();
+  const restoreProntoAgent = await input.suspendProntoAgent?.() ?? (async () => undefined);
+  let installAttempted = false;
   try {
+    await input.preflight();
+    installAttempted = true;
     await input.install();
     await input.qualify();
   } catch (error) {
     const rollbackErrors: unknown[] = [];
     let prontoStopped = true;
-    await input.removeProntoAgent().catch((rollbackError) => {
-      prontoStopped = false;
-      rollbackErrors.push(rollbackError);
-    });
+    if (installAttempted) {
+      await input.removeProntoAgent().catch((rollbackError) => {
+        prontoStopped = false;
+        rollbackErrors.push(rollbackError);
+      });
+    }
     if (prontoStopped) {
-      await input.migration.rollback().catch((rollbackError) => {
+      await migration.rollback().catch((rollbackError) => {
+        rollbackErrors.push(rollbackError);
+      });
+      await restoreProntoAgent().catch((rollbackError) => {
         rollbackErrors.push(rollbackError);
       });
     }
@@ -415,7 +440,7 @@ export async function completeSetupCutover(input: {
     }
     throw error;
   }
-  await input.migration.finalize();
+  await migration.finalize();
 }
 
 export async function resolveWorkspaceSelection(

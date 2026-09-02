@@ -14,11 +14,23 @@ import { dirname } from "node:path";
 export interface ProviderCheckpoint {
   readonly databaseGeneration: string;
   readonly rowId: number;
+  readonly witnesses?: readonly ProviderCheckpointWitness[];
   readonly version: 1;
 }
 
+export interface ProviderCheckpointWitness {
+  readonly providerMessageDigest: string;
+  readonly rowId: number;
+}
+
+const MAX_CHECKPOINT_WITNESSES = 4;
+
 export interface CheckpointStore {
-  advance(databaseGeneration: string, rowId: number): Promise<void>;
+  advance(
+    databaseGeneration: string,
+    rowId: number,
+    witness?: ProviderCheckpointWitness,
+  ): Promise<void>;
   checkpoint(databaseGeneration: string): Promise<ProviderCheckpoint | undefined>;
   currentCheckpoint(): Promise<ProviderCheckpoint | undefined>;
 }
@@ -35,15 +47,28 @@ function nextCheckpoint(
   current: ProviderCheckpoint | undefined,
   databaseGeneration: string,
   rowId: number,
+  witness?: ProviderCheckpointWitness,
 ): ProviderCheckpoint {
   if (databaseGeneration.trim() === "" || !Number.isSafeInteger(rowId) || rowId < 0) {
     throw new Error("provider_checkpoint_invalid");
   }
+  if (witness !== undefined && !validWitness(witness, rowId)) {
+    throw new Error("provider_checkpoint_invalid");
+  }
+  const retained = current?.databaseGeneration === databaseGeneration
+    ? [...(current.witnesses ?? [])]
+    : [];
+  const witnesses = witness === undefined
+    ? retained
+    : [...retained.filter((candidate) => candidate.rowId !== witness.rowId), witness]
+      .sort((left, right) => left.rowId - right.rowId)
+      .slice(-MAX_CHECKPOINT_WITNESSES);
   return {
     databaseGeneration,
     rowId: current?.databaseGeneration === databaseGeneration
       ? Math.max(current.rowId, rowId)
       : rowId,
+    ...(witnesses.length === 0 ? {} : { witnesses }),
     version: 1,
   };
 }
@@ -78,11 +103,20 @@ export class ProviderStateStore implements CheckpointStore {
     return this.#serialized(async () => (await this.#load()).checkpoint ?? undefined);
   }
 
-  advance(databaseGeneration: string, rowId: number): Promise<void> {
+  advance(
+    databaseGeneration: string,
+    rowId: number,
+    witness?: ProviderCheckpointWitness,
+  ): Promise<void> {
     return this.#serialized(async () => {
       const state = await this.#load();
       await this.#save({
-        checkpoint: nextCheckpoint(state.checkpoint ?? undefined, databaseGeneration, rowId),
+        checkpoint: nextCheckpoint(
+          state.checkpoint ?? undefined,
+          databaseGeneration,
+          rowId,
+          witness,
+        ),
         ...(state.legacyUnscopedCursor === undefined
           ? {}
           : { legacyUnscopedCursor: state.legacyUnscopedCursor }),
@@ -181,8 +215,12 @@ export class MemoryCheckpointStore implements CheckpointStore {
     return this.#checkpoint;
   }
 
-  async advance(databaseGeneration: string, rowId: number): Promise<void> {
-    this.#checkpoint = nextCheckpoint(this.#checkpoint, databaseGeneration, rowId);
+  async advance(
+    databaseGeneration: string,
+    rowId: number,
+    witness?: ProviderCheckpointWitness,
+  ): Promise<void> {
+    this.#checkpoint = nextCheckpoint(this.#checkpoint, databaseGeneration, rowId, witness);
   }
 }
 
@@ -207,6 +245,7 @@ function parseV2(value: Record<string, unknown>): ProviderStateV2 {
       checkpoint: {
         databaseGeneration: candidate.databaseGeneration,
         rowId,
+        ...providerCheckpointWitnessList(candidate, rowId),
         version: 1,
       },
       ...(legacyUnscopedCursor === undefined
@@ -225,6 +264,43 @@ function parseV2(value: Record<string, unknown>): ProviderStateV2 {
       : { legacyUnscopedCursor: Number(legacyUnscopedCursor) }),
     version: 2,
   };
+}
+
+function providerCheckpointWitness(value: unknown, checkpointRowId: number): ProviderCheckpointWitness {
+  const witness = object(value);
+  const rowId = nonNegativeInteger(witness.rowId);
+  if (
+    rowId === undefined || rowId <= 0 || rowId > checkpointRowId ||
+    typeof witness.providerMessageDigest !== "string" || witness.providerMessageDigest.trim() === ""
+  ) {
+    throw new Error("provider_state_invalid");
+  }
+  return {
+    providerMessageDigest: witness.providerMessageDigest,
+    rowId,
+  };
+}
+
+function providerCheckpointWitnessList(
+  checkpoint: Record<string, unknown>,
+  checkpointRowId: number,
+): { readonly witnesses?: readonly ProviderCheckpointWitness[] } {
+  const source = checkpoint.witnesses ??
+    (checkpoint.witness === undefined ? undefined : [checkpoint.witness]);
+  if (source === undefined) return {};
+  if (!Array.isArray(source) || source.length === 0 || source.length > MAX_CHECKPOINT_WITNESSES) {
+    throw new Error("provider_state_invalid");
+  }
+  const witnesses = source.map((value) => providerCheckpointWitness(value, checkpointRowId));
+  if (new Set(witnesses.map((witness) => witness.rowId)).size !== witnesses.length) {
+    throw new Error("provider_state_invalid");
+  }
+  return { witnesses: witnesses.sort((left, right) => left.rowId - right.rowId) };
+}
+
+function validWitness(witness: ProviderCheckpointWitness, checkpointRowId: number): boolean {
+  return Number.isSafeInteger(witness.rowId) && witness.rowId > 0 &&
+    witness.rowId <= checkpointRowId && witness.providerMessageDigest.trim() !== "";
 }
 
 function object(value: unknown): Record<string, unknown> {

@@ -39,6 +39,12 @@ const DEFAULT_LIMITS = {
   ttlMs: 15 * 60_000,
 } as const;
 
+export class ConversationReferenceExpiredError extends Error {
+  constructor() {
+    super("messages_conversation_reference_invalid");
+  }
+}
+
 interface CapabilityScope {
   readonly capabilityId: string;
   readonly chatId: number;
@@ -271,6 +277,7 @@ export class ScopedMessagesAccess {
   readonly #key: Buffer;
   readonly #limits: DeferredLimits;
   readonly #now: () => number;
+  readonly #restorableReferences: boolean;
   readonly #attachmentsRoot: string;
   readonly #scratchRoot: string;
   readonly #usage = new Map<string, CapabilityUsage>();
@@ -280,12 +287,20 @@ export class ScopedMessagesAccess {
     readonly generation: () => Promise<string>;
     readonly limits?: MessagesScopeLimits;
     readonly now?: () => number;
+    readonly referenceKey?: string;
     readonly rpc: ResilientRpcClient;
     readonly scratchRoot?: string;
   }) {
     this.#rpc = input.rpc;
     this.#generation = input.generation;
-    this.#key = createHash("sha256").update(randomBytes(32)).digest();
+    if (input.referenceKey !== undefined && Buffer.byteLength(input.referenceKey) < 32) {
+      throw new Error("messages_reference_key_invalid");
+    }
+    this.#key = createHash("sha256")
+      .update("pronto/messages/reference-key/v1\0", "utf8")
+      .update(input.referenceKey ?? randomBytes(32))
+      .digest();
+    this.#restorableReferences = input.referenceKey !== undefined;
     this.#limits = scopeLimits(input.limits);
     this.#now = input.now ?? Date.now;
     this.#attachmentsRoot = resolve(
@@ -360,16 +375,23 @@ export class ScopedMessagesAccess {
     };
   }
 
-  async conversation(reference: ConversationReference): Promise<ConversationPayload> {
+  async conversation(
+    reference: ConversationReference,
+    restoreForReply = false,
+  ): Promise<ConversationPayload> {
     const payload = this.#open(reference.token, "conversation", validConversationPayload);
     if (
       reference.version !== 1 || reference.provider !== "apple-messages" ||
       reference.chatId !== payload.chatId ||
-      reference.expiresAt !== new Date(payload.expiresAt).toISOString() ||
-      payload.expiresAt <= this.#now() || !this.#usage.has(payload.capabilityId)
+      reference.expiresAt !== new Date(payload.expiresAt).toISOString()
     ) throw new Error("messages_conversation_reference_invalid");
+    if (payload.expiresAt <= this.#now()) throw new ConversationReferenceExpiredError();
     if (await this.#generation() !== payload.generation) {
       throw new Error("messages_conversation_scope_changed");
+    }
+    if (!this.#usage.has(payload.capabilityId) &&
+      !(restoreForReply && this.#restorableReferences)) {
+      throw new Error("messages_conversation_reference_invalid");
     }
     return payload;
   }
