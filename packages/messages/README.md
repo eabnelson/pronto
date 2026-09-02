@@ -41,6 +41,13 @@ const subscription = await messages.subscribe({
 });
 ```
 
+A consumer migrating an older provider checkpoint can call `adoptCheckpoint`
+after qualification and before subscribing. The versioned candidate includes
+the prior database generation, row, and provider message ID. Pronto accepts it
+only when the database identity matches and that exact pre-cutover witness is
+still present; otherwise it returns a structured rejection. An existing Pronto
+checkpoint is always preserved.
+
 The package binds durable checkpoints to a fingerprint of the current Messages database. It restarts and resubscribes after provider failure, performs catch-up within row-count, age, and wall-clock limits, and reports privacy-safe recovery diagnostics. A send that may have reached the provider is returned as `ambiguous` and is never automatically replayed.
 
 Every observed conversation carries a module-issued, versioned, tamper-evident reference with an expiry. References are process-local by default. A consumer with durable queued work can provide a stable owner-private `referenceKey` of at least 32 bytes; that permits an unexpired observed reference to be revalidated after restart without granting access to a different chat. Rotating the key invalidates outstanding references. History requires that exact reference plus an explicit message, row, byte, and RPC-call budget. Pagination continuations remain bound to the same conversation capability and database generation. They cannot be used to search another conversation.

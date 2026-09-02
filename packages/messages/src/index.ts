@@ -13,7 +13,10 @@ import {
   qualify,
   record,
 } from "./internal/normalize.js";
-import { databaseGeneration } from "./internal/generation.js";
+import {
+  databaseGeneration,
+  legacyDatabaseGeneration,
+} from "./internal/generation.js";
 import {
   ConversationReferenceExpiredError,
   ScopedMessagesAccess,
@@ -29,6 +32,8 @@ import type {
   CreateProntoMessagesOptions,
   MaterializedAttachment,
   MessagesDiagnostics,
+  MessagesCheckpointAdoptionOutcome,
+  MessagesCheckpointCandidate,
   MessagesEvent,
   MessagesHistoryPage,
   MessagesQualification,
@@ -50,6 +55,8 @@ export type {
   MessagesHistoryBudget,
   MessagesHistoryPage,
   MessagesDiagnostics,
+  MessagesCheckpointAdoptionOutcome,
+  MessagesCheckpointCandidate,
   MessagesQualification,
   MessagesRecoveryOutcome,
   MessagesRecoveryLimits,
@@ -174,6 +181,61 @@ class ProntoMessagesClient implements ProntoMessages {
       state: this.#closed ? "closed" : rpc.state === "recovering" ? "recovering" : this.#diagnostics.state,
       ...(rpc.nextRetryAt === undefined ? {} : { nextRetryAt: rpc.nextRetryAt }),
     };
+  }
+
+  async adoptCheckpoint(
+    input: Parameters<NonNullable<ProntoMessages["adoptCheckpoint"]>>[0],
+  ): Promise<MessagesCheckpointAdoptionOutcome> {
+    if (this.#closed) throw new Error("messages_closed");
+    if (this.#subscriptionActive) throw new Error("messages_checkpoint_adoption_too_late");
+    if (input.version !== 1 || input.databaseGeneration.trim() === "" ||
+        !Number.isSafeInteger(input.rowId) || input.rowId < 0 ||
+        (input.rowId === 0 && input.providerMessageId !== undefined) ||
+        (input.rowId > 0 && !safeProviderCoordinate(input.providerMessageId))) {
+      throw new Error("messages_checkpoint_invalid");
+    }
+    if (await this.#state.currentCheckpoint() !== undefined) return { status: "preserved" };
+    const qualification = await this.qualify();
+    const path = this.#databasePath;
+    if (path === undefined) throw new Error("messages_database_generation_unavailable");
+    const compatible = input.databaseGeneration === qualification.databaseGeneration ||
+      input.databaseGeneration === await legacyDatabaseGeneration(path);
+    if (!compatible) {
+      return { reason: "database-generation-mismatch", status: "rejected" };
+    }
+    let witness: { readonly providerMessageDigest: string; readonly rowId: number } | undefined;
+    if (input.rowId > 0) {
+      const providerMessageId = input.providerMessageId;
+      if (providerMessageId === undefined) throw new Error("messages_checkpoint_invalid");
+      const page = record(await this.#rpc.request("messages.after", {
+        attachments: false,
+        include_reactions: true,
+        limit: 1,
+        since_rowid: Math.max(0, input.rowId - 1),
+      }));
+      if (!Array.isArray(page.messages)) {
+        throw new Error("imsg returned invalid checkpoint evidence");
+      }
+      const raw = page.messages.find((value) => record(value).id === input.rowId);
+      const message = record(raw);
+      if (message.guid !== providerMessageId) {
+        return { reason: "checkpoint-witness-unavailable", status: "rejected" };
+      }
+      witness = {
+        providerMessageDigest: this.#providerMessageDigest(providerMessageId),
+        rowId: input.rowId,
+      };
+    }
+    if (await this.#refreshGeneration() !== qualification.databaseGeneration) {
+      return { reason: "database-generation-mismatch", status: "rejected" };
+    }
+    return await this.#state.initialize(
+        qualification.databaseGeneration,
+        input.rowId,
+        witness,
+      )
+      ? { status: "adopted" }
+      : { status: "preserved" };
   }
 
   async history(
@@ -860,6 +922,7 @@ class ProntoMessagesClient implements ProntoMessages {
   }
 
   async #checkpointWitnessMatches(checkpoint: ProviderCheckpoint): Promise<boolean> {
+    if (checkpoint.rowId === 0) return true;
     if (checkpoint.witnesses === undefined || checkpoint.witnesses.length === 0) return false;
     const highWatermark = record(await this.#rpc.request("messages.after", {
       attachments: false,

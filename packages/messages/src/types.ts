@@ -80,6 +80,20 @@ export interface MessagesQualification {
   readonly status: "ready";
 }
 
+export type MessagesCheckpointAdoptionOutcome =
+  | { readonly status: "adopted" | "preserved" }
+  | {
+      readonly reason: "database-generation-mismatch" | "checkpoint-witness-unavailable";
+      readonly status: "rejected";
+    };
+
+export interface MessagesCheckpointCandidate {
+  readonly databaseGeneration: string;
+  readonly providerMessageId?: string;
+  readonly rowId: number;
+  readonly version: 1;
+}
+
 export type MessagesRecoveryReason =
   | "age-limit"
   | "database-generation-changed"
@@ -168,6 +182,7 @@ export interface MessagesSubscription {
 }
 
 export interface ProntoMessages {
+  adoptCheckpoint?(input: MessagesCheckpointCandidate): Promise<MessagesCheckpointAdoptionOutcome>;
   close(): Promise<void>;
   diagnostics(): MessagesDiagnostics;
   history(input: {
