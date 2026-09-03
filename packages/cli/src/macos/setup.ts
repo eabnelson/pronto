@@ -592,6 +592,23 @@ export function sourceBuild(repositoryRoot: string): (outputPath: string) => Pro
     if (result.exitCode !== 0) {
       throw new Error(`Unable to compile pronto: ${result.stderr.trim() || result.exitCode}`);
     }
+    // A stable identity + fixed identifier keeps the Designated Requirement constant
+    // across rebuilds, so the Full Disk Access grant survives. Ad-hoc ("-") pins TCC to
+    // the code hash instead, which bun's non-reproducible --compile invalidates every run.
+    const signingIdentity = process.env.PRONTO_CODESIGN_IDENTITY ?? "-";
+    const signature = await runCommand("/usr/bin/codesign", [
+      "--force",
+      "--sign",
+      signingIdentity,
+      "--identifier",
+      "dev.pronto.cli",
+      outputPath,
+    ]);
+    if (signature.exitCode !== 0) {
+      throw new Error(
+        `Unable to codesign pronto: ${signature.stderr.trim() || signature.exitCode}`,
+      );
+    }
   };
 }
 
