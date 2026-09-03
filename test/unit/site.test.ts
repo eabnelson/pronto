@@ -285,6 +285,9 @@ describe("public landing page", () => {
     expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
     expect(workflow).toContain("actions/upload-pages-artifact@");
     expect(workflow).toContain("actions/deploy-pages@");
+    expect(workflow.indexOf("- run: bun run build")).toBeLessThan(
+      workflow.indexOf("- run: bun run release:validate"),
+    );
   });
 
   test("keeps the hero minimal and points to the setup prompt", async () => {
