@@ -22,8 +22,9 @@ describe("release workflow", () => {
     expect(beforePublish).toContain(".draft == true");
     expect(beforePublish).toContain('([.assets[].name] | sort) == ([');
     expect(beforePublish).toContain('$package');
-    expect(workflow).toContain("./dist/s4imsg --version");
-    expect(workflow).toContain("dist/s4imsg.sha256");
+    expect(workflow).toContain("codesign --verify --strict --verbose=4 dist/pronto");
+    expect(workflow).not.toContain("dist/s4imsg");
+    expect(workflow).not.toContain("release-assets/s4imsg");
     expect(workflow).toContain("dist/pronto-imessage-*.tgz");
   });
 

@@ -43,10 +43,10 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run build
+      - run: codesign --verify --strict --verbose=4 dist/pronto
       - run: bun test
       - run: ./dist/pronto --version
       - run: ./dist/pronto --help
-      - run: ./dist/s4imsg --version
       - run: node --input-type=module --eval 'import("./packages/messages/dist/index.js").then((module) => { if (typeof module.createProntoMessages !== "function") process.exit(1); })'
       - run: bun run release:validate
       - name: Verify tag matches package version
@@ -73,8 +73,6 @@ jobs:
           cd dist
           shasum -a 256 pronto > pronto.sha256
           shasum -a 256 -c pronto.sha256
-          shasum -a 256 s4imsg > s4imsg.sha256
-          shasum -a 256 -c s4imsg.sha256
           shasum -a 256 "${{ steps.release-version.outputs.package-file }}" > pronto-imessage.sha256
           shasum -a 256 -c pronto-imessage.sha256
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -84,8 +82,6 @@ jobs:
           path: |
             dist/pronto
             dist/pronto.sha256
-            dist/s4imsg
-            dist/s4imsg.sha256
             dist/pronto-imessage-*.tgz
             dist/pronto-imessage.sha256
 
@@ -133,7 +129,6 @@ jobs:
         working-directory: release-assets
         run: |
           sha256sum -c pronto.sha256
-          sha256sum -c s4imsg.sha256
           sha256sum -c pronto-imessage.sha256
       - name: Create draft release
         run: |
@@ -143,7 +138,6 @@ jobs:
         run: |
           gh release upload "$RELEASE_TAG" \
             release-assets/pronto release-assets/pronto.sha256 \
-            release-assets/s4imsg release-assets/s4imsg.sha256 \
             "release-assets/$PACKAGE_FILE" release-assets/pronto-imessage.sha256
 
           RELEASE_ID="$(
@@ -153,7 +147,7 @@ jobs:
                 select(
                   .tag_name == $tag and
                   .draft == true and
-                  ([.assets[].name] | sort) == (["pronto", "pronto.sha256", "pronto-imessage.sha256", $package, "s4imsg", "s4imsg.sha256"] | sort)
+                  ([.assets[].name] | sort) == (["pronto", "pronto.sha256", "pronto-imessage.sha256", $package] | sort)
                 ) |
                 .id
               '

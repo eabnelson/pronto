@@ -574,6 +574,36 @@ export async function sha256File(path: string): Promise<string> {
   return createHash("sha256").update(await readFile(path)).digest("hex");
 }
 
+export async function signProntoExecutable(
+  executablePath: string,
+  runner: CommandRunner = runCommand,
+  signingIdentity: string = process.env.PRONTO_CODESIGN_IDENTITY?.trim() || "-",
+): Promise<void> {
+  const signature = await runner("/usr/bin/codesign", [
+    "--force",
+    "--sign",
+    signingIdentity,
+    "--identifier",
+    "dev.pronto.cli",
+    executablePath,
+  ]);
+  if (signature.exitCode !== 0) {
+    throw new Error(
+      `Unable to code-sign pronto: ${signature.stderr.trim() || signature.exitCode}`,
+    );
+  }
+  const verification = await runner("/usr/bin/codesign", [
+    "--verify",
+    "--strict",
+    executablePath,
+  ]);
+  if (verification.exitCode !== 0) {
+    throw new Error(
+      `Unable to verify pronto code signature: ${verification.stderr.trim() || verification.exitCode}`,
+    );
+  }
+}
+
 export interface SetupDependencies {
   buildExecutable: (outputPath: string) => Promise<void>;
   installAgent: (input: { plist: string; plistPath: string }) => Promise<void>;
@@ -596,29 +626,7 @@ export function sourceBuild(
     if (result.exitCode !== 0) {
       throw new Error(`Unable to compile pronto: ${result.stderr.trim() || result.exitCode}`);
     }
-    const signature = await runner("/usr/bin/codesign", [
-      "--force",
-      "--sign",
-      signingIdentity,
-      "--identifier",
-      "dev.pronto.cli",
-      outputPath,
-    ]);
-    if (signature.exitCode !== 0) {
-      throw new Error(
-        `Unable to code-sign pronto: ${signature.stderr.trim() || signature.exitCode}`,
-      );
-    }
-    const verification = await runner("/usr/bin/codesign", [
-      "--verify",
-      "--strict",
-      outputPath,
-    ]);
-    if (verification.exitCode !== 0) {
-      throw new Error(
-        `Unable to verify pronto code signature: ${verification.stderr.trim() || verification.exitCode}`,
-      );
-    }
+    await signProntoExecutable(outputPath, runner, signingIdentity);
   };
 }
 
@@ -645,17 +653,10 @@ export async function installSetup(input: {
   await ensurePrivateDirectory(binDirectory);
   await ensurePrivateDirectory(input.paths.logDirectory);
   const temporaryExecutable = join(binDirectory, `.pronto-${randomUUID()}.tmp`);
-  const temporaryCompatibilityExecutable = join(binDirectory, `.s4imsg-${randomUUID()}.tmp`);
-  const compatibilityExecutable = join(binDirectory, "s4imsg");
 
   try {
     await dependencies.buildExecutable(temporaryExecutable);
     await chmod(temporaryExecutable, 0o700);
-    await atomicWritePrivate(
-      temporaryCompatibilityExecutable,
-      renderCompatibilityLauncher(input.paths.executablePath),
-    );
-    await chmod(temporaryCompatibilityExecutable, 0o700);
     const installedExecutableHash = await sha256File(temporaryExecutable);
     const config = { ...input.config, installedExecutableHash };
     const previousConfig = await readFile(input.paths.configPath, "utf8").catch(
@@ -679,7 +680,6 @@ export async function installSetup(input: {
       }
       throw error;
     }
-    await rename(temporaryCompatibilityExecutable, compatibilityExecutable);
     await dependencies.installAgent({
       plist: renderLaunchAgent({
         executablePath: input.paths.executablePath,
@@ -691,10 +691,12 @@ export async function installSetup(input: {
       }),
       plistPath: input.paths.launchAgentPath,
     });
+    await unlink(join(binDirectory, "s4imsg")).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
     return config;
   } finally {
     await unlink(temporaryExecutable).catch(() => undefined);
-    await unlink(temporaryCompatibilityExecutable).catch(() => undefined);
   }
 }
 

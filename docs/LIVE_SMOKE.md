@@ -33,6 +33,14 @@ eligible activation service.
 4. In a different eligible chat, have another participant send a tagged message
    and confirm their request still runs once.
 
+If no separate participant is available, the release owner may carry forward the
+most recent passing remote-participant evidence only when the reviewed diff does
+not change activation, Messages transport, runtime invocation, outbound delivery,
+or echo suppression. The exact candidate must still pass the self-chat flow, and
+the qualification matrix must name both the carried-forward release and the fresh
+self-chat evidence. This exception is not available for a release that changes any
+of those message-processing surfaces.
+
 ## Per-chat working folders
 
 1. In one test chat, send a tagged `use /absolute/path/to/project` request and

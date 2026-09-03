@@ -15,6 +15,14 @@ afterEach(async () => {
 });
 
 describe("Pronto CLI", () => {
+  test("exposes only the Pronto command to new package consumers", async () => {
+    const packageJson = await Bun.file(
+      new URL("../../packages/cli/package.json", import.meta.url),
+    ).json() as { bin?: Record<string, string> };
+
+    expect(packageJson.bin).toEqual({ pronto: "./src/cli.ts" });
+  });
+
   test("reports the package version from source", async () => {
     const process = Bun.spawn(["bun", "packages/cli/src/cli.ts", "--version"], {
       cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
@@ -28,7 +36,7 @@ describe("Pronto CLI", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    expect(stdout.trim()).toBe("pronto 0.2.2");
+    expect(stdout.trim()).toBe("pronto 0.2.3");
   });
 
   test("the legacy command explains the rename and delegates safe commands", async () => {
@@ -46,7 +54,7 @@ describe("Pronto CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.trim()).toBe("s4imsg is now Pronto; use the pronto command.");
-    expect(stdout.trim()).toBe("pronto 0.2.2");
+    expect(stdout.trim()).toBe("pronto 0.2.3");
   });
 
   test("the legacy command refuses to start a second foreground listener", async () => {
@@ -81,7 +89,7 @@ describe("Pronto CLI", () => {
     expect(stderr).toContain("cannot run setup");
   });
 
-  test("the installed compatibility launcher shares the safe-command policy", async () => {
+  test("the legacy migration launcher shares the safe-command policy", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pronto-compatibility-"));
     temporaryDirectories.push(directory);
     const pronto = join(directory, "pronto");
