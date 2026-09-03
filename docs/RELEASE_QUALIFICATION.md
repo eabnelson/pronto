@@ -11,15 +11,15 @@ file records capability evidence, not private conversation data.
 | Bun | 1.3.14 | Frozen install, typecheck, tests, compiled build | Pass |
 | Node.js | 22.23.1 | Clean packed `pronto-imessage` import and public-interface smoke | Pass |
 | imsg | 0.14.1 | Protocol v1 initialize, database readiness, method qualification | Pass |
-| Codex CLI | 0.146.1 | Auth/help inspection and adapter fixtures | Pass |
+| Codex CLI | 0.153.0 | Auth/help inspection and adapter fixtures | Pass |
 | Claude Code | 2.1.226 | Auth/help inspection and adapter fixtures | Pass |
-| Codex effective local probe | 0.146.1 | Setup noninteractive file-tool probe | Pass |
+| Codex effective local probe | 0.153.0 | Setup noninteractive file-tool probe | Pass |
 | Claude effective local probe | 2.1.226 | Setup noninteractive file-tool probe | Pass |
-| Messages Automation | Owner test chats, 2026-09-02 | Exactly one self-chat send and one RCS send; expected self-chat display mirror only | Pass |
-| Self-chat mirror handling | Owner self-chat, 2026-09-02 | One tagged activation and one agent send with no echo turn | Pass |
-| Full remote tagged flow | v0.2.2 | Owner RCS chat, 2026-09-02: exact candidate installed with one listener, one tagged activation, one confirmed reply, no retry or echo turn after one minute | Pass |
+| Messages Automation | Owner test chats, 2026-09-03 | Exact v0.2.3 candidate produced one self-chat reply; v0.2.2 RCS send evidence carried forward | Pass |
+| Self-chat mirror handling | Owner self-chat, 2026-09-03 | Exact v0.2.3 candidate produced one tagged activation and one agent send with no echo turn | Pass |
+| Full remote tagged flow | v0.2.3 | Release-owner exception: exact v0.2.3 self-chat passed on 2026-09-03; v0.2.2 owner RCS evidence from 2026-09-02 carried forward after diff review confirmed no activation, transport, runtime, delivery, or echo-suppression changes | Pass |
 
-The automated matrix and owner smoke record versions tested on 2026-09-02.
+The automated matrix and owner smoke record versions tested on 2026-09-03.
 Capability checks, not version
 strings alone, determine whether setup and startup proceed.
 
@@ -31,7 +31,7 @@ strings alone, determine whether setup and startup proceed.
 - `bun run build`
 - `bun run release:validate`
 - Packed `pronto-imessage` imports successfully under Node.js 22.23.1 and Bun 1.3.14
-- Compiled `pronto` version/help and legacy `s4imsg` version smoke checks
+- Compiled `pronto` version/help and strict macOS signature smoke checks
 - Clean-room provenance and third-party notices present
 - `pronto-imessage` is packed, checksummed, attached to the immutable GitHub
   release, and published to npm with provenance only after this matrix passes
@@ -47,7 +47,10 @@ strings alone, determine whether setup and startup proceed.
 
 ## Owner-only gate
 
-Run `docs/LIVE_SMOKE.md` after installing the exact release candidate. Mark the
-remote row Pass only after a remote participant's exactly-one reply, recent
-context, tagged continuity, restart suppression, and content-free logs are
-observed. Do not publish a GitHub release while any cell is Pending or Blocked.
+Run `docs/LIVE_SMOKE.md` after installing the exact release candidate. Normally,
+mark the remote row Pass only after a remote participant's exactly-one reply,
+recent context, tagged continuity, restart suppression, and content-free logs are
+observed. When the checklist's narrowly scoped carry-forward exception applies,
+record the prior remote release, fresh exact-candidate self-chat evidence, and the
+reviewed unchanged surfaces in the matrix. Do not publish a GitHub release while
+any cell is Pending or Blocked.

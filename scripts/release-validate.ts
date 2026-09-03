@@ -80,7 +80,6 @@ const requiredFiles = [
   ".github/PULL_REQUEST_TEMPLATE.md",
   ...workflowPaths,
   "dist/pronto",
-  "dist/s4imsg",
   "packages/messages/dist/index.js",
   "packages/messages/dist/index.d.ts",
 ];
@@ -96,7 +95,6 @@ for (const required of requiredFileChecks) {
 for (const [path, args] of [
   ["dist/pronto", ["--version"]],
   ["dist/pronto", ["--help"]],
-  ["dist/s4imsg", ["--version"]],
 ] as const) {
   if (!(await Bun.file(join(root, path)).exists())) continue;
   const command = Bun.spawn([join(root, path), ...args], {

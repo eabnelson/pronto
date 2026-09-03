@@ -285,6 +285,9 @@ test("setup atomically installs a hashed executable and private configuration", 
   const home = await mkdtemp(join(tmpdir(), "s4imsg-install-"));
   temporaryDirectories.push(home);
   const paths = pathsForHome(home);
+  const compatibilityExecutable = join(paths.appSupportDirectory, "bin", "s4imsg");
+  await mkdir(join(paths.appSupportDirectory, "bin"), { recursive: true });
+  await writeFile(compatibilityExecutable, "obsolete-shim", { mode: 0o700 });
   let installedPlist = "";
 
   const installed = await installSetup({
@@ -299,7 +302,7 @@ test("setup atomically installs a hashed executable and private configuration", 
     }),
     dependencies: {
       buildExecutable: async (outputPath) => {
-        await writeFile(outputPath, "compiled-s4imsg", { mode: 0o700 });
+        await writeFile(outputPath, "compiled-pronto", { mode: 0o700 });
       },
       installAgent: async ({ plist }) => {
         installedPlist = plist;
@@ -308,11 +311,9 @@ test("setup atomically installs a hashed executable and private configuration", 
     paths,
   });
 
-  expect(await readFile(paths.executablePath, "utf8")).toBe("compiled-s4imsg");
+  expect(await readFile(paths.executablePath, "utf8")).toBe("compiled-pronto");
   expect((await lstat(paths.executablePath)).mode & 0o777).toBe(0o700);
-  const compatibilityExecutable = join(paths.appSupportDirectory, "bin", "s4imsg");
-  expect(await readFile(compatibilityExecutable, "utf8")).toContain("s4imsg is now Pronto");
-  expect((await lstat(compatibilityExecutable)).mode & 0o777).toBe(0o700);
+  await expect(access(compatibilityExecutable)).rejects.toThrow();
   expect(installed.installedExecutableHash).toHaveLength(64);
   expect(installedPlist).toContain(paths.executablePath);
   expect(await readFile(paths.configPath, "utf8")).not.toContain("@Helper");
