@@ -22,6 +22,7 @@ jobs:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
       - run: bun test test/unit/site.test.ts test/unit/workflow-validation.test.ts
+      - run: bun run build
       - run: bun run release:validate
 
   deploy:
