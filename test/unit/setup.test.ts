@@ -18,6 +18,7 @@ import {
   qualifyInstalledExecutable,
   resolveWorkspaceSelection,
   setupCompletionMessage,
+  sourceBuild,
   uninstallInstallation,
 } from "../../packages/cli/src/macos/setup";
 
@@ -663,6 +664,85 @@ test("migration resumes finalization after legacy plist removal is interrupted",
     join(paths.appSupportDirectory, "migration-backup", "completed"),
     "utf8",
   )).toContain("completed");
+});
+
+test("source builds replace Bun's embedded signature before installation", async () => {
+  const calls: Array<{ executable: string; args: readonly string[] }> = [];
+  const build = sourceBuild(
+    "/Users/example/pronto",
+    async (executable, args) => {
+      calls.push({ executable, args });
+      return { exitCode: 0, stderr: "", stdout: "" };
+    },
+    "Developer ID Application: Example",
+  );
+
+  await build("/private/tmp/pronto");
+
+  expect(calls).toEqual([
+    {
+      executable: Bun.which("bun") ?? "bun",
+      args: [
+        "build",
+        "/Users/example/pronto/packages/cli/src/cli.ts",
+        "--compile",
+        "--outfile",
+        "/private/tmp/pronto",
+      ],
+    },
+    {
+      executable: "/usr/bin/codesign",
+      args: [
+        "--force",
+        "--sign",
+        "Developer ID Application: Example",
+        "--identifier",
+        "dev.pronto.cli",
+        "/private/tmp/pronto",
+      ],
+    },
+    {
+      executable: "/usr/bin/codesign",
+      args: ["--verify", "--strict", "/private/tmp/pronto"],
+    },
+  ]);
+});
+
+test("source builds do not sign output after compilation fails", async () => {
+  const calls: string[] = [];
+  const build = sourceBuild("/Users/example/pronto", async (executable) => {
+    calls.push(executable);
+    return { exitCode: 1, stderr: "compile failed", stdout: "" };
+  });
+
+  await expect(build("/private/tmp/pronto")).rejects.toThrow(
+    "Unable to compile pronto: compile failed",
+  );
+  expect(calls).toEqual([Bun.which("bun") ?? "bun"]);
+});
+
+test("source builds fail closed when the replacement signature fails", async () => {
+  const build = sourceBuild("/Users/example/pronto", async (executable, args) => {
+    return executable === "/usr/bin/codesign" && args[0] === "--force"
+      ? { exitCode: 1, stderr: "identity unavailable", stdout: "" }
+      : { exitCode: 0, stderr: "", stdout: "" };
+  });
+
+  await expect(build("/private/tmp/pronto")).rejects.toThrow(
+    "Unable to code-sign pronto: identity unavailable",
+  );
+});
+
+test("source builds fail closed when the replacement signature is invalid", async () => {
+  const build = sourceBuild("/Users/example/pronto", async (executable, args) => {
+    return executable === "/usr/bin/codesign" && args[0] === "--verify"
+      ? { exitCode: 1, stderr: "invalid signature", stdout: "" }
+      : { exitCode: 0, stderr: "", stdout: "" };
+  });
+
+  await expect(build("/private/tmp/pronto")).rejects.toThrow(
+    "Unable to verify pronto code signature: invalid signature",
+  );
 });
 
 test("installed qualification runs doctor through the exact installed executable", async () => {
