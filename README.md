@@ -97,6 +97,12 @@ installs the `dev.pronto.agent` user LaunchAgent. It asks the owner to grant Ful
 Disk Access to that exact installed executable, verifies the installed identity,
 and reports success only after the new listener is healthy.
 
+Source setup replaces Bun's embedded macOS signature with an ad-hoc signature so
+the compiled executable can launch on supported macOS versions. If you have a
+stable code-signing identity and want Full Disk Access to survive recompilation,
+set `PRONTO_CODESIGN_IDENTITY` to that identity before running setup. The value is
+passed directly to `/usr/bin/codesign`; it is never evaluated by a shell.
+
 ## macOS permissions
 
 In System Settings → Privacy & Security:
@@ -193,10 +199,11 @@ bun run packages/cli/src/cli.ts setup
 ```
 
 Setup replaces the stable executable atomically and preserves configuration and
-bounded memory. macOS may treat the replacement as a new privacy identity; run
-`doctor` again after setup. If Pronto already appears in Full Disk Access,
-remove that entry and add the exact installed executable again; toggling the
-existing entry off and on does not refresh the replaced identity.
+bounded memory. An ad-hoc-signed replacement has a new privacy identity; run
+`doctor` again after setup. If Pronto already appears in Full Disk Access, remove
+that entry and add the exact installed executable again; toggling the existing
+entry off and on does not refresh the replaced identity. A stable identity set
+through `PRONTO_CODESIGN_IDENTITY` preserves the identity across recompilation.
 
 ## Troubleshooting
 

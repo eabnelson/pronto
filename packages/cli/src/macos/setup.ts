@@ -580,9 +580,13 @@ export interface SetupDependencies {
   saveConfiguration?: (path: string, config: ProntoConfig) => Promise<void>;
 }
 
-export function sourceBuild(repositoryRoot: string): (outputPath: string) => Promise<void> {
+export function sourceBuild(
+  repositoryRoot: string,
+  runner: CommandRunner = runCommand,
+  signingIdentity: string = process.env.PRONTO_CODESIGN_IDENTITY?.trim() || "-",
+): (outputPath: string) => Promise<void> {
   return async (outputPath) => {
-    const result = await runCommand(Bun.which("bun") ?? "bun", [
+    const result = await runner(Bun.which("bun") ?? "bun", [
       "build",
       join(repositoryRoot, "packages", "cli", "src", "cli.ts"),
       "--compile",
@@ -591,6 +595,29 @@ export function sourceBuild(repositoryRoot: string): (outputPath: string) => Pro
     ]);
     if (result.exitCode !== 0) {
       throw new Error(`Unable to compile pronto: ${result.stderr.trim() || result.exitCode}`);
+    }
+    const signature = await runner("/usr/bin/codesign", [
+      "--force",
+      "--sign",
+      signingIdentity,
+      "--identifier",
+      "dev.pronto.cli",
+      outputPath,
+    ]);
+    if (signature.exitCode !== 0) {
+      throw new Error(
+        `Unable to code-sign pronto: ${signature.stderr.trim() || signature.exitCode}`,
+      );
+    }
+    const verification = await runner("/usr/bin/codesign", [
+      "--verify",
+      "--strict",
+      outputPath,
+    ]);
+    if (verification.exitCode !== 0) {
+      throw new Error(
+        `Unable to verify pronto code signature: ${verification.stderr.trim() || verification.exitCode}`,
+      );
     }
   };
 }
