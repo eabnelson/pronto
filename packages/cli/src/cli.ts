@@ -47,6 +47,7 @@ import {
   PRONTO_ATTEMPT_CAPABILITY_ENV,
   PRONTO_BROKER_URL_ENV,
 } from "./tools/contract";
+import { ProntoUpdater } from "./update";
 
 const HELP = `pronto ${packageJson.version}
 
@@ -58,6 +59,7 @@ Commands:
   status      Show listener health without conversation content
   doctor      Check local capabilities and permissions
   tags        List, add, or remove trigger tags
+  update      Check for or install a verified Pronto update
   stop        Stop the installed listener
   forget      Remove one chat's tagged memory and workspace state
   uninstall   Remove the listener while preserving data by default
@@ -250,6 +252,65 @@ async function runSetup(): Promise<number> {
     return 0;
   } finally {
     prompt.close();
+  }
+}
+
+async function runUpdate(args: readonly string[]): Promise<number> {
+  if (process.platform !== "darwin") {
+    console.error("Pronto updates require macOS.");
+    return 1;
+  }
+  const automatic = args.includes("--automatic");
+  const checkOnly = args.includes("--check");
+  const allowIdentityMigration = args.includes("--migrate-signing");
+  const updater = new ProntoUpdater(pathsForHome(homedir()));
+  try {
+    if (
+      allowIdentityMigration &&
+      resolve(process.execPath) !== resolve(pathsForHome(homedir()).executablePath)
+    ) {
+      const result = await updater.migrateLocalCandidate(process.execPath);
+      if (result.status === "migration_installed") {
+        console.log(fullDiskAccessInstructions(pathsForHome(homedir()).executablePath));
+        console.log("After granting access, run pronto doctor and pronto status. Future updates will preserve this identity.");
+        return 2;
+      }
+      console.log(result.status === "installed"
+        ? `Pronto migrated to signed ${result.version}.`
+        : `Pronto ${result.version} already has the permanent release identity.`);
+      return 0;
+    }
+    if (checkOnly) {
+      const result = await updater.check();
+      console.log(result.status === "current"
+        ? `Pronto ${result.version} is current.`
+        : `Pronto ${result.manifest.version} is available.`);
+      return 0;
+    }
+    const result = await updater.install({ allowIdentityMigration });
+    if (result.status === "current") {
+      if (!automatic) console.log(`Pronto ${result.version} is current.`);
+      return 0;
+    }
+    if (result.status === "migration_required") {
+      if (!automatic) {
+        console.error(
+          `Pronto ${result.version} is signed with the permanent release identity. ` +
+          "Run pronto update --migrate-signing to install it; macOS will require one final Full Disk Access re-grant.",
+        );
+      }
+      return automatic ? 0 : 2;
+    }
+    if (result.status === "migration_installed") {
+      console.log(fullDiskAccessInstructions(pathsForHome(homedir()).executablePath));
+      console.log("After granting access, run pronto doctor and pronto status. Future updates will preserve this identity.");
+      return 2;
+    }
+    console.log(`Pronto updated to ${result.version}.`);
+    return 0;
+  } catch (error) {
+    console.error(`Pronto update failed: ${(error as Error).message}`);
+    return automatic ? 0 : 1;
   }
 }
 
@@ -488,6 +549,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
   if (command === "doctor") return runDoctor(args.includes("--json"), args.includes("--offline"));
   if (command === "status") return runStatus(args.includes("--json"), args.includes("--chats"));
   if (command === "tags" || command === "tag") return runTags(args.slice(1));
+  if (command === "update") return runUpdate(args.slice(1));
   if (command === "stop") {
     const result = await stopLaunchAgent();
     if (result.exitCode !== 0) console.error("Pronto was not running.");

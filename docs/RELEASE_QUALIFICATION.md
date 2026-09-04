@@ -10,16 +10,16 @@ file records capability evidence, not private conversation data.
 | macOS | 26.5.1 (25F80) | Local build and synthetic suite | Pass |
 | Bun | 1.3.14 | Frozen install, typecheck, tests, compiled build | Pass |
 | Node.js | 22.23.1 | Clean packed `pronto-imessage` import and public-interface smoke | Pass |
-| imsg | 0.14.1 | Protocol v1 initialize, database readiness, method qualification | Pass |
+| imsg | 0.15.0 | Exact signed upstream artifact qualified against protocol v1; provider code unchanged since the 0.2.4 qualification | Pass |
 | Codex CLI | 0.153.0 | Auth/help inspection and adapter fixtures | Pass |
-| Claude Code | 2.1.226 | Auth/help inspection and adapter fixtures | Pass |
+| Claude Code | 2.1.260 | Auth/help inspection and adapter fixtures | Pass |
 | Codex effective local probe | 0.153.0 | Setup noninteractive file-tool probe | Pass |
 | Claude effective local probe | 2.1.226 | Setup noninteractive file-tool probe | Pass |
-| Messages Automation | Owner test chats, 2026-09-03 | Exact v0.2.3 candidate produced one self-chat reply; v0.2.2 RCS send evidence carried forward | Pass |
-| Self-chat mirror handling | Owner self-chat, 2026-09-03 | Exact v0.2.3 candidate produced one tagged activation and one agent send with no echo turn | Pass |
-| Full remote tagged flow | v0.2.3 | Release-owner exception: exact v0.2.3 self-chat passed on 2026-09-03; v0.2.2 owner RCS evidence from 2026-09-02 carried forward after diff review confirmed no activation, transport, runtime, delivery, or echo-suppression changes | Pass |
+| Messages Automation | v0.3.0 signed candidate | Developer ID candidate installed after the one-time FDA migration; owner-authorized self and remote sends each produced exactly one reply on 2026-09-04 | Pass |
+| Self-chat mirror handling | v0.3.0 signed candidate | One tagged self-chat activation produced exactly one agent send with no echo turn after one minute on 2026-09-04 | Pass |
+| Full remote tagged flow | v0.3.0 signed candidate | One remote participant's tagged request produced exactly one reply; a same-identity signed-to-signed replacement preserved FDA and returned the listener to ready on 2026-09-04 | Pass |
 
-The automated matrix and owner smoke record versions tested on 2026-09-03.
+The automated matrix and owner smoke record versions tested on 2026-09-04.
 Capability checks, not version
 strings alone, determine whether setup and startup proceed.
 

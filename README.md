@@ -41,25 +41,39 @@ switch a chat into a repository you do not trust.
 - macOS 14 or newer with Messages signed in to iMessage
 - For RCS, an iPhone and carrier configuration that makes the RCS conversation
   available in Messages on the Mac
-- [Bun 1.3.14](https://bun.sh/) for source installation
-- [`imsg`](https://github.com/openclaw/imsg) 0.14 or a capability-compatible release
+- [Bun 1.3.14](https://bun.sh/) only for development from source
+- [`imsg`](https://github.com/openclaw/imsg) 0.15.0
 - At least one authenticated [Codex CLI](https://github.com/openai/codex) or
   [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/getting-started)
 
 ## Quick start
 
-Install Bun and `imsg` if you do not already have them, then clone and run setup:
+Install `imsg`, download the signed binary for your Mac, verify its permanent
+Apple identity, and run setup:
 
 ```sh
-brew install oven-sh/bun/bun steipete/tap/imsg
-git clone https://github.com/eabnelson/pronto.git
-cd pronto
-bun install --frozen-lockfile
-bun run setup
+brew install steipete/tap/imsg
+PRONTO_INSTALL_DIR="$(mktemp -d)" || exit 1
+case "$(uname -m)" in
+  arm64) PRONTO_TARGET="darwin-arm64" ;;
+  x86_64) PRONTO_TARGET="darwin-x64" ;;
+  *) echo "Unsupported Mac architecture" >&2; exit 1 ;;
+esac
+PRONTO_CANDIDATE="$PRONTO_INSTALL_DIR/pronto"
+curl --fail --location --proto '=https' --tlsv1.2 \
+  "https://github.com/eabnelson/pronto/releases/latest/download/pronto-$PRONTO_TARGET" \
+  --output "$PRONTO_CANDIDATE" || exit 1
+chmod 700 "$PRONTO_CANDIDATE"
+codesign --verify --strict \
+  -R='identifier "dev.pronto.cli" and anchor apple generic and certificate leaf[subject.OU] = "9YCNUWK84C"' \
+  "$PRONTO_CANDIDATE" || exit 1
+"$PRONTO_CANDIDATE" setup
+unlink "$PRONTO_CANDIDATE"
+rmdir "$PRONTO_INSTALL_DIR"
 ```
 
-Codex or Claude Code must already be installed and signed in before `bun run
-setup`. Setup automatically detects both CLIs, lets you choose the primary and
+Codex or Claude Code must already be installed and signed in before setup.
+Setup automatically detects both CLIs, lets you choose the primary and
 optional fallback, and validates that every selected runtime can complete an
 unattended tool call before installing anything.
 
@@ -102,6 +116,12 @@ the compiled executable can launch on supported macOS versions. If you have a
 stable code-signing identity and want Full Disk Access to survive recompilation,
 set `PRONTO_CODESIGN_IDENTITY` to that identity before running setup. The value is
 passed directly to `/usr/bin/codesign`; it is never evaluated by a shell.
+
+Official release binaries use the permanent `dev.pronto.cli` Developer ID
+identity for Apple Team `9YCNUWK84C`, Hardened Runtime, a secure timestamp, and
+Apple notarization. Moving from a source-built/ad-hoc installation to the first
+official signed release requires one final Full Disk Access re-grant. Later
+official updates preserve the installed path and designated requirement.
 
 ## macOS permissions
 
@@ -165,6 +185,8 @@ PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"
 "$PRONTO" tags
 "$PRONTO" tags add @plan
 "$PRONTO" tags remove @plan
+"$PRONTO" update --check
+"$PRONTO" update
 "$PRONTO" stop
 "$PRONTO" forget <opaque-chat-key>
 "$PRONTO" uninstall
@@ -190,7 +212,12 @@ local tool activity is also parked rather than replayed.
 
 ## Upgrade
 
-From the source checkout:
+Official installations update automatically every six hours. Check or update
+immediately with `pronto update --check` or `pronto update`. The updater verifies
+the signed manifest, artifact digest, and Apple identity, drains the listener,
+restarts it, and rolls back unless the new listener becomes healthy.
+
+Source installations remain a development workflow:
 
 ```sh
 git pull --ff-only
@@ -198,12 +225,13 @@ bun install --frozen-lockfile
 bun run packages/cli/src/cli.ts setup
 ```
 
-Setup replaces the stable executable atomically and preserves configuration and
-bounded memory. An ad-hoc-signed replacement has a new privacy identity; run
-`doctor` again after setup. If Pronto already appears in Full Disk Access, remove
-that entry and add the exact installed executable again; toggling the existing
-entry off and on does not refresh the replaced identity. A stable identity set
-through `PRONTO_CODESIGN_IDENTITY` preserves the identity across recompilation.
+Source setup replaces the stable executable atomically and preserves
+configuration and bounded memory, but its default ad-hoc signature has a new
+privacy identity on every build. Use source setup only for development. Move to
+the first official release by downloading and verifying the signed candidate as
+shown in Quick start, then run `"$PRONTO_CANDIDATE" update --migrate-signing`.
+Re-grant Full Disk Access once and use automatic signed updates thereafter. See
+[Signed releases and automatic updates](docs/UPDATES.md).
 
 ## Troubleshooting
 

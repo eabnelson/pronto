@@ -7,11 +7,17 @@ const REQUIRED_CONTROLS = [
   ["npm install --global npm@11.19.1", "trusted-publishing npm CLI"],
   ['test "$(npm --version)" = "11.19.1"', "trusted-publishing npm CLI verification"],
   ["for ATTEMPT in {1..60}; do", "npm registry propagation retry"],
-  ["dist/pronto-imessage-*.tgz", "package release artifact"],
+  ["release/pronto-imessage-*.tgz", "package release artifact"],
   ["sha256sum -c pronto-imessage.sha256", "downloaded package checksum verification"],
+  ["environment: release", "protected release environment"],
+  ["codesign --force --options runtime --timestamp", "Developer ID hardened-runtime signing"],
+  ["xcrun notarytool submit", "Apple notarization"],
+  ["PRONTO_RELEASE_ED25519_PRIVATE_KEY", "signed update manifest credential"],
+  ["bun scripts/generate-update-manifest.ts", "signed update manifest generation"],
+  ["actions/attest-build-provenance@", "artifact provenance attestation"],
   ["workflow_dispatch:", "manual immutable-tag recovery"],
   [
-    "ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}",
+    "ref: ${{ github.ref }}",
     "tag-pinned recovery checkout",
   ],
   [
@@ -22,7 +28,7 @@ const REQUIRED_CONTROLS = [
 
 const ORDERED_STEPS = [
   "- name: Verify owner qualification is complete",
-  "- name: Create and verify checksum",
+  "- name: Create signed update manifest and checksums",
   "\n  publish:",
   "- name: Verify downloaded checksum",
   "- name: Create draft release",

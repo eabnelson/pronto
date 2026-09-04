@@ -289,6 +289,7 @@ test("setup atomically installs a hashed executable and private configuration", 
   await mkdir(join(paths.appSupportDirectory, "bin"), { recursive: true });
   await writeFile(compatibilityExecutable, "obsolete-shim", { mode: 0o700 });
   let installedPlist = "";
+  let installedUpdaterPlist = "";
 
   const installed = await installSetup({
     config: prepareSetupConfig({
@@ -307,6 +308,9 @@ test("setup atomically installs a hashed executable and private configuration", 
       installAgent: async ({ plist }) => {
         installedPlist = plist;
       },
+      installUpdater: async ({ plist }) => {
+        installedUpdaterPlist = plist;
+      },
     },
     paths,
   });
@@ -316,6 +320,8 @@ test("setup atomically installs a hashed executable and private configuration", 
   await expect(access(compatibilityExecutable)).rejects.toThrow();
   expect(installed.installedExecutableHash).toHaveLength(64);
   expect(installedPlist).toContain(paths.executablePath);
+  expect(installedUpdaterPlist).toContain("dev.pronto.updater");
+  expect(installedUpdaterPlist).toContain("--automatic");
   expect(await readFile(paths.configPath, "utf8")).not.toContain("@Helper");
 });
 
@@ -695,6 +701,9 @@ test("source builds replace Bun's embedded signature before installation", async
       executable: "/usr/bin/codesign",
       args: [
         "--force",
+        "--options",
+        "runtime",
+        "--timestamp",
         "--sign",
         "Developer ID Application: Example",
         "--identifier",
@@ -1114,15 +1123,20 @@ test("uninstall removes the service executable but retains private data by defau
   await writeFile(paths.configPath, "configuration");
   await writeFile(paths.databasePath, "database");
   let agentRemoved = false;
+  let updaterRemoved = false;
 
   await uninstallInstallation({
     paths,
     removeAgent: async () => {
       agentRemoved = true;
     },
+    removeUpdaterAgent: async () => {
+      updaterRemoved = true;
+    },
   });
 
   expect(agentRemoved).toBeTrue();
+  expect(updaterRemoved).toBeTrue();
   await expect(access(paths.executablePath)).rejects.toThrow();
   expect(await readFile(paths.configPath, "utf8")).toBe("configuration");
   expect(await readFile(paths.databasePath, "utf8")).toBe("database");

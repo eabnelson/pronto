@@ -11,6 +11,11 @@ test("derives one owner-scoped service layout", () => {
     logDirectory: "/Users/example/Library/Logs/pronto",
     logPath: "/Users/example/Library/Logs/pronto/daemon.log",
     providerStatePath: "/Users/example/Library/Application Support/pronto/provider-state.json",
+    updateBackupPath: "/Users/example/Library/Application Support/pronto/updates/last-known-good",
+    updateDirectory: "/Users/example/Library/Application Support/pronto/updates",
+    updateLockPath: "/Users/example/Library/Application Support/pronto/updates/update.lock",
+    updateStatePath: "/Users/example/Library/Application Support/pronto/updates/state.json",
+    updaterLaunchAgentPath: "/Users/example/Library/LaunchAgents/dev.pronto.updater.plist",
   });
 });
 
@@ -24,5 +29,10 @@ test("retains the legacy layout only for migration", () => {
     logDirectory: "/Users/example/Library/Logs/s4imsg",
     logPath: "/Users/example/Library/Logs/s4imsg/daemon.log",
     providerStatePath: "/Users/example/Library/Application Support/s4imsg/provider-state.json",
+    updateBackupPath: "/Users/example/Library/Application Support/s4imsg/updates/last-known-good",
+    updateDirectory: "/Users/example/Library/Application Support/s4imsg/updates",
+    updateLockPath: "/Users/example/Library/Application Support/s4imsg/updates/update.lock",
+    updateStatePath: "/Users/example/Library/Application Support/s4imsg/updates/state.json",
+    updaterLaunchAgentPath: "/Users/example/Library/LaunchAgents/dev.s4imsg.agent.updater.plist",
   });
 });

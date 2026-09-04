@@ -503,8 +503,10 @@ describe("public landing page", () => {
   test("provides a complete agent-readable setup handoff", async () => {
     const setup = await read("setup.md");
 
-    expect(setup).toContain("https://github.com/eabnelson/pronto.git");
-    expect(setup).toContain("bun run packages/cli/src/cli.ts setup");
+    expect(setup).toContain("https://github.com/eabnelson/pronto");
+    expect(setup).toContain('"$PRONTO_CANDIDATE" setup');
+    expect(setup).toContain('identifier \"dev.pronto.cli\"');
+    expect(setup).toContain('certificate leaf[subject.OU] = \"9YCNUWK84C\"');
     expect(setup).toContain("Full Disk Access");
     expect(setup).toContain("doctor");
     expect(setup).toContain("status");
@@ -516,7 +518,7 @@ describe("public landing page", () => {
 
   test("grants setup and installed executables Full Disk Access at the right times", async () => {
     const setup = await read("setup.md");
-    const setupCommand = setup.indexOf("bun run packages/cli/src/cli.ts setup");
+    const setupCommand = setup.indexOf('"$PRONTO_CANDIDATE" setup');
     const setupPermission = setup.indexOf("terminal or parent app that will run setup");
     const installedPermission = setup.indexOf("exact installed executable");
 
@@ -525,27 +527,18 @@ describe("public landing page", () => {
     expect(installedPermission).toBeGreaterThan(setupCommand);
   });
 
-  test("guards an existing checkout before running repository code", async () => {
+  test("downloads and verifies the immutable release identity before setup", async () => {
     const setup = await read("setup.md");
-    const cloneWithChosenPath = setup.indexOf(
-      "git clone https://github.com/eabnelson/pronto.git \"$CHECKOUT\"",
-    );
-    const checkoutUse = setup.indexOf('cd "$CHECKOUT"');
-    const originCheck = setup.indexOf("git remote get-url origin");
-    const exactOrigins = setup.indexOf(
-      "https://github.com/eabnelson/pronto.git|git@github.com:eabnelson/pronto.git)",
-    );
-    const cleanCheck = setup.indexOf("git status --porcelain");
-    const fastForward = setup.indexOf("git pull --ff-only");
-    const install = setup.indexOf("bun install --frozen-lockfile");
+    const download = setup.indexOf("releases/latest/download/pronto-$PRONTO_TARGET");
+    const signature = setup.indexOf("codesign --verify --strict");
+    const version = setup.indexOf('"$PRONTO_CANDIDATE" --version');
+    const install = setup.indexOf('"$PRONTO_CANDIDATE" setup');
 
-    expect(cloneWithChosenPath).toBeGreaterThan(-1);
-    expect(checkoutUse).toBeGreaterThan(-1);
-    expect(originCheck).toBeGreaterThan(-1);
-    expect(exactOrigins).toBeGreaterThan(originCheck);
-    expect(cleanCheck).toBeGreaterThan(originCheck);
-    expect(fastForward).toBeGreaterThan(cleanCheck);
-    expect(install).toBeGreaterThan(fastForward);
+    expect(download).toBeGreaterThan(-1);
+    expect(signature).toBeGreaterThan(download);
+    expect(version).toBeGreaterThan(signature);
+    expect(install).toBeGreaterThan(version);
+    expect(setup).not.toContain("bun run packages/cli/src/cli.ts setup");
   });
 
   test("makes the final installed status check self-contained", async () => {

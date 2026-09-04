@@ -22,10 +22,14 @@ describe("release workflow", () => {
     expect(beforePublish).toContain(".draft == true");
     expect(beforePublish).toContain('([.assets[].name] | sort) == ([');
     expect(beforePublish).toContain('$package');
-    expect(workflow).toContain("codesign --verify --strict --verbose=4 dist/pronto");
+    expect(workflow).toContain("codesign --verify --strict --verbose=4 -R=\"$requirement\"");
+    expect(workflow).toContain("codesign --force --options runtime --timestamp");
+    expect(workflow).toContain("xcrun notarytool submit");
+    expect(workflow).toContain("environment: release");
+    expect(workflow).toContain("pronto-update.json");
     expect(workflow).not.toContain("dist/s4imsg");
     expect(workflow).not.toContain("release-assets/s4imsg");
-    expect(workflow).toContain("dist/pronto-imessage-*.tgz");
+    expect(workflow).toContain("release/pronto-imessage-*.tgz");
   });
 
   test("keeps releases immutable and verifies the published release", async () => {
@@ -63,10 +67,10 @@ describe("release workflow", () => {
       "npm install --global npm@11.19.1",
       'test "$(npm --version)" = "11.19.1"',
       "for ATTEMPT in {1..60}; do",
-      "dist/pronto-imessage-*.tgz",
+      "release/pronto-imessage-*.tgz",
       "sha256sum -c pronto-imessage.sha256",
       "workflow_dispatch:",
-      "ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}",
+      "ref: ${{ github.ref }}",
       'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
     ]) {
       expect(releaseWorkflowViolations(workflow.replace(control, "removed-control")))
@@ -93,15 +97,13 @@ describe("release workflow", () => {
   test("manual recovery rebuilds an explicit immutable tag", async () => {
     const workflow = await releaseWorkflow();
 
-    expect(workflow).toContain("release_tag:");
-    expect(workflow).toContain("RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}");
-    expect(workflow).toContain(
-      "ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}",
-    );
-    expect(workflow).toContain("Verify recovery checkout is the immutable tag");
+    expect(workflow).toContain("RELEASE_TAG: ${{ github.ref_name }}");
+    expect(workflow).toContain("ref: ${{ github.ref }}");
+    expect(workflow).toContain("Verify immutable tag and package version");
     expect(workflow).toContain('git rev-parse "refs/tags/$RELEASE_TAG^{commit}"');
     expect(workflow).toContain('test "v$VERSION" = "$RELEASE_TAG"');
-    expect(workflow).toContain('echo "release-tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"');
+    expect(workflow).toContain('echo "release-tag=$RELEASE_TAG"');
+    expect(workflow).toContain('} >> "$GITHUB_OUTPUT"');
     expect(workflow).toContain("RELEASE_TAG: ${{ needs.build.outputs.release-tag }}");
     expect(workflow).toContain('--title "Pronto $RELEASE_TAG"');
     expect(workflow).not.toContain("$GITHUB_REF_NAME");
