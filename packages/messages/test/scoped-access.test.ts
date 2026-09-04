@@ -101,6 +101,7 @@ for await (const chunk of Bun.stdin.stream()) {
   return createProntoMessages({
     ...(input.attachmentsRoot === undefined ? {} : { attachmentsRoot: input.attachmentsRoot }),
     imsgPath: executable,
+    recoveryLimits: { maxLiveAgeMs: Number.MAX_SAFE_INTEGER },
     ...(input.referenceKey === undefined ? {} : { referenceKey: input.referenceKey }),
     scopeLimits: {
       maxAttachmentBytes: 1_024 * 1_024,

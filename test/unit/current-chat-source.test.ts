@@ -34,6 +34,7 @@ const event: MessagesEvent = {
       reference: attachment,
       sizeBytes: 12,
     }],
+    destinationCallerId: null,
     fromMe: false,
     kind: "message",
     occurredAt: "2026-09-01T12:00:00.000Z",

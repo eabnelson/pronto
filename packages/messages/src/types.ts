@@ -46,6 +46,7 @@ export interface MessagesEvent {
   readonly conversationFacts: ConversationFacts;
   readonly message: {
     readonly attachments: readonly MessagesAttachment[];
+    readonly destinationCallerId: string | null;
     readonly fromMe: boolean;
     readonly kind: "message" | "poll" | "reaction";
     readonly occurredAt: string | null;
@@ -126,6 +127,7 @@ export interface MessagesDiagnostics {
 }
 
 export interface MessagesRecoveryLimits {
+  readonly maxLiveAgeMs?: number;
   readonly maxAgeMs?: number;
   readonly maxDurationMs?: number;
   readonly maxRows?: number;

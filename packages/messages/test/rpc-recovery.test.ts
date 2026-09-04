@@ -1,9 +1,30 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  ImsgRpcClient,
   ResilientRpcClient,
   type RpcConnection,
   type RpcNotification,
 } from "../src/internal/rpc";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((path) => rm(path, { force: true, recursive: true })),
+  );
+});
+
+async function executable(source: string): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "pronto-rpc-lifecycle-"));
+  temporaryDirectories.push(directory);
+  const path = join(directory, "imsg-fixture");
+  await writeFile(path, `#!/usr/bin/env bun\n${source}`, { mode: 0o700 });
+  await chmod(path, 0o700);
+  return path;
+}
 
 class FakeConnection implements RpcConnection {
   readonly methods: string[] = [];
@@ -66,4 +87,50 @@ test("restarts the provider but never replays an already submitted send", async 
     state: "ready",
   });
   await rpc.close();
+});
+
+test("drains an accepted request before closing the provider", async () => {
+  const command = await executable(`
+const decoder = new TextDecoder();
+let buffer = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buffer += decoder.decode(chunk, { stream: true });
+  while (buffer.includes("\\n")) {
+    const newline = buffer.indexOf("\\n");
+    const line = buffer.slice(0, newline);
+    buffer = buffer.slice(newline + 1);
+    if (line.trim() === "") continue;
+    const request = JSON.parse(line);
+    await Bun.sleep(50);
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: { ok: true, guid: "drained-guid" },
+    }) + "\\n");
+  }
+}
+`);
+  const rpc = new ImsgRpcClient(command, {
+    shutdownGraceMs: 1_000,
+    terminationGraceMs: 100,
+  });
+  const request = rpc.request("send", { chat_id: 42, text: "drain me" });
+  const close = rpc.close();
+  await expect(request).resolves.toEqual({ ok: true, guid: "drained-guid" });
+  await close;
+});
+
+test("force-terminates a provider that does not exit after EOF", async () => {
+  const command = await executable(`
+process.on("SIGTERM", () => undefined);
+process.stdin.resume();
+setInterval(() => undefined, 1_000);
+`);
+  const rpc = new ImsgRpcClient(command, {
+    shutdownGraceMs: 50,
+    terminationGraceMs: 50,
+  });
+  const startedAt = Date.now();
+  await rpc.close();
+  expect(Date.now() - startedAt).toBeLessThan(1_000);
 });

@@ -1,6 +1,6 @@
 {
   "name": "pronto-imessage",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Reusable local Apple Messages transport for Pronto consumers",
   "type": "module",
   "license": "MIT",
