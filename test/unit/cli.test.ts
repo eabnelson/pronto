@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createConfig, saveConfig, UNRESTRICTED_TRUST_VERSION } from "../../packages/cli/src/config";
 import { pathsForHome } from "../../packages/cli/src/macos/paths";
 import { renderCompatibilityLauncher } from "../../packages/cli/src/compatibility";
+import cliPackage from "../../packages/cli/package.json";
 
 const temporaryDirectories: string[] = [];
 
@@ -36,7 +37,7 @@ describe("Pronto CLI", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    expect(stdout.trim()).toBe("pronto 0.3.0");
+    expect(stdout.trim()).toBe(`pronto ${cliPackage.version}`);
   });
 
   test("the legacy command explains the rename and delegates safe commands", async () => {
@@ -54,7 +55,7 @@ describe("Pronto CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.trim()).toBe("s4imsg is now Pronto; use the pronto command.");
-    expect(stdout.trim()).toBe("pronto 0.3.0");
+    expect(stdout.trim()).toBe(`pronto ${cliPackage.version}`);
   });
 
   test("the legacy command refuses to start a second foreground listener", async () => {

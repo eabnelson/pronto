@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import packageJson from "../package.json" with { type: "json" };
 import messagesPackageJson from "../packages/messages/package.json" with { type: "json" };
+import cliPackageJson from "../packages/cli/package.json" with { type: "json" };
 import { providerOwnershipViolations } from "./provider-ownership";
 import { releaseWorkflowViolations } from "./release-workflow-validation";
 import { mutableActionReferences } from "./workflow-validation";
@@ -28,6 +29,9 @@ async function sourceFiles(directory: string): Promise<string[]> {
 }
 
 const failures: string[] = [];
+if (cliPackageJson.version !== packageJson.version || messagesPackageJson.version !== packageJson.version) {
+  failures.push("workspace, CLI and Messages package versions must agree");
+}
 const workflowPaths = [
   ".github/workflows/ci.yml",
   ".github/workflows/pages.yml",
@@ -101,8 +105,12 @@ for (const [path, args] of [
     stderr: "pipe",
     stdout: "pipe",
   });
-  if (await command.exited !== 0) {
+  const [exitCode, output] = await Promise.all([command.exited, new Response(command.stdout).text()]);
+  if (exitCode !== 0) {
     failures.push(`${path} ${args.join(" ")} failed after compilation`);
+  }
+  if (args[0] === "--version" && output.trim() !== `pronto ${packageJson.version}`) {
+    failures.push("compiled Pronto version does not match the release package");
   }
 }
 failures.push(...await providerOwnershipViolations(root));
