@@ -15,17 +15,25 @@ import {
 } from "../config";
 import {
   installLaunchAgent,
+  installUpdaterLaunchAgent,
   launchAgentStateForLabel,
   removeLaunchAgent,
   removeLaunchAgentForLabel,
   renderLaunchAgent,
+  renderUpdaterLaunchAgent,
   restoreLaunchAgentForLabel,
   stopLaunchAgentForLabel,
   type LaunchAgentState,
   type ProcessResult,
 } from "./launch-agent";
-import { LAUNCH_AGENT_LABEL, LEGACY_LAUNCH_AGENT_LABEL, type ProntoPaths } from "./paths";
+import {
+  LAUNCH_AGENT_LABEL,
+  LEGACY_LAUNCH_AGENT_LABEL,
+  UPDATER_LAUNCH_AGENT_LABEL,
+  type ProntoPaths,
+} from "./paths";
 import { renderCompatibilityLauncher } from "../compatibility";
+import { inspectProntoExecutableIdentity } from "./release-identity";
 
 export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage or RCS conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider. You are responsible for informing participants.`;
 
@@ -581,6 +589,7 @@ export async function signProntoExecutable(
 ): Promise<void> {
   const signature = await runner("/usr/bin/codesign", [
     "--force",
+    ...(signingIdentity === "-" ? [] : ["--options", "runtime", "--timestamp"]),
     "--sign",
     signingIdentity,
     "--identifier",
@@ -607,6 +616,7 @@ export async function signProntoExecutable(
 export interface SetupDependencies {
   buildExecutable: (outputPath: string) => Promise<void>;
   installAgent: (input: { plist: string; plistPath: string }) => Promise<void>;
+  installUpdater?: (input: { plist: string; plistPath: string }) => Promise<void>;
   saveConfiguration?: (path: string, config: ProntoConfig) => Promise<void>;
 }
 
@@ -648,6 +658,7 @@ export async function installSetup(input: {
           ? executableBuild(process.execPath)
           : sourceBuild(input.repositoryRoot),
       installAgent: installLaunchAgent,
+      installUpdater: installUpdaterLaunchAgent,
     } satisfies SetupDependencies);
   const binDirectory = join(input.paths.appSupportDirectory, "bin");
   await ensurePrivateDirectory(binDirectory);
@@ -691,6 +702,13 @@ export async function installSetup(input: {
       }),
       plistPath: input.paths.launchAgentPath,
     });
+    await dependencies.installUpdater?.({
+      plist: renderUpdaterLaunchAgent({
+        executablePath: input.paths.executablePath,
+        logPath: input.paths.logPath,
+      }),
+      plistPath: input.paths.updaterLaunchAgentPath,
+    });
     await unlink(join(binDirectory, "s4imsg")).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
     });
@@ -704,8 +722,16 @@ export async function uninstallInstallation(input: {
   paths: ProntoPaths;
   purge?: boolean;
   removeAgent?: (plistPath: string) => Promise<void>;
+  removeUpdaterAgent?: (plistPath: string) => Promise<void>;
 }): Promise<void> {
   await (input.removeAgent ?? removeLaunchAgent)(input.paths.launchAgentPath);
+  const removeUpdater = input.removeUpdaterAgent ?? (input.removeAgent === undefined
+    ? (plistPath: string) => removeLaunchAgentForLabel({
+        label: UPDATER_LAUNCH_AGENT_LABEL,
+        plistPath,
+      })
+    : async () => undefined);
+  await removeUpdater(input.paths.updaterLaunchAgentPath);
   await unlink(input.paths.executablePath).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });
@@ -765,6 +791,17 @@ export async function inspectInstallation(
           status: "failed",
         },
   );
+
+  if (process.platform === "darwin" && executableReady) {
+    const releaseIdentity = await inspectProntoExecutableIdentity(paths.executablePath, runner);
+    checks.push(releaseIdentity === undefined
+      ? {
+          id: "release-identity",
+          remediation: "Install the official signed release with pronto update --migrate-signing; one final Full Disk Access re-grant is required.",
+          status: "degraded",
+        }
+      : { id: "release-identity", status: "ok" });
+  }
 
   for (const [id, executable] of [
     ["imsg-command", config.imsgPath],

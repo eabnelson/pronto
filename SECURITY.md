@@ -52,6 +52,21 @@ Possible-side-effect runtime failures and uncertain sends are never replayed
 automatically. Trigger tags and prompt labels reduce accidental activation and
 prompt injection risk, but are not authorization or process isolation.
 
+## Release and update trust
+
+Official macOS binaries are signed with the stable `dev.pronto.cli` Developer ID
+identity for Team `9YCNUWK84C`, use Hardened Runtime and a secure timestamp, and
+must be accepted by Apple's notarization service before publication. The updater
+also requires a bounded Ed25519-signed manifest, an immutable GitHub release URL,
+the exact artifact size and SHA-256, a monotonically increasing release sequence,
+and the expected Apple identity. A failed check leaves the installed binary
+unchanged; a candidate that does not become healthy is rolled back.
+
+Release credentials are GitHub environment secrets and are never stored in this
+repository. Pull-request workflows cannot access the protected `release`
+environment. npm publication uses trusted publishing/OIDC rather than a durable
+npm token. See [the update runbook](docs/UPDATES.md) for the complete contract.
+
 ## Reporting vulnerabilities
 
 Do not include real message text, participant identifiers, chat identifiers,

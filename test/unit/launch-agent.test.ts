@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   installLaunchAgent,
+  installUpdaterLaunchAgent,
   parseLaunchAgentState,
   removeLaunchAgentForLabel,
   renderLaunchAgent,
+  renderUpdaterLaunchAgent,
   restoreLaunchAgentForLabel,
   restartLaunchAgent,
   stopLaunchAgentForLabel,
@@ -38,6 +40,21 @@ test("renders a stable owner LaunchAgent without shell interpolation", () => {
   expect(plist).toContain(
     "<string>/opt/homebrew/bin:/Users/me/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
   );
+  expect(plist).not.toContain("/bin/sh");
+});
+
+test("renders a bounded periodic updater without a keepalive loop", () => {
+  const plist = renderUpdaterLaunchAgent({
+    executablePath: "/Users/me/Application Support/pronto/bin/pronto",
+    logPath: "/Users/me/Logs/pronto/daemon.log",
+  });
+
+  expect(plist).toContain("dev.pronto.updater");
+  expect(plist).toContain("<string>update</string>");
+  expect(plist).toContain("<string>--automatic</string>");
+  expect(plist).toContain("<integer>21600</integer>");
+  expect(plist).not.toContain("<key>RunAtLoad</key>");
+  expect(plist).not.toContain("<key>KeepAlive</key>");
   expect(plist).not.toContain("/bin/sh");
 });
 
@@ -178,6 +195,33 @@ test("installs and bootstraps one LaunchAgent", async () => {
     ["print", "gui/501/dev.pronto.agent"],
     ["bootstrap", "gui/501", plistPath],
     ["kickstart", "-k", "gui/501/dev.pronto.agent"],
+  ]);
+});
+
+test("installs the periodic updater without immediately kickstarting it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pronto-updater-agent-"));
+  temporaryDirectories.push(directory);
+  const plistPath = join(directory, "dev.pronto.updater.plist");
+  const calls: string[][] = [];
+
+  await installUpdaterLaunchAgent({
+    plist: "<?xml version=\"1.0\"?><plist></plist>\n",
+    plistPath,
+    runner: async (args) => {
+      calls.push([...args]);
+      return {
+        exitCode: args[0] === "bootout" || args[0] === "print" ? 3 : 0,
+        stderr: "",
+        stdout: "",
+      };
+    },
+    uid: 501,
+  });
+
+  expect(calls).toEqual([
+    ["bootout", "gui/501/dev.pronto.updater"],
+    ["print", "gui/501/dev.pronto.updater"],
+    ["bootstrap", "gui/501", plistPath],
   ]);
 });
 

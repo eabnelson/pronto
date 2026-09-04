@@ -36,7 +36,7 @@ describe("Pronto CLI", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    expect(stdout.trim()).toBe("pronto 0.2.4");
+    expect(stdout.trim()).toBe("pronto 0.3.0");
   });
 
   test("the legacy command explains the rename and delegates safe commands", async () => {
@@ -54,7 +54,7 @@ describe("Pronto CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.trim()).toBe("s4imsg is now Pronto; use the pronto command.");
-    expect(stdout.trim()).toBe("pronto 0.2.4");
+    expect(stdout.trim()).toBe("pronto 0.3.0");
   });
 
   test("the legacy command refuses to start a second foreground listener", async () => {

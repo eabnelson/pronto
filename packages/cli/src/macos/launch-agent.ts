@@ -1,7 +1,7 @@
 import { unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { atomicWritePrivate } from "../config";
-import { LAUNCH_AGENT_LABEL } from "./paths";
+import { LAUNCH_AGENT_LABEL, UPDATER_LAUNCH_AGENT_LABEL } from "./paths";
 
 export interface ProcessResult {
   exitCode: number;
@@ -87,6 +87,35 @@ export function renderLaunchAgent(input: {
 `;
 }
 
+export function renderUpdaterLaunchAgent(input: {
+  executablePath: string;
+  logPath: string;
+}): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${UPDATER_LAUNCH_AGENT_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xml(input.executablePath)}</string>
+    <string>update</string>
+    <string>--automatic</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>21600</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>${xml(input.logPath)}</string>
+  <key>StandardErrorPath</key>
+  <string>${xml(input.logPath)}</string>
+</dict>
+</plist>
+`;
+}
+
 export const runLaunchctl: LaunchctlRunner = async (args) => {
   const child = Bun.spawn(["/bin/launchctl", ...args], {
     stderr: "pipe",
@@ -107,24 +136,52 @@ export async function installLaunchAgent(input: {
   uid?: number;
   wait?: (milliseconds: number) => Promise<void>;
 }): Promise<void> {
+  await installLaunchAgentForLabel({ ...input, label: LAUNCH_AGENT_LABEL, kickstart: true });
+}
+
+export async function installUpdaterLaunchAgent(input: {
+  plist: string;
+  plistPath: string;
+  runner?: LaunchctlRunner;
+  uid?: number;
+  wait?: (milliseconds: number) => Promise<void>;
+}): Promise<void> {
+  await installLaunchAgentForLabel({
+    ...input,
+    label: UPDATER_LAUNCH_AGENT_LABEL,
+    kickstart: false,
+  });
+}
+
+async function installLaunchAgentForLabel(input: {
+  plist: string;
+  plistPath: string;
+  label: string;
+  kickstart: boolean;
+  runner?: LaunchctlRunner;
+  uid?: number;
+  wait?: (milliseconds: number) => Promise<void>;
+}): Promise<void> {
   const runner = input.runner ?? runLaunchctl;
   const wait = input.wait ?? Bun.sleep;
   const uid = input.uid ?? process.getuid?.();
   if (uid === undefined) throw new Error("Unable to determine the current user ID");
-  const service = `gui/${uid}/${LAUNCH_AGENT_LABEL}`;
+  const service = `gui/${uid}/${input.label}`;
 
   await atomicWritePrivate(input.plistPath, input.plist);
-  await stopLaunchAgentForLabel({ label: LAUNCH_AGENT_LABEL, runner, uid, wait });
+  await stopLaunchAgentForLabel({ label: input.label, runner, uid, wait });
   const bootstrap = await runner(["bootstrap", `gui/${uid}`, input.plistPath]);
   if (bootstrap.exitCode !== 0) {
     await unlink(input.plistPath).catch(() => undefined);
     throw new Error(`launchctl bootstrap failed: ${bootstrap.stderr.trim() || bootstrap.exitCode}`);
   }
-  const kickstart = await runner(["kickstart", "-k", service]);
-  if (kickstart.exitCode !== 0) {
-    await runner(["bootout", service]);
-    await unlink(input.plistPath).catch(() => undefined);
-    throw new Error(`launchctl kickstart failed: ${kickstart.stderr.trim() || kickstart.exitCode}`);
+  if (input.kickstart) {
+    const kickstart = await runner(["kickstart", "-k", service]);
+    if (kickstart.exitCode !== 0) {
+      await runner(["bootout", service]);
+      await unlink(input.plistPath).catch(() => undefined);
+      throw new Error(`launchctl kickstart failed: ${kickstart.stderr.trim() || kickstart.exitCode}`);
+    }
   }
 }
 
