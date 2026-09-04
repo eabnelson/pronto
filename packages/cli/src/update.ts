@@ -17,15 +17,22 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import packageJson from "../../../package.json" with { type: "json" };
-import { atomicWritePrivate, ensurePrivateDirectory, loadConfig, saveConfig } from "./config";
+import {
+  atomicWritePrivate,
+  ensurePrivateDirectory,
+  loadConfig,
+  saveConfig,
+  type ProntoConfig,
+} from "./config";
 import {
   LAUNCH_AGENT_LABEL,
   type ProntoPaths,
 } from "./macos/paths";
 import {
+  installLaunchAgent,
   installUpdaterLaunchAgent,
+  renderLaunchAgent,
   renderUpdaterLaunchAgent,
-  restoreLaunchAgentForLabel,
   stopLaunchAgentForLabel,
 } from "./macos/launch-agent";
 import { runCommand, sha256File, type CommandRunner } from "./macos/setup";
@@ -109,8 +116,8 @@ export interface ProntoUpdateDependencies {
     path: string,
     run: CommandRunner,
   ) => Promise<{ readonly identifier: string; readonly teamIdentifier: string } | undefined>;
+  readonly installMainAgent: (paths: ProntoPaths, config: ProntoConfig) => Promise<void>;
   readonly installUpdaterAgent: (paths: ProntoPaths) => Promise<void>;
-  readonly restoreAgent: (paths: ProntoPaths) => Promise<void>;
   readonly stopAgent: () => Promise<void>;
   readonly verifyEnvelope: (encoded: Uint8Array, now: Date) => ProntoUpdateManifest;
   readonly wait: (milliseconds: number) => Promise<void>;
@@ -123,16 +130,23 @@ const defaultDependencies: ProntoUpdateDependencies = {
   randomId: randomUUID,
   run: runCommand,
   inspectIdentity: inspectProntoExecutableIdentity,
+  installMainAgent: async (paths, config) => await installLaunchAgent({
+    plist: renderLaunchAgent({
+      executablePath: paths.executablePath,
+      logPath: paths.logPath,
+      runtimeExecutablePaths: [
+        config.primaryRuntimePath,
+        config.fallbackRuntimePath,
+      ].filter((path): path is string => path !== undefined),
+    }),
+    plistPath: paths.launchAgentPath,
+  }),
   installUpdaterAgent: async (paths) => await installUpdaterLaunchAgent({
     plist: renderUpdaterLaunchAgent({
       executablePath: paths.executablePath,
       logPath: paths.logPath,
     }),
     plistPath: paths.updaterLaunchAgentPath,
-  }),
-  restoreAgent: async (paths) => await restoreLaunchAgentForLabel({
-    label: LAUNCH_AGENT_LABEL,
-    plistPath: paths.launchAgentPath,
   }),
   stopAgent: async () => await stopLaunchAgentForLabel({ label: LAUNCH_AGENT_LABEL }),
   verifyEnvelope: verifyProntoUpdateEnvelope,
@@ -459,7 +473,7 @@ export class ProntoUpdater {
           ...config,
           installedExecutableHash: await sha256File(this.paths.executablePath),
         });
-        await this.#dependencies.restoreAgent(this.paths);
+        await this.#dependencies.installMainAgent(this.paths, config);
 
         let qualified = false;
         for (let attempt = 0; attempt < QUALIFICATION_ATTEMPTS; attempt += 1) {
@@ -501,7 +515,7 @@ export class ProntoUpdater {
           await saveConfig(this.paths.configPath, config).catch((rollbackError) => {
             rollbackErrors.push(rollbackError);
           });
-          await this.#dependencies.restoreAgent(this.paths).catch((rollbackError) => {
+          await this.#dependencies.installMainAgent(this.paths, config).catch((rollbackError) => {
             rollbackErrors.push(rollbackError);
           });
         }
@@ -585,7 +599,7 @@ export class ProntoUpdater {
           installedExecutableHash: await sha256File(this.paths.executablePath),
         });
         await this.#dependencies.installUpdaterAgent(this.paths);
-        await this.#dependencies.restoreAgent(this.paths);
+        await this.#dependencies.installMainAgent(this.paths, config);
         await atomicWritePrivate(this.paths.updateStatePath, `${JSON.stringify({
           schemaVersion: 1,
           highestReleaseSequence: releaseSequenceForVersion(this.#dependencies.currentVersion),
@@ -601,7 +615,7 @@ export class ProntoUpdater {
         await rename(this.paths.executablePath, failedPath).catch(() => undefined);
         await rename(this.paths.updateBackupPath, this.paths.executablePath);
         await saveConfig(this.paths.configPath, config);
-        await this.#dependencies.restoreAgent(this.paths);
+        await this.#dependencies.installMainAgent(this.paths, config);
         await unlink(failedPath).catch(() => undefined);
         throw error;
       }

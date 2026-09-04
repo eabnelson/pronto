@@ -161,7 +161,7 @@ describe("Pronto updater", () => {
       }),
       now: () => new Date("2026-09-05T12:00:00.000Z"),
       randomId: () => "test",
-      restoreAgent: async () => { calls.push("restore"); },
+      installMainAgent: async () => { calls.push("install-main"); },
       run: async (executable, args) => {
         if (args[0] === "--version") return { exitCode: 0, stderr: "", stdout: "pronto 0.3.0\n" };
         calls.push(`${executable}:${args.join(" ")}`);
@@ -183,7 +183,7 @@ describe("Pronto updater", () => {
       createHash("sha256").update(candidate).digest("hex"),
     );
     expect(calls[0]).toBe("stop");
-    expect(calls).toContain("restore");
+    expect(calls).toContain("install-main");
     expect((await stat(paths.executablePath)).mode & 0o777).toBe(0o700);
   });
 
@@ -222,7 +222,7 @@ describe("Pronto updater", () => {
     }));
     const available = manifest(candidate);
     let fetchCount = 0;
-    let restores = 0;
+    let mainAgentInstalls = 0;
     const updater = new ProntoUpdater(paths, {
       currentVersion: "0.2.4",
       fetch: async () => new Response(++fetchCount === 1 ? "manifest" : candidate),
@@ -231,7 +231,7 @@ describe("Pronto updater", () => {
         teamIdentifier: PRONTO_SIGNING_TEAM_IDENTIFIER,
       }),
       randomId: () => "rollback",
-      restoreAgent: async () => { restores += 1; },
+      installMainAgent: async () => { mainAgentInstalls += 1; },
       run: async (_executable, args) => args[0] === "--version"
         ? { exitCode: 0, stderr: "", stdout: "pronto 0.3.0\n" }
         : { exitCode: 1, stderr: "not ready", stdout: "" },
@@ -243,7 +243,7 @@ describe("Pronto updater", () => {
     await expect(updater.install()).rejects.toThrow("update_candidate_qualification_failed");
     expect(await readFile(paths.executablePath, "utf8")).toBe("known good");
     expect((await loadConfig(paths.configPath)).installedExecutableHash).toBe(originalHash);
-    expect(restores).toBe(2);
+    expect(mainAgentInstalls).toBe(2);
   });
 
   test("migrates an existing ad-hoc install from a separately downloaded signed candidate", async () => {
@@ -264,6 +264,7 @@ describe("Pronto updater", () => {
       workingDirectory: home,
     }));
     let updaterInstalled = false;
+    let mainAgentInstalled = false;
     const updater = new ProntoUpdater(paths, {
       currentVersion: "0.3.0",
       inspectIdentity: async (path) => path === paths.executablePath
@@ -273,8 +274,10 @@ describe("Pronto updater", () => {
             teamIdentifier: PRONTO_SIGNING_TEAM_IDENTIFIER,
           },
       installUpdaterAgent: async () => { updaterInstalled = true; },
+      installMainAgent: async (_paths, config) => {
+        mainAgentInstalled = config.primaryRuntimePath === "/usr/local/bin/codex";
+      },
       randomId: () => "migration",
-      restoreAgent: async () => undefined,
       run: async (executable, args) => {
         if (args[0] === "--version") {
           return {
@@ -296,6 +299,7 @@ describe("Pronto updater", () => {
     expect(await readFile(paths.executablePath, "utf8")).toBe("developer-id 0.3.0");
     expect(await readFile(paths.updateBackupPath, "utf8")).toBe("ad-hoc 0.2.4");
     expect(updaterInstalled).toBeTrue();
+    expect(mainAgentInstalled).toBeTrue();
     expect(JSON.parse(await readFile(paths.updateStatePath, "utf8"))).toMatchObject({
       installedVersion: "0.3.0",
     });
