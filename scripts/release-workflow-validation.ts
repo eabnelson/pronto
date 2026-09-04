@@ -11,6 +11,7 @@ const REQUIRED_CONTROLS = [
   ["sha256sum -c pronto-imessage.sha256", "downloaded package checksum verification"],
   ["environment: release", "protected release environment"],
   ["codesign --force --options runtime --timestamp", "Developer ID hardened-runtime signing"],
+  ["grep -Eq '^CodeDirectory .*flags=.*runtime'", "hardened-runtime signature assertion"],
   ["xcrun notarytool submit", "Apple notarization"],
   ["PRONTO_RELEASE_ED25519_PRIVATE_KEY", "signed update manifest credential"],
   ["bun scripts/generate-update-manifest.ts", "signed update manifest generation"],
