@@ -60,6 +60,74 @@ class FakeConnection implements RpcConnection {
   }
 }
 
+test.each([0, 60_000])("resets reconnect delay after stable health, not a flap (%i ms)", async (healthyMs) => {
+  const connections: FakeConnection[] = [];
+  const delays: number[] = [];
+  let now = 0;
+  const rpc = new ResilientRpcClient({
+    connect: () => { const connection = new FakeConnection(); connections.push(connection); return connection; },
+    now: () => now, random: () => 0.5,
+    wait: async (delay) => { delays.push(delay); },
+  });
+  try {
+    for (let index = 0; index < 2; index += 1) {
+      if (index === 1) now += healthyMs;
+      const restarted = new Promise<void>((resolve) => {
+        const dispose = rpc.onRestart(() => { dispose(); resolve(); });
+      });
+      connections[index]!.fail();
+      await restarted;
+      await rpc.request("status");
+    }
+    expect(delays).toEqual(healthyMs === 0 ? [1_000, 2_000] : [1_000, 1_000]);
+  } finally {
+    await rpc.close();
+  }
+});
+
+test("expires a request while reconnecting without submitting it later", async () => {
+  const connections: FakeConnection[] = [];
+  const resume = Promise.withResolvers<void>();
+  const rpc = new ResilientRpcClient({
+    connect: () => { const connection = new FakeConnection(); connections.push(connection); return connection; },
+    wait: async () => await resume.promise,
+  });
+  try {
+    connections[0]!.fail();
+    const request = rpc.request("send", { text: "never submit this expired request" }, 10)
+      .then(() => "submitted", (error: Error) => error.message);
+    expect(await Promise.race([request, Bun.sleep(100).then(() => "stalled")]))
+      .toBe("imsg RPC request timed out before submission: send");
+    resume.resolve();
+    await rpc.request("status");
+    expect(connections.flatMap((connection) => connection.methods)).not.toContain("send");
+  } finally {
+    resume.resolve();
+    await rpc.close();
+  }
+});
+
+test("retries a failed connection factory without escaping the recovery loop", async () => {
+  const first = new FakeConnection();
+  let calls = 0;
+  const rpc = new ResilientRpcClient({
+    connect: () => {
+      calls += 1;
+      if (calls === 1) return first;
+      if (calls === 2) throw new Error("synthetic spawn failure");
+      return new FakeConnection();
+    },
+    wait: async () => undefined,
+  });
+  try {
+    first.fail();
+    await expect(rpc.request("status")).resolves.toEqual({ protocol_version: 1 });
+    expect(calls).toBe(3);
+  } finally {
+    await rpc.close();
+  }
+});
+
 test("restarts the provider but never replays an already submitted send", async () => {
   const connections: FakeConnection[] = [];
   const rpc = new ResilientRpcClient({

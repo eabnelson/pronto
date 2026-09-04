@@ -397,6 +397,7 @@ export class ScopedMessagesAccess {
   }
 
   async history(input: {
+    readonly afterRowId?: number;
     readonly budget: MessagesHistoryBudget;
     readonly continuation?: string;
     readonly conversation: ConversationReference;
@@ -404,6 +405,10 @@ export class ScopedMessagesAccess {
     readonly mode?: "forward" | "recent";
   }): Promise<MessagesHistoryPage> {
     if (!validBudget(input.budget)) throw new Error("messages_history_budget_invalid");
+    if (input.afterRowId !== undefined && (!nonNegativeInteger(input.afterRowId) ||
+      input.mode !== "forward" || input.continuation !== undefined)) {
+      throw new Error("messages_history_position_invalid");
+    }
     const scope = await this.conversation(input.conversation);
     const usage = this.#capabilityUsage(scope);
     const continuation = input.continuation === undefined
@@ -437,7 +442,7 @@ export class ScopedMessagesAccess {
     usage.historyMessages += remaining.maxMessages;
     usage.historyRows += remaining.maxRows;
     usage.historyRpcCalls += 1;
-    const cursor = continuation?.cursor ?? 0;
+    const cursor = continuation?.cursor ?? input.afterRowId ?? 0;
     const method = continuation === undefined && mode === "recent"
       ? "messages.history"
       : "messages.after";

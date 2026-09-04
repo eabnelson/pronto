@@ -75,6 +75,7 @@ export type DeliveryOutcome =
   | { readonly retryable: boolean; readonly status: "failed" };
 
 export interface MessagesQualification {
+  readonly moduleCapabilities?: readonly string[];
   readonly databaseGeneration: string;
   readonly degradedCapabilities: readonly string[];
   readonly providerVersion: string;
@@ -102,6 +103,7 @@ export type MessagesRecoveryReason =
   | "duration-limit"
   | "invalid-provider-page"
   | "provider-unavailable"
+  | "notification-buffer-limit"
   | "row-limit";
 
 export type MessagesRecoveryOutcome =
@@ -117,6 +119,7 @@ export type MessagesRecoveryOutcome =
   };
 
 export interface MessagesDiagnostics {
+  readonly pendingNotifications?: number;
   readonly attempt: number;
   readonly catchUpRows: number;
   readonly databaseGenerationDigest?: string;
@@ -188,6 +191,8 @@ export interface ProntoMessages {
   close(): Promise<void>;
   diagnostics(): MessagesDiagnostics;
   history(input: {
+    /** Start a forward scan after this row, within the observed conversation. */
+    readonly afterRowId?: number;
     readonly budget: MessagesHistoryBudget;
     readonly continuation?: string;
     readonly conversation: ConversationReference;
