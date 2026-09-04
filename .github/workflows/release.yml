@@ -120,7 +120,7 @@ jobs:
             signing_info="$(codesign -dv --verbose=4 "release/$asset" 2>&1)"
             test "$(sed -n 's/^Identifier=//p' <<< "$signing_info")" = "$PRONTO_SIGNING_IDENTIFIER"
             test "$(sed -n 's/^TeamIdentifier=//p' <<< "$signing_info")" = "$PRONTO_SIGNING_TEAM_IDENTIFIER"
-            grep -q '^flags=.*runtime' <<< "$signing_info"
+            grep -Eq '^CodeDirectory .*flags=.*runtime' <<< "$signing_info"
             grep -q '^Timestamp=' <<< "$signing_info"
             archive="$RUNNER_TEMP/$asset.zip"
             ditto -c -k --keepParent "release/$asset" "$archive"

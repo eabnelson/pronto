@@ -24,6 +24,7 @@ describe("release workflow", () => {
     expect(beforePublish).toContain('$package');
     expect(workflow).toContain("codesign --verify --strict --verbose=4 -R=\"$requirement\"");
     expect(workflow).toContain("codesign --force --options runtime --timestamp");
+    expect(workflow).toContain("grep -Eq '^CodeDirectory .*flags=.*runtime'");
     expect(workflow).toContain("xcrun notarytool submit");
     expect(workflow).toContain("environment: release");
     expect(workflow).toContain("pronto-update.json");
