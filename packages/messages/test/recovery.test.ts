@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -52,6 +52,111 @@ function checkpointWitness(rowId = 40, providerMessageId = "checkpoint-guid") {
     rowId,
   };
 }
+
+test("keeps both fresh live messages when the first consumer takes six minutes", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  await writeFile(databasePath, "database evidence");
+  const executable = await executableWithSource(directory, rpcLoop(`
+    let result = { ok: true };
+    if (request.method === "initialize") result = {
+      protocol_version: 1, version: "0.15.0",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+    };
+    if (request.method === "messages.stats") result = {
+      chats: [{ chat_id: request.params.chat_id, service: "iMessage" }], sent_messages: 1,
+    };
+    if (request.method === "watch.subscribe") result = { subscription: 1 };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+    if (request.method === "watch.subscribe") {
+      const created_at = new Date().toISOString();
+      process.stdout.write([1, 2].map((id) => JSON.stringify({
+        jsonrpc: "2.0", method: "message", params: { subscription: 1,
+          message: { chat_id: 40 + id, created_at, guid: "live-" + id, id,
+            is_from_me: true, service: "iMessage", text: "hello" },
+        },
+      }) + "\\n").join(""));
+    }
+  `));
+  const messages = createProntoMessages({ imsgPath: executable });
+  const delivered: number[] = [];
+  const realNow = Date.now;
+  let offset = 0;
+  const clock = spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+  let subscription: Awaited<ReturnType<typeof messages.subscribe>> | undefined;
+  try {
+    subscription = await messages.subscribe({
+    onEvent: (event) => {
+      delivered.push(event.message.rowId);
+      if (event.message.rowId === 1) offset = 6 * 60_000;
+    },
+  });
+    const deadline = realNow() + 1_000;
+    while (delivered.length < 2 && realNow() < deadline) await Bun.sleep(10);
+    expect(delivered).toEqual([1, 2]);
+  } finally {
+    clock.mockRestore();
+    await subscription?.close();
+    await messages.close();
+  }
+});
+
+test.each([300, 10_000])("bounds notification memory and recovers a %i-message burst", async (count) => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  await writeFile(databasePath, "database evidence");
+  const executable = await executableWithSource(directory, `
+    let subscriptions = 0;
+    const created_at = new Date().toISOString();
+    const count = ${count};
+    const messages = Array.from({ length: count }, (_, index) => ({
+      id: index + 1, chat_id: 42, guid: "burst-" + (index + 1), created_at,
+      is_from_me: true, service: "iMessage", text: "hello",
+    }));
+    ${rpcLoop(`
+      let result = { ok: true };
+      if (request.method === "initialize") result = {
+        protocol_version: 1, version: "0.15.0",
+        database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+        methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+      };
+      if (request.method === "messages.stats") result = { chats: [{ chat_id: 42, service: "iMessage" }], sent_messages: 1 };
+      if (request.method === "messages.after") {
+        const page = messages.filter((message) => message.id > request.params.since_rowid).slice(0, request.params.limit);
+        result = { messages: page, next_rowid: page.at(-1)?.id ?? request.params.since_rowid,
+          has_more: (page.at(-1)?.id ?? request.params.since_rowid) < count };
+      }
+      if (request.method === "watch.subscribe") result = { subscription: ++subscriptions };
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+      if (request.method === "watch.subscribe" && subscriptions === 1) {
+        for (const message of messages) process.stdout.write(JSON.stringify({ jsonrpc: "2.0",
+          method: "message", params: { subscription: 1, message } }) + "\\n");
+      }
+    `)}
+  `);
+  const messages = createProntoMessages({ imsgPath: executable });
+  const release = Promise.withResolvers<void>();
+  const delivered: number[] = [];
+  let overflows = 0;
+  const subscription = await messages.subscribe({
+    onEvent: async (event) => { delivered.push(event.message.rowId); await release.promise; },
+    onOverflow: () => { overflows += 1; },
+  });
+  try {
+    await Bun.sleep(100);
+    expect(messages.diagnostics().pendingNotifications).toBeLessThanOrEqual(256);
+    release.resolve();
+    const deadline = Date.now() + 25_000;
+    while (delivered.length < count && Date.now() < deadline) await Bun.sleep(10);
+    expect(delivered).toEqual(Array.from({ length: count }, (_, index) => index + 1));
+    expect(overflows).toBeGreaterThan(0);
+  } finally {
+    release.resolve();
+    await subscription.close();
+    await messages.close();
+  }
+}, 30_000);
 
 test("skips stale recovery rows without hiding newer eligible rows", async () => {
   const directory = await fixtureDirectory();

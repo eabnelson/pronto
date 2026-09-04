@@ -236,6 +236,7 @@ export class ResilientRpcClient {
   readonly #random: () => number;
   readonly #notifications = new Set<(notification: RpcNotification) => void>();
   readonly #restartHandlers = new Set<() => void>();
+  readonly #closeWaiters = new Set<() => void>();
   #connection: RpcConnection;
   #disposeConnection: (() => void)[] = [];
   #restart: Promise<void> | undefined;
@@ -244,6 +245,7 @@ export class ResilientRpcClient {
   #resolveTerminated!: () => void;
   #diagnostics: RpcDiagnostics = { attempt: 0, restartCount: 0, state: "ready" };
   #backoffMs = 1_000;
+  #healthySince: number;
 
   constructor(input: {
     readonly connect: () => RpcConnection;
@@ -253,6 +255,7 @@ export class ResilientRpcClient {
   }) {
     this.#connect = input.connect;
     this.#now = input.now ?? Date.now;
+    this.#healthySince = this.#now();
     this.#random = input.random ?? Math.random;
     this.#wait = input.wait ?? (async (milliseconds) => {
       await new Promise<void>((resolve) => {
@@ -290,16 +293,42 @@ export class ResilientRpcClient {
     params: Readonly<Record<string, unknown>> = {},
     timeoutMs = 30_000,
   ): Promise<unknown> {
-    await this.#restart;
+    const deadline = this.#now() + timeoutMs;
+    if (this.#restart !== undefined) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let closed: (() => void) | undefined;
+      try {
+        await Promise.race([
+          this.#restart,
+          new Promise<never>((_resolve, reject) => {
+            closed = () => reject(new Error("imsg RPC client is closed"));
+            this.#closeWaiters.add(closed);
+            if (this.#closed) closed();
+          }),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(
+              new Error(`imsg RPC request timed out before submission: ${method}`),
+            ), timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        if (closed !== undefined) this.#closeWaiters.delete(closed);
+      }
+    }
     if (this.#closed) throw new Error("imsg RPC client is closed");
+    const remaining = deadline - this.#now();
+    if (remaining <= 0) throw new Error(`imsg RPC request timed out before submission: ${method}`);
     // A request submitted to a failed process rejects from that process. It is
     // deliberately never replayed here, especially when the method is `send`.
-    return await this.#connection.request(method, params, timeoutMs);
+    return await this.#connection.request(method, params, remaining);
   }
 
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    for (const closed of this.#closeWaiters) closed();
+    this.#closeWaiters.clear();
     for (const dispose of this.#disposeConnection.splice(0)) dispose();
     await this.#connection.close().catch(() => undefined);
     this.#resolveTerminated();
@@ -316,6 +345,7 @@ export class ResilientRpcClient {
 
   #beginRestart(failed: RpcConnection): void {
     if (this.#closed || failed !== this.#connection || this.#restart !== undefined) return;
+    if (this.#now() - this.#healthySince >= 30_000) this.#backoffMs = 1_000;
     this.#restart = this.#restartLoop(failed).finally(() => {
       this.#restart = undefined;
     });
@@ -338,14 +368,16 @@ export class ResilientRpcClient {
       };
       await this.#wait(delayMs);
       if (this.#closed) return;
-      const next = this.#connect();
+      let next: RpcConnection | undefined;
       try {
+        next = this.#connect();
         await next.request("initialize", { protocol_version: 1 }, 10_000);
         if (this.#closed) {
           await next.close().catch(() => undefined);
           return;
         }
         this.#connection = next;
+        this.#healthySince = this.#now();
         this.#bind(next);
         this.#restartCount += 1;
         this.#backoffMs = Math.min(60_000, this.#backoffMs * 2);
@@ -357,7 +389,7 @@ export class ResilientRpcClient {
         for (const handler of this.#restartHandlers) handler();
         return;
       } catch {
-        await next.close().catch(() => undefined);
+        await next?.close().catch(() => undefined);
         this.#backoffMs = Math.min(60_000, this.#backoffMs * 2);
         attempt += 1;
       }

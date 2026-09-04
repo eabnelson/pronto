@@ -8,6 +8,25 @@ async function releaseWorkflow(): Promise<string> {
 }
 
 describe("release workflow", () => {
+  test("candidate-only signing cannot enter either public publication path", async () => {
+    const workflow = await releaseWorkflow();
+    expect(workflow).toContain("candidate_only:");
+    expect(workflow).toContain("type: boolean");
+    expect(workflow).toContain("default: false");
+    expect(workflow).toContain("- \"!v*-candidate.*\"");
+    expect(workflow).toContain("name: Build candidate checksums");
+    expect(releaseWorkflowViolations(workflow)).toEqual([]);
+    for (const guardedStep of ["Verify owner qualification is complete", "Create signed update manifest and checksums"]) {
+      expect(releaseWorkflowViolations(workflow.replace(
+        `- name: ${guardedStep}\n        if: \${{ inputs.candidate_only != true }}`,
+        `- name: ${guardedStep}`,
+      ))).not.toEqual([]);
+    }
+    expect(releaseWorkflowViolations(workflow.replace(
+      "if: ${{ inputs.candidate_only != true && !contains(github.ref_name, '-candidate.') }}", "if: always()",
+    ))).not.toEqual([]);
+  });
+
   test("uses draft-aware release lookups before publishing", async () => {
     const workflow = await releaseWorkflow();
     const beforePublish = workflow.split("      - name: Publish verified release")[0]!;

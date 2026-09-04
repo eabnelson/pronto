@@ -164,6 +164,24 @@ const historyBudget = {
   maxRpcCalls: 1,
 } as const;
 
+test("reads one observed row without scanning the conversation from its beginning", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  await writeFile(databasePath, "database evidence");
+  const messages = await scopedClient({ databasePath, event: observedEvent });
+  try {
+    const observed = await nextEvent(messages);
+    const page = await messages.history({
+      conversation: observed.conversation, mode: "forward", afterRowId: 100,
+      budget: { maxMessages: 1, maxRows: 1, maxRpcCalls: 1, maxBytes: 8_192 },
+    });
+    expect(page.messages.map((event) => event.message.providerMessageId)).toEqual(["observed-guid"]);
+    expect(page.scannedRows).toBe(1);
+  } finally {
+    await messages.close();
+  }
+});
+
 test("a keyed conversation reference survives a client restart", async () => {
   const directory = await fixtureDirectory();
   const databasePath = join(directory, "chat.db");
@@ -192,6 +210,33 @@ test("a keyed conversation reference survives a client restart", async () => {
   await expect(wrongKey.reply({ conversation: observed.conversation, text: "reject" }))
     .rejects.toThrow("messages_conversation_reference_invalid");
   await wrongKey.close();
+});
+
+test("rejects invalid or ambiguous forward positions before spending history budget", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  await writeFile(databasePath, "database evidence");
+  const messages = await scopedClient({ databasePath, event: observedEvent });
+  try {
+    const observed = await nextEvent(messages);
+    for (const position of [
+      { afterRowId: -1, mode: "forward" },
+      { afterRowId: 1.5, mode: "forward" },
+      { afterRowId: Number.NaN, mode: "forward" },
+      { afterRowId: 100, mode: "recent" },
+      { afterRowId: 100 },
+      { afterRowId: 100, mode: "forward", continuation: "not-a-cursor" },
+    ] as const) {
+      await expect(messages.history({
+        ...position, conversation: observed.conversation, budget: historyBudget,
+      })).rejects.toThrow("messages_history_position_invalid");
+    }
+    const result = await messages.history({ conversation: observed.conversation,
+      mode: "forward", afterRowId: 100, budget: historyBudget });
+    expect(result.messages[0]?.message.providerMessageId).toBe("observed-guid");
+  } finally {
+    await messages.close();
+  }
 });
 
 test("sealed conversation history preserves reactions, previews, pagination, and scope", async () => {

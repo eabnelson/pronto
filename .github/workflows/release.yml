@@ -4,7 +4,14 @@ on:
   push:
     tags:
       - "v*"
+      - "!v*-candidate.*"
   workflow_dispatch:
+    inputs:
+      candidate_only:
+        description: "Build signed smoke-test artifacts only; never publish"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -16,6 +23,7 @@ jobs:
     environment: release
     env:
       RELEASE_TAG: ${{ github.ref_name }}
+      CANDIDATE_ONLY: ${{ inputs.candidate_only == true }}
       PRONTO_SIGNING_IDENTIFIER: dev.pronto.cli
       PRONTO_SIGNING_TEAM_IDENTIFIER: 9YCNUWK84C
     permissions:
@@ -51,7 +59,13 @@ jobs:
           VERSION="$(bun -e 'import packageJson from "./package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
           PACKAGE_VERSION="$(bun -e 'import packageJson from "./packages/messages/package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
           test "$GITHUB_REF_TYPE" = "tag"
-          test "v$VERSION" = "$RELEASE_TAG"
+          if [[ "$CANDIDATE_ONLY" = "true" ]]; then
+            candidate_prefix="v$VERSION-candidate."
+            test "${RELEASE_TAG:0:${#candidate_prefix}}" = "$candidate_prefix"
+            [[ "${RELEASE_TAG#"$candidate_prefix"}" =~ ^[1-9][0-9]*$ ]]
+          else
+            test "v$VERSION" = "$RELEASE_TAG"
+          fi
           test "$VERSION" = "$PACKAGE_VERSION"
           test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
           {
@@ -65,6 +79,7 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Verify owner qualification is complete
+        if: ${{ inputs.candidate_only != true }}
         run: bun ./scripts/release-qualification.ts docs/RELEASE_QUALIFICATION.md "$RELEASE_TAG"
       - name: Build native release artifacts
         env:
@@ -144,6 +159,7 @@ jobs:
           test "$(arch -arm64 ./release/pronto-darwin-arm64 --version)" = "pronto $PRONTO_RELEASE_VERSION"
           test "$(arch -x86_64 ./release/pronto-darwin-x64 --version)" = "pronto $PRONTO_RELEASE_VERSION"
       - name: Create signed update manifest and checksums
+        if: ${{ inputs.candidate_only != true }}
         env:
           PRONTO_RELEASE_DIRECTORY: release
           PRONTO_RELEASE_VERSION: ${{ steps.release-version.outputs.package-version }}
@@ -159,6 +175,18 @@ jobs:
           shasum -a 256 -c pronto.sha256
           shasum -a 256 "${{ steps.release-version.outputs.package-file }}" > pronto-imessage.sha256
           shasum -a 256 -c pronto-imessage.sha256
+      - name: Build candidate checksums
+        if: ${{ inputs.candidate_only == true }}
+        env:
+          PRONTO_CANDIDATE_VERSION: ${{ steps.release-version.outputs.package-version }}
+        run: |
+          npm pack ./packages/messages --pack-destination ./release
+          bun -e 'console.log(JSON.stringify({version: process.env.PRONTO_CANDIDATE_VERSION, sourceRevision: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, tag: process.env.RELEASE_TAG}))' > release/pronto-candidate.json
+          cd release
+          shasum -a 256 pronto-darwin-arm64 pronto-darwin-x64 pronto-candidate.json > pronto.sha256
+          shasum -a 256 -c pronto.sha256
+          shasum -a 256 "${{ steps.release-version.outputs.package-file }}" > pronto-imessage.sha256
+          shasum -a 256 -c pronto-imessage.sha256
       - name: Remove temporary signing material
         if: always()
         run: |
@@ -169,17 +197,19 @@ jobs:
             -delete
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pronto-release
-          retention-days: 1
+          name: ${{ inputs.candidate_only && 'pronto-candidate' || 'pronto-release' }}
+          retention-days: 7
           path: |
             release/pronto-darwin-arm64
             release/pronto-darwin-x64
             release/pronto-update.json
+            release/pronto-candidate.json
             release/pronto.sha256
             release/pronto-imessage-*.tgz
             release/pronto-imessage.sha256
 
   publish:
+    if: ${{ inputs.candidate_only != true && !contains(github.ref_name, '-candidate.') }}
     needs: build
     runs-on: ubuntu-latest
     permissions:

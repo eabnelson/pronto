@@ -69,6 +69,7 @@ export type {
 } from "./types.js";
 
 const CHAT_CATALOG_LIMITS = [128, 512, 2_048, 4_096] as const;
+const MAX_PENDING_NOTIFICATIONS = 256;
 
 function safeProviderCoordinate(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 1_024 &&
@@ -179,6 +180,7 @@ class ProntoMessagesClient implements ProntoMessages {
     this.#databasePath = path;
     return {
       ...qualify(snapshot),
+      moduleCapabilities: ["positioned-history"],
       databaseGeneration: await databaseGeneration(path),
     };
   }
@@ -279,7 +281,39 @@ class ProntoMessagesClient implements ProntoMessages {
         this.#diagnostics = { ...this.#diagnostics, state: "degraded" };
       });
     };
-    const pendingNotifications: RpcNotification[] = [];
+    const pendingNotifications: { notification: RpcNotification; arrivedAt: number }[] = [];
+    let notificationDrainScheduled = false;
+    let notificationOverflowed = false;
+    const flushNotifications = (): void => {
+      if (notificationDrainScheduled || subscriptionId === null || closed ||
+        (pendingNotifications.length === 0 && !notificationOverflowed)) return;
+      notificationDrainScheduled = true;
+      enqueue(async () => {
+        try {
+          while (!closed && subscriptionId !== null && pendingNotifications.length > 0) {
+            const next = pendingNotifications.shift()!;
+            this.#diagnostics = { ...this.#diagnostics, pendingNotifications: pendingNotifications.length };
+            await handleNotification(next.notification, next.arrivedAt);
+          }
+          if (notificationOverflowed && !closed) {
+            await detachProvider();
+            const checkpoint = await this.#state.checkpoint(databaseGeneration);
+            notificationOverflowed = false;
+            if (checkpoint !== undefined) {
+              await Promise.resolve(input.onOverflow?.(checkpoint.rowId)).catch(() => undefined);
+              await recoverUntilSubscribed();
+            } else {
+              await report({ status: "degraded", action: "live-events-only",
+                reason: "notification-buffer-limit", rows: 0 });
+              await subscribeProvider(false);
+            }
+          }
+        } finally {
+          notificationDrainScheduled = false;
+          flushNotifications();
+        }
+      });
+    };
     const detachProvider = async (): Promise<void> => {
       const active = subscriptionId;
       subscriptionId = null;
@@ -329,9 +363,7 @@ class ProntoMessagesClient implements ProntoMessages {
         return;
       }
       subscriptionId = result.subscription;
-      for (const notification of pendingNotifications.splice(0)) {
-        enqueue(async () => await handleNotification(notification));
-      }
+      flushNotifications();
     };
     const recover = async (boundaryReason?: MessagesRecoveryReason): Promise<void> => {
       if (closed) return;
@@ -482,7 +514,7 @@ class ProntoMessagesClient implements ProntoMessages {
       };
       enqueue(settle);
     };
-    const handleNotification = async (notification: RpcNotification): Promise<void> => {
+    const handleNotification = async (notification: RpcNotification, arrivedAt: number): Promise<void> => {
       if (closed) return;
       const params = record(notification.params);
       if (params.subscription !== subscriptionId) return;
@@ -518,7 +550,7 @@ class ProntoMessagesClient implements ProntoMessages {
         return;
       }
       const occurredAtMs = rawMessageDateMs(rawMessage);
-      if (occurredAtMs === null || Date.now() - occurredAtMs > this.#limits.maxLiveAgeMs) {
+      if (occurredAtMs === null || arrivedAt - occurredAtMs > this.#limits.maxLiveAgeMs) {
         await this.#advancePastSuppressed(rawMessage, databaseGeneration);
         return;
       }
@@ -536,11 +568,16 @@ class ProntoMessagesClient implements ProntoMessages {
       }
     };
     const dispose = this.#rpc.onNotification((notification) => {
-      if (subscriptionId === null) {
-        pendingNotifications.push(notification);
+      if (closed || notificationOverflowed) return;
+      if (pendingNotifications.length >= MAX_PENDING_NOTIFICATIONS) {
+        notificationOverflowed = true;
+        flushNotifications();
         return;
       }
-      enqueue(async () => await handleNotification(notification));
+      const arrivedAt = Date.now();
+      pendingNotifications.push({ notification, arrivedAt });
+      this.#diagnostics = { ...this.#diagnostics, pendingNotifications: pendingNotifications.length };
+      flushNotifications();
     });
     const disposeRestart = this.#rpc.onRestart(() => {
       if (closed) return;
@@ -553,6 +590,8 @@ class ProntoMessagesClient implements ProntoMessages {
         close: async () => {
           if (closed) return;
           closed = true;
+          pendingNotifications.length = 0;
+          this.#diagnostics = { ...this.#diagnostics, pendingNotifications: 0 };
           signalClosed();
           dispose();
           disposeRestart();

@@ -86,6 +86,24 @@ immutable GitHub release public.
 
 ## Release qualification
 
+When the signing identity is available only in CI, first freeze the runtime and
+package version on an immutable `v<version>-candidate.<number>` tag. Dispatch
+`release.yml` on that tag with `candidate_only=true`. Candidate tags do not
+trigger automatic release builds; the manual build still requires the protected
+`release` environment and runs the same tests, signature and notarization checks.
+It uploads a `pronto-candidate` Actions artifact with checksums and source/run
+metadata, but creates no update manifest, npm publication or GitHub release.
+
+Download the artifact from that exact successful run, verify both checksum files
+and the Developer ID designated requirement before executing it. Keep a private
+copy of the installed binary/configuration and use the existing quiesce and
+identity-preserving installation lifecycle. Never install an ad-hoc substitute to
+complete the live gate. Record the candidate source revision, binary checksum,
+version and fresh owner smoke in the qualification evidence. Freeze runtime code
+through qualification; a runtime change requires a new candidate and fresh smoke.
+Only qualification/documentation changes may separate the candidate source from
+the final same-version release tag, and that diff must be reviewed explicitly.
+
 Before tagging a release, install the exact signed candidate over the prior
 signed production release on every supported macOS version. Confirm that Full
 Disk Access remains effective from the launchd-started listener, one explicit

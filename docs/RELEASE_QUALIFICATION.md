@@ -3,6 +3,12 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
+The matrix below is historical v0.3.0 evidence. The v0.4.0 candidate has not yet
+passed fresh owner smoke or signed-to-signed replacement qualification. Its
+candidate-only CI build may run; public v0.4.0 release remains blocked until this
+matrix is updated with actual evidence. Never carry the v0.3.0 remote smoke
+forward across the v0.4.0 message-transport changes.
+
 ## Current matrix
 
 | Surface | Qualified version | Evidence | Status |
