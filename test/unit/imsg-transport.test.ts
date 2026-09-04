@@ -26,6 +26,7 @@ function event(overrides: {
     conversationFacts: { ownerParticipated: true, service: "iMessage" },
     message: {
       attachments: [],
+      destinationCallerId: null,
       fromMe: overrides.fromMe ?? false,
       kind: "message",
       occurredAt: "2026-09-01T12:00:00.000Z",

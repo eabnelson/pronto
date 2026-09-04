@@ -64,6 +64,11 @@ function optionalString(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
+function groupShape(value: string): boolean | null {
+  const marker = /^[^;]+;([+-]);/u.exec(value)?.[1];
+  return marker === "+" ? true : marker === "-" ? false : null;
+}
+
 function attachment(value: unknown): MessagesAttachment | null {
   const raw = record(value);
   if (Object.keys(raw).length === 0) return null;
@@ -94,6 +99,7 @@ export function normalizeConversationFacts(
   const accountLogin = optionalString(chat.account_login);
   const conversationId = optionalString(chat.guid);
   const destinationHandle = optionalString(chat.last_addressed_handle);
+  const shapedAsGroup = conversationId === null ? null : groupShape(conversationId);
   const participants = Array.isArray(message.participants) &&
       message.participants.every((value) => typeof value === "string" && value !== "")
     ? [...new Set(message.participants)] as string[]
@@ -111,6 +117,7 @@ export function normalizeConversationFacts(
     destinationHandle === null || chat.id !== chatId ||
     message.chat_id !== chatId || message.chat_guid !== conversationId ||
     typeof message.is_group !== "boolean" || chat.is_group !== message.is_group ||
+    shapedAsGroup === null || shapedAsGroup !== message.is_group ||
     participants === null || (message.is_group && participants.length === 0)
   ) return base;
   return {
@@ -160,6 +167,7 @@ export function normalizeEvent(
           return normalized === null ? [] : [normalized];
         })
         : [],
+      destinationCallerId: optionalString(raw.destination_caller_id),
       fromMe: raw.is_from_me === true,
       kind: Object.keys(reaction).length > 0 || raw.is_reaction === true
         ? "reaction"

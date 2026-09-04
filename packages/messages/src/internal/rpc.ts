@@ -47,13 +47,25 @@ export class ImsgRpcClient implements RpcConnection {
   readonly #handlers = new Set<(notification: RpcNotification) => void>();
   readonly #failureHandlers = new Set<(reason: string) => void>();
   readonly #pending = new Map<string, PendingRequest>();
+  readonly #idleShutdownGraceMs: number;
+  readonly #shutdownGraceMs: number;
+  readonly #terminationGraceMs: number;
   #buffer = "";
+  #closePromise: Promise<void> | undefined;
   #closed = false;
   #failed = false;
   #nextId = 1;
   #resolveTerminated!: () => void;
 
-  constructor(command: string) {
+  constructor(command: string, options: {
+    readonly idleShutdownGraceMs?: number;
+    readonly shutdownGraceMs?: number;
+    readonly terminationGraceMs?: number;
+  } = {}) {
+    this.#shutdownGraceMs = options.shutdownGraceMs ?? 5_000;
+    this.#idleShutdownGraceMs = options.idleShutdownGraceMs ??
+      Math.min(250, this.#shutdownGraceMs);
+    this.#terminationGraceMs = options.terminationGraceMs ?? 2_000;
     this.#child = spawn(command, ["rpc"], { stdio: ["pipe", "pipe", "pipe"] });
     this.#child.stderr.resume();
     this.terminated = new Promise((resolve) => {
@@ -61,7 +73,7 @@ export class ImsgRpcClient implements RpcConnection {
     });
     this.#child.stdout.on("data", (chunk: Buffer | string) => this.#onData(chunk));
     this.#child.once("error", (error) => this.#fail("spawn-error", error));
-    this.#child.once("exit", () => {
+    this.#child.once("close", () => {
       this.#fail("process-exit", new Error("imsg RPC process exited"));
     });
   }
@@ -110,11 +122,37 @@ export class ImsgRpcClient implements RpcConnection {
   }
 
   async close(): Promise<void> {
-    if (this.#closed) return;
+    if (this.#closePromise !== undefined) return await this.#closePromise;
     this.#closed = true;
+    this.#closePromise = this.#shutdown();
+    await this.#closePromise;
+  }
+
+  async #shutdown(): Promise<void> {
     this.#child.stdin.end();
+    const graceMs = this.#pending.size === 0
+      ? this.#idleShutdownGraceMs
+      : this.#shutdownGraceMs;
+    if (await this.#waitForTermination(graceMs)) return;
     this.#child.kill("SIGTERM");
+    if (await this.#waitForTermination(this.#terminationGraceMs)) return;
+    this.#child.kill("SIGKILL");
     await this.terminated;
+  }
+
+  async #waitForTermination(milliseconds: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.terminated.then(() => true),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(() => resolve(false), milliseconds);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   #onData(chunk: Buffer | string): void {

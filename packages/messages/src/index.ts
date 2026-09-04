@@ -81,6 +81,11 @@ function messageDateMs(value: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function rawMessageDateMs(value: Record<string, unknown>): number | null {
+  const occurredAt = value.created_at ?? value.date;
+  return typeof occurredAt === "string" ? messageDateMs(occurredAt) : null;
+}
+
 function isMirrorPair(message: MessagesEvent, original: MessagesEvent): boolean {
   if (
     original.conversation.chatId !== message.conversation.chatId ||
@@ -124,7 +129,12 @@ class ProntoMessagesClient implements ProntoMessages {
   readonly #recentOutgoing = new Map<string, MessagesEvent>();
   readonly #inFlightDeliveries = new Map<string, Promise<void>>();
   readonly #state: CheckpointStore;
-  readonly #limits: { readonly maxAgeMs: number; readonly maxDurationMs: number; readonly maxRows: number };
+  readonly #limits: {
+    readonly maxAgeMs: number;
+    readonly maxDurationMs: number;
+    readonly maxLiveAgeMs: number;
+    readonly maxRows: number;
+  };
   #diagnostics: MessagesDiagnostics = {
     attempt: 0,
     catchUpRows: 0,
@@ -139,6 +149,7 @@ class ProntoMessagesClient implements ProntoMessages {
     this.#limits = {
       maxAgeMs: input.recoveryLimits?.maxAgeMs ?? 24 * 60 * 60 * 1_000,
       maxDurationMs: input.recoveryLimits?.maxDurationMs ?? 30_000,
+      maxLiveAgeMs: input.recoveryLimits?.maxLiveAgeMs ?? 5 * 60 * 1_000,
       maxRows: input.recoveryLimits?.maxRows ?? 10_000,
     };
     if (Object.values(this.#limits).some((value) => !Number.isSafeInteger(value) || value <= 0)) {
@@ -305,7 +316,9 @@ class ProntoMessagesClient implements ProntoMessages {
         attachments: true,
         buffer_limit: 256,
         include_reactions: true,
-        ...(checkpoint === undefined ? {} : { since_rowid: checkpoint.rowId }),
+        ...(checkpoint === undefined
+          ? {}
+          : { since_rowid: checkpoint.rowId === 0 ? -1 : checkpoint.rowId }),
       }));
       if (typeof result.subscription !== "number" || !Number.isSafeInteger(result.subscription)) {
         throw new Error("imsg returned an invalid watch subscription");
@@ -504,6 +517,11 @@ class ProntoMessagesClient implements ProntoMessages {
         await recoverUntilSubscribed("database-generation-changed");
         return;
       }
+      const occurredAtMs = rawMessageDateMs(rawMessage);
+      if (occurredAtMs === null || Date.now() - occurredAtMs > this.#limits.maxLiveAgeMs) {
+        await this.#advancePastSuppressed(rawMessage, databaseGeneration);
+        return;
+      }
       try {
         await this.#deliver(rawMessage, databaseGeneration, input);
       } catch (error) {
@@ -579,7 +597,12 @@ class ProntoMessagesClient implements ProntoMessages {
       const data = record(error.data);
       return data.disposition === "may_have_completed" || data.disposition === "still_in_flight"
         ? { status: "ambiguous" }
-        : { retryable: data.retry_safe === true, status: "failed" };
+        : {
+            retryable: data.retry_safe === true ||
+              ((error.code === -32_002 || error.code === -32_003) && data.retryable === true) ||
+              error.code === -32_000,
+            status: "failed",
+          };
     }
   }
 
@@ -788,15 +811,19 @@ class ProntoMessagesClient implements ProntoMessages {
         }
         for (const raw of messages) {
           await this.#assertGeneration(generation, { deadline, rows });
-          const occurredAt = record(raw).created_at ?? record(raw).date;
-          const occurredAtMs = typeof occurredAt === "string" ? Date.parse(occurredAt) : Number.NaN;
-          if (!Number.isFinite(occurredAtMs)) {
+          const rawMessage = record(raw);
+          const occurredAtMs = rawMessageDateMs(rawMessage);
+          if (occurredAtMs === null) {
             throw new RecoveryBoundaryError("invalid-provider-page", rows);
           }
           if (Date.now() - occurredAtMs > this.#limits.maxAgeMs) {
-            throw new RecoveryBoundaryError("age-limit", rows);
+            await this.#withinDeadline(
+              { deadline, rows },
+              async () => await this.#advancePastSuppressed(rawMessage, generation),
+            );
+            rows += 1;
+            continue;
           }
-          const rawMessage = record(raw);
           await this.#deliver(
             rawMessage,
             generation,
@@ -826,6 +853,22 @@ class ProntoMessagesClient implements ProntoMessages {
       }
       throw error;
     }
+  }
+
+  async #advancePastSuppressed(
+    rawMessage: Record<string, unknown>,
+    generation: string,
+  ): Promise<void> {
+    const rowId = rawMessage.id;
+    const providerMessageId = rawMessage.guid;
+    if (
+      typeof rowId !== "number" || !Number.isSafeInteger(rowId) || rowId <= 0 ||
+      typeof providerMessageId !== "string" || providerMessageId === ""
+    ) return;
+    await this.#state.advance(generation, rowId, {
+      providerMessageDigest: this.#providerMessageDigest(providerMessageId),
+      rowId,
+    });
   }
 
   async #isSelfChatMirror(

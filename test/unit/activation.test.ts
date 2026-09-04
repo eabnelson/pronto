@@ -28,6 +28,7 @@ function event(overrides: {
     },
     message: {
       attachments: [],
+      destinationCallerId: null,
       fromMe: overrides.fromMe ?? false,
       kind: overrides.kind ?? "message",
       occurredAt: "2026-09-01T12:00:00.000Z",
