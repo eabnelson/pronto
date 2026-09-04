@@ -17,6 +17,11 @@ const REQUIRED_CONTROLS = [
   ["bun scripts/generate-update-manifest.ts", "signed update manifest generation"],
   ["actions/attest-build-provenance@", "artifact provenance attestation"],
   ["workflow_dispatch:", "manual immutable-tag recovery"],
+  ["- \"!v*-candidate.*\"", "candidate tag push exclusion"],
+  ["candidate_only:", "explicit candidate-only input"],
+  ["if: ${{ inputs.candidate_only != true && !contains(github.ref_name, '-candidate.') }}", "candidate publication fence"],
+  ["- name: Verify owner qualification is complete\n        if: ${{ inputs.candidate_only != true }}", "normal-release owner qualification gate"],
+  ["- name: Create signed update manifest and checksums\n        if: ${{ inputs.candidate_only != true }}", "candidate update-manifest fence"],
   [
     "ref: ${{ github.ref }}",
     "tag-pinned recovery checkout",
