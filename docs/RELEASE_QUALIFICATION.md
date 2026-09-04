@@ -17,7 +17,7 @@ file records capability evidence, not private conversation data.
 | Claude effective local probe | 2.1.226 | Setup noninteractive file-tool probe | Pass |
 | Messages Automation | v0.3.0 signed candidate | Developer ID candidate installed after the one-time FDA migration; owner-authorized self and remote sends each produced exactly one reply on 2026-09-04 | Pass |
 | Self-chat mirror handling | v0.3.0 signed candidate | One tagged self-chat activation produced exactly one agent send with no echo turn after one minute on 2026-09-04 | Pass |
-| Full remote tagged flow | v0.3.0 signed candidate | One remote participant's tagged request produced exactly one reply; a same-identity signed-to-signed replacement preserved FDA and returned the listener to ready on 2026-09-04 | Pass |
+| Full remote tagged flow | v0.3.0 | One remote participant's tagged request produced exactly one reply; a same-identity signed-to-signed replacement preserved FDA and returned the listener to ready on 2026-09-04 | Pass |
 
 The automated matrix and owner smoke record versions tested on 2026-09-04.
 Capability checks, not version
