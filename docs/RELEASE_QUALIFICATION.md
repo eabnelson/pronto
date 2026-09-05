@@ -3,13 +3,16 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The matrix below is historical v0.3.0 evidence. The v0.4.0 candidate.1 passed
+The current matrix qualifies v0.4.0 from candidate.4. Earlier failed candidates
+are retained below as historical evidence, not release qualification.
+
+The v0.4.0 candidate.1 passed
 fresh self/remote replies, self-chat recent context, tagged memory beyond 32
 untagged messages and an idle restart on 2026-09-04. Active-turn replacement
 failed: launchd interrupted the synthetic turn before drain. The installer
 refused replacement and restored the listener; the uncertain synthetic turn
 remains parked without replay. Candidate.1 must not be promoted. A new candidate
-with bounded shutdown qualification is required; public v0.4.0 remains blocked.
+with bounded shutdown qualification was required.
 Never carry v0.3.0 remote evidence across v0.4.0's message-transport changes.
 
 Candidate.1 source: `e694dcb15b2342b3b88b344912eb98abb59dcba1`, protected CI run
@@ -39,7 +42,7 @@ duration-limit while status falsely reported ready. Candidate.2 is therefore
 also disqualified. Local regressions cover readiness before subscription,
 persisted recovery degradation, and checkpoint retry after a catch-up deadline.
 Those runtime changes require another immutable signed candidate and fresh
-qualification. Public v0.4.0 remains blocked; the matrix below remains historical.
+qualification; candidate.2 evidence alone did not permit publication.
 
 Candidate.3 source: `bf21c82556fcb06afb967ec09023d47a50aa92c5`, protected CI run
 `33936524743`. Artifact checksums, both Developer ID requirements and CI
@@ -51,6 +54,36 @@ additional live message was sent on candidate 3. The updater now allows five
 minutes of scheduled readiness checks while still requiring ready and preserving
 rollback. This runtime change requires another immutable signed candidate.
 
+Candidate.4 source: `549b61db591b6531e4dbb6e4b7a976ad6740d076`, protected CI run
+`33937150637`; installed arm64 SHA-256
+`592ef83947cc6fe3672240f814e2e28e1e6b08a766193a6d1dc86f69e7a5e0a1`.
+Checksums, both Developer ID requirements, CI notarization, packed Node/Bun
+imports, installed doctor and fresh effective Codex/Claude probes passed.
+Automated verification passed 262 tests, with one opt-in native test skipped;
+the native 25-second active-child drain fixture passed separately.
+
+On 2026-09-04, this exact signed candidate recovered the previously unadmitted
+synthetic recall from its durable checkpoint and confirmed one reply, without a
+manual rewind. That recall followed 32 untagged self-chat messages and an idle
+restart, testing tagged memory outside the recent window. A separately sent
+repeat recall also received one reply; the two distinct requests are not one
+duplicated event. Fresh self-chat recent-context qualification passed. An idle
+signed-to-signed replacement preserved the settlement watermark; replacement
+during a fresh active synthetic request drained one confirmed reply and returned
+to ready. The original uncertain candidate.1 event remains parked unchanged,
+without replay. More than one minute later, no synthetic echo turn appeared.
+
+The owner confirmed a fresh participant-originated remote response on candidate.4;
+the delivery journal independently confirmed one delivered event and one outbound
+GUID, with the exact requested synthetic reply. The participant used a shorter
+synthetic marker than suggested; it was a fresh request on this candidate, not
+carried-forward evidence. All automated context, memory, filler and replacement
+tests stayed in self-chat. No automated message was sent to the remote chat.
+The listener is ready, with zero active/ambiguous events and the one preserved
+parked event. Qualification-period log checks found no tested message content.
+Only this qualification record and its review may differ from candidate.4 at
+the final v0.4.0 tag; no runtime change is qualified by this evidence.
+
 ## Current matrix
 
 | Surface | Qualified version | Evidence | Status |
@@ -58,14 +91,14 @@ rollback. This runtime change requires another immutable signed candidate.
 | macOS | 26.5.1 (25F80) | Local build and synthetic suite | Pass |
 | Bun | 1.3.14 | Frozen install, typecheck, tests, compiled build | Pass |
 | Node.js | 22.23.1 | Clean packed `pronto-imessage` import and public-interface smoke | Pass |
-| imsg | 0.15.0 | Exact signed upstream artifact qualified against protocol v1; provider code unchanged since the 0.2.4 qualification | Pass |
+| imsg | 0.14.1 | Fresh CLI version, protocol/capability qualification and live read/watch/send on candidate.4 | Pass |
 | Codex CLI | 0.153.0 | Auth/help inspection and adapter fixtures | Pass |
 | Claude Code | 2.1.260 | Auth/help inspection and adapter fixtures | Pass |
 | Codex effective local probe | 0.153.0 | Setup noninteractive file-tool probe | Pass |
-| Claude effective local probe | 2.1.226 | Setup noninteractive file-tool probe | Pass |
-| Messages Automation | v0.3.0 signed candidate | Developer ID candidate installed after the one-time FDA migration; owner-authorized self and remote sends each produced exactly one reply on 2026-09-04 | Pass |
-| Self-chat mirror handling | v0.3.0 signed candidate | One tagged self-chat activation produced exactly one agent send with no echo turn after one minute on 2026-09-04 | Pass |
-| Full remote tagged flow | v0.3.0 | One remote participant's tagged request produced exactly one reply; a same-identity signed-to-signed replacement preserved FDA and returned the listener to ready on 2026-09-04 | Pass |
+| Claude effective local probe | 2.1.260 | Fresh noninteractive file-tool probe; all qualification checks passed | Pass |
+| Messages Automation | v0.4.0-candidate.4 | Same-identity signed install retained FDA; fresh self/remote requests each had one confirmed send on 2026-09-04 | Pass |
+| Self-chat mirror handling | v0.4.0-candidate.4 | Fresh context and active-drain requests each delivered once, with no echo after one minute; idle restart did not replay settled work | Pass |
+| Full remote tagged flow | v0.4.0 | Fresh candidate.4 participant request had exactly one confirmed reply; owner confirmed receipt. Self-chat context, out-of-window memory, idle restart and active replacement passed as recorded above | Pass |
 
 The automated matrix and owner smoke record versions tested on 2026-09-04.
 Capability checks, not version

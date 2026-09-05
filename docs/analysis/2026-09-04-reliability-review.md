@@ -92,3 +92,25 @@ Spec: the existing updater lifecycle fixture failed with 90 delayed health
 checks before the fix and now installs the qualified candidate. The permanently
 unready case still rolls back, now asserting exactly 300,000 ms of scheduled
 waits. Candidate 3's prior live evidence cannot qualify this runtime change.
+
+## Final qualification-only review
+
+Fixed point: candidate.4 source `549b61db591b6531e4dbb6e4b7a976ad6740d076`.
+Scope: qualification evidence and this review only; runtime, tests, manifests,
+dependencies and release workflow must remain byte-identical to that source.
+
+Standards: the record contains capability results, versions and artifact hashes,
+not participant identifiers, chat keys, handles or private message content.
+Unrelated research files are excluded. No signing or publication gate is weakened.
+
+Spec: fresh self-chat context, checkpoint-recovered memory beyond 32 intervening
+messages, idle restart, active replacement and participant-originated remote reply
+all passed on candidate.4. Journal evidence distinguishes two separately sent
+recall requests and confirms a single remote outbound send. The original uncertain
+event remains parked, not replayed. The fresh Claude probe matches the recorded
+2.1.260 version. All 262 automated tests and offline validation passed; CI repeats
+them before public signing/publication. Candidate-to-release changes are docs only.
+
+Summary: Standards 0 unresolved findings; Spec 0 remaining Pronto live release
+qualification gaps. This does not qualify Studio's exact-pin integration,
+unfinished durable intake or production rollout.
