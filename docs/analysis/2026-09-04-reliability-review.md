@@ -69,3 +69,9 @@ Verification: 261 tests passed, one native test skipped by default; typecheck,
 build and offline packed-release validation passed. The native active-drain test
 passed before this slice and candidate 2's actual active replacement succeeded.
 It must still be repeated on the next signed runtime candidate.
+
+Native follow-up: one invocation failed before the synthetic process created its
+startup marker within 2.5 seconds; the unchanged rerun drained successfully in
+27 seconds. The fixture now allows a bounded 10-second startup wait while keeping
+the same active-child completion and unloaded-service assertions. This changes
+test startup tolerance, not the product's shutdown deadline.
