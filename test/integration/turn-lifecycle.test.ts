@@ -149,6 +149,36 @@ async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
 }
 
 describe("turn lifecycle", () => {
+  test("quiescing drains the active turn but preserves unstarted work for restart", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const adapter: RuntimeAdapter = {
+      kind: "codex", executablePath: "/usr/local/bin/fixture",
+      run: async () => {
+        entered.resolve();
+        await release.promise;
+        return { status: "success", toolActivity: "none", output: { reply: "first reply" } };
+      },
+    };
+    const h = await harness(adapter);
+    try {
+      h.coordinator.admit({ ...activation, providerGuid: "DRAIN-1" });
+      await entered.promise;
+      h.coordinator.admit({ ...activation, providerGuid: "DRAIN-2" });
+      h.coordinator.quiesce();
+      expect(() => h.coordinator.admit({ ...activation, providerGuid: "DRAIN-3" }))
+        .toThrow("turn_coordinator_quiesced");
+      release.resolve();
+      await h.coordinator.idle();
+      expect(h.transport.sends).toHaveLength(1);
+      expect(h.journal.nextRunnable()?.providerGuid).toBe("DRAIN-2");
+    } finally {
+      release.resolve();
+      await h.coordinator.idle();
+      h.close();
+    }
+  });
+
   test("switches only on explicit intent and makes the folder durable after delivery", async () => {
     const primary = new FakeAdapter("codex", {
       output: { reply: "Working there." },

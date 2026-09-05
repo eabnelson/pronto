@@ -36,6 +36,7 @@ test("renders a stable owner LaunchAgent without shell interpolation", () => {
 
   expect(plist).toContain("dev.pronto.agent");
   expect(plist).toContain("<string>run</string>");
+  expect(plist).toContain("<key>ExitTimeOut</key>\n  <integer>120</integer>");
   expect(plist).toContain("agent &amp; output.log");
   expect(plist).toContain(
     "<string>/opt/homebrew/bin:/Users/me/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
@@ -292,11 +293,11 @@ test("keeps the replacement plist and does not bootstrap when bootout times out"
     }),
   ).rejects.toThrow("run setup again");
 
-  expect(calls.filter(([command]) => command === "print")).toHaveLength(50);
+  expect(calls.filter(([command]) => command === "print")).toHaveLength(1_250);
   expect(calls.some(([command]) => command === "bootstrap" || command === "kickstart")).toBe(
     false,
   );
-  expect(waits).toHaveLength(49);
+  expect(waits).toHaveLength(1_249);
   expect(await readFile(plistPath, "utf8")).toContain("<plist>");
 });
 

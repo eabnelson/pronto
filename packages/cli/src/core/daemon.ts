@@ -100,6 +100,7 @@ export class ProntoDaemon {
         journal,
         this.config.chatKeySalt,
       );
+      if (this.#stopRequested) coordinator.quiesce();
       const recovered = coordinator.start();
       journal.recordDegradedCapabilities(qualification.degraded);
       journal.recordDaemonHealth("ready");
@@ -114,6 +115,7 @@ export class ProntoDaemon {
 
       const stopSignal = new Promise<"stop">((resolve) => {
         this.#stop = () => {
+          coordinator.quiesce();
           resolve("stop");
         };
         if (this.#stopRequested) this.#stop();
