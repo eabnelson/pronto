@@ -59,6 +59,12 @@ and waits for content-free health. Failure restores the last-known-good binary
 and configuration. The old updater process remains alive during this transaction,
 so it can roll back even when the candidate cannot start.
 
+Readiness qualification allows up to five minutes of scheduled waits, plus the
+time spent in status probes, so bounded checkpoint recovery can finish. Degraded
+or starting status never counts as ready; failure still restores the previous
+binary and configuration. An older updater retains its older startup budget and
+may need an idle retry if a large recovery backlog prevents timely qualification.
+
 The listener's LaunchAgent requests a finite 120-second exit window; launchd may
 apply a shorter effective limit (60 seconds was reported on macOS 26.5.1 during
 candidate-2 qualification). Shutdown

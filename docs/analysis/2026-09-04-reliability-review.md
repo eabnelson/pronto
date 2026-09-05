@@ -75,3 +75,20 @@ startup marker within 2.5 seconds; the unchanged rerun drained successfully in
 27 seconds. The fixture now allows a bounded 10-second startup wait while keeping
 the same active-child completion and unloaded-service assertions. This changes
 test startup tolerance, not the product's shutdown deadline.
+
+## Startup qualification budget review
+
+Baseline: `bf21c82556fcb06afb967ec09023d47a50aa92c5`. Candidate 3 truthfully
+reported recovery degradation and advanced 7–9 rows per 30-second catch-up
+attempt, but the qualification installer's 30-second readiness window expired
+and rolled back. The public updater had the same 60 x 500 ms budget.
+
+Standards: change only the bounded readiness poll budget to 600 x 500 ms; do not
+accept starting/degraded status, alter identity/signature checks, change provider
+recovery limits or advance release state early. Document probe overhead and that
+an older updater retains its own older budget. No new retry abstraction.
+
+Spec: the existing updater lifecycle fixture failed with 90 delayed health
+checks before the fix and now installs the qualified candidate. The permanently
+unready case still rolls back, now asserting exactly 300,000 ms of scheduled
+waits. Candidate 3's prior live evidence cannot qualify this runtime change.
