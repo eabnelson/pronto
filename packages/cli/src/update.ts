@@ -55,7 +55,8 @@ export const PRONTO_UPDATE_PUBLIC_KEY_SPKI_DER_BASE64 =
 const MAX_ENVELOPE_BYTES = 64 * 1_024;
 const MAX_ARTIFACT_BYTES = 256 * 1_024 * 1_024;
 const UPDATE_TIMEOUT_MS = 30_000;
-const QUALIFICATION_ATTEMPTS = 60;
+// Allow multiple bounded catch-up attempts without accepting degraded as ready.
+const QUALIFICATION_ATTEMPTS = 600;
 const QUALIFICATION_INTERVAL_MS = 500;
 
 export type ProntoUpdateTarget = "darwin-arm64" | "darwin-x64";

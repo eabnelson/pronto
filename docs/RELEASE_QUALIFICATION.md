@@ -41,6 +41,16 @@ persisted recovery degradation, and checkpoint retry after a catch-up deadline.
 Those runtime changes require another immutable signed candidate and fresh
 qualification. Public v0.4.0 remains blocked; the matrix below remains historical.
 
+Candidate.3 source: `bf21c82556fcb06afb967ec09023d47a50aa92c5`, protected CI run
+`33936524743`. Artifact checksums, both Developer ID requirements and CI
+notarization passed. Its truthful degraded status exposed a separate qualification
+budget mismatch: checkpoint recovery made progress, but the 30-second installer
+readiness window expired. The qualification installer restored candidate 2 and
+its exact integrity hash; the parked synthetic event remained unchanged. No
+additional live message was sent on candidate 3. The updater now allows five
+minutes of scheduled readiness checks while still requiring ready and preserving
+rollback. This runtime change requires another immutable signed candidate.
+
 ## Current matrix
 
 | Surface | Qualified version | Evidence | Status |

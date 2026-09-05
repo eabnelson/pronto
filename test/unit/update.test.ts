@@ -129,7 +129,7 @@ describe("Pronto update envelope", () => {
 });
 
 describe("Pronto updater", () => {
-  test("stages, verifies, atomically installs, and records a qualified update", async () => {
+  test.each([0, 90])("qualifies an update after bounded checkpoint recovery (%i delayed health checks)", async (delayedHealthChecks) => {
     const home = await mkdtemp(join(tmpdir(), "pronto-update-"));
     temporaryDirectories.push(home);
     const paths = pathsForHome(home);
@@ -149,6 +149,7 @@ describe("Pronto updater", () => {
     const available = manifest(candidate);
     const calls: string[] = [];
     let fetchCount = 0;
+    let healthChecks = 0;
     const updater = new ProntoUpdater(paths, {
       currentVersion: "0.2.4",
       fetch: async () => {
@@ -165,6 +166,9 @@ describe("Pronto updater", () => {
       run: async (executable, args) => {
         if (args[0] === "--version") return { exitCode: 0, stderr: "", stdout: "pronto 0.3.0\n" };
         calls.push(`${executable}:${args.join(" ")}`);
+        if (args[0] === "status" && healthChecks++ < delayedHealthChecks) {
+          return { exitCode: 1, stderr: "", stdout: JSON.stringify({ daemon: "degraded", degradedCapabilities: ["messages-recovery-duration-limit"] }) };
+        }
         return { exitCode: 0, stderr: "", stdout: "{}" };
       },
       stopAgent: async () => { calls.push("stop"); },
@@ -223,6 +227,7 @@ describe("Pronto updater", () => {
     const available = manifest(candidate);
     let fetchCount = 0;
     let mainAgentInstalls = 0;
+    let waitedMs = 0;
     const updater = new ProntoUpdater(paths, {
       currentVersion: "0.2.4",
       fetch: async () => new Response(++fetchCount === 1 ? "manifest" : candidate),
@@ -237,13 +242,14 @@ describe("Pronto updater", () => {
         : { exitCode: 1, stderr: "not ready", stdout: "" },
       stopAgent: async () => undefined,
       verifyEnvelope: () => available,
-      wait: async () => undefined,
+      wait: async (milliseconds) => { waitedMs += milliseconds; },
     });
 
     await expect(updater.install()).rejects.toThrow("update_candidate_qualification_failed");
     expect(await readFile(paths.executablePath, "utf8")).toBe("known good");
     expect((await loadConfig(paths.configPath)).installedExecutableHash).toBe(originalHash);
     expect(mainAgentInstalls).toBe(2);
+    expect(waitedMs).toBe(300_000);
   });
 
   test("migrates an existing ad-hoc install from a separately downloaded signed candidate", async () => {
