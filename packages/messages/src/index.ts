@@ -284,6 +284,29 @@ class ProntoMessagesClient implements ProntoMessages {
     const pendingNotifications: { notification: RpcNotification; arrivedAt: number }[] = [];
     let notificationDrainScheduled = false;
     let notificationOverflowed = false;
+    let recoveryRetryScheduled = false;
+    let recoveryRetryDelayMs = 250;
+    let unreportedRecoveryRows = 0;
+    let recoveryRowsUsed = 0;
+    const scheduleRecoveryRetry = (): void => {
+      if (closed || recoveryRetryScheduled) return;
+      recoveryRetryScheduled = true;
+      enqueue(async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, recoveryRetryDelayMs);
+            timer.unref?.();
+          }),
+          closedSignal,
+        ]);
+        if (timer !== undefined) clearTimeout(timer);
+        recoveryRetryScheduled = false;
+        if (closed) return;
+        recoveryRetryDelayMs = Math.min(30_000, recoveryRetryDelayMs * 2);
+        await recoverUntilSubscribed();
+      });
+    };
     const flushNotifications = (): void => {
       if (notificationDrainScheduled || subscriptionId === null || closed ||
         (pendingNotifications.length === 0 && !notificationOverflowed)) return;
@@ -363,6 +386,7 @@ class ProntoMessagesClient implements ProntoMessages {
         return;
       }
       subscriptionId = result.subscription;
+      recoveryRowsUsed = 0;
       flushNotifications();
     };
     const recover = async (boundaryReason?: MessagesRecoveryReason): Promise<void> => {
@@ -409,20 +433,33 @@ class ProntoMessagesClient implements ProntoMessages {
         await subscribeProvider(false);
         return;
       }
+      let outcome: MessagesRecoveryOutcome | undefined;
       if (previous !== undefined) {
-        const outcome = await this.#catchUp(
+        outcome = await this.#catchUp(
           databaseGeneration,
           input,
           scheduleDeferredDelivery,
+          this.#limits.maxRows - recoveryRowsUsed,
         );
+        recoveryRowsUsed += outcome.rows;
         if (outcome.status === "degraded" && outcome.reason === "database-generation-changed") {
           databaseGeneration = (await this.qualify()).databaseGeneration;
         }
-        await report(outcome);
+        if (outcome.status === "degraded") await report(outcome);
+        else unreportedRecoveryRows += outcome.rows;
         if (this.#inFlightDeliveries.size > 0) return;
+        if (outcome.status === "degraded" && outcome.reason === "duration-limit") {
+          scheduleRecoveryRetry();
+          return;
+        }
       }
-      await subscribeProvider(this.#diagnostics.state !== "degraded");
-      if (this.#diagnostics.state !== "degraded") {
+      await subscribeProvider(outcome?.status !== "degraded");
+      if (outcome?.status === "recovered") {
+        await report({ rows: unreportedRecoveryRows, status: "recovered" });
+        unreportedRecoveryRows = 0;
+      }
+      if (outcome?.status !== "degraded") {
+        recoveryRetryDelayMs = 250;
         this.#diagnostics = { ...this.#diagnostics, state: "ready" };
       }
     };
@@ -812,6 +849,7 @@ class ProntoMessagesClient implements ProntoMessages {
       generation: string,
       error?: unknown,
     ) => void,
+    maxRows = this.#limits.maxRows,
   ): Promise<MessagesRecoveryOutcome> {
     const checkpoint = await this.#state.checkpoint(generation);
     if (checkpoint === undefined) return { rows: 0, status: "recovered" };
@@ -822,7 +860,7 @@ class ProntoMessagesClient implements ProntoMessages {
     try {
       while (true) {
         await this.#assertGeneration(generation, { deadline, rows });
-        const remaining = this.#limits.maxRows - rows;
+        const remaining = maxRows - rows;
         if (remaining <= 0) throw new RecoveryBoundaryError("row-limit", rows);
         const response = record(await this.#withinDeadline({ deadline, rows }, async () =>
           await this.#rpc.request("messages.after", {
@@ -845,7 +883,7 @@ class ProntoMessagesClient implements ProntoMessages {
         ) {
           throw new RecoveryBoundaryError("invalid-provider-page", rows);
         }
-        if (rows + messages.length > this.#limits.maxRows) {
+        if (rows + messages.length > maxRows) {
           throw new RecoveryBoundaryError("row-limit", rows);
         }
         for (const raw of messages) {
@@ -884,7 +922,7 @@ class ProntoMessagesClient implements ProntoMessages {
     } catch (error) {
       if (error instanceof RecoveryBoundaryError) {
         return {
-          action: "live-events-only",
+          action: error.reason === "duration-limit" ? "retrying-checkpoint" : "live-events-only",
           reason: error.reason,
           rows: error.rows,
           status: "degraded",

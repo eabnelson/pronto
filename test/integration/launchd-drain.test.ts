@@ -37,7 +37,8 @@ test.skipIf(process.platform !== "darwin" || process.env.RUN_LAUNCHD_INTEGRATION
       await chmod(directory, 0o700);
       const boot = await runLaunchctl(["bootstrap", `gui/${uid}`, plist]);
       expect(boot.exitCode).toBe(0);
-      for (let attempt = 0; attempt < 100; attempt++) {
+      const startupDeadline = Date.now() + 10_000;
+      while (Date.now() < startupDeadline) {
         const state = await readFile(marker, "utf8").catch(() => "");
         if (state.includes('"active"')) break;
         await Bun.sleep(25);

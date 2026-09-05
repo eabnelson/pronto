@@ -59,11 +59,13 @@ and waits for content-free health. Failure restores the last-known-good binary
 and configuration. The old updater process remains alive during this transaction,
 so it can roll back even when the candidate cannot start.
 
-The listener's LaunchAgent declares a finite 120-second exit window. Shutdown
+The listener's LaunchAgent requests a finite 120-second exit window; launchd may
+apply a shorter effective limit (60 seconds was reported on macOS 26.5.1 during
+candidate-2 qualification). Shutdown
 quiesces activation immediately and drains only the current turn; unstarted
 receipts remain durable for the next listener. The unload helper waits up to
 125 seconds for launchd to finish, rather than reporting failure after five
-seconds while drain is still in progress. A turn exceeding the exit window may
+seconds while drain is still in progress. A turn exceeding the effective exit window may
 be interrupted and must remain parked when its effects are unknown, never
 automatically replayed. Reinstall the generated LaunchAgent during the initial
 upgrade so the explicit bound applies; an older loaded plist retains launchd's

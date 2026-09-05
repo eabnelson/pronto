@@ -23,6 +23,24 @@ The historical matrix's imsg 0.15.0 is not this candidate's live provider versio
 No automated follow-up messages were sent to the remote chat; the owner directed
 context, memory and updater tests to self-chat only.
 
+Candidate.2 source: `a4991b1a21af2eae4961fcb6fde0896401ca4bb6`, protected CI run
+`33934137599`; arm64 SHA-256
+`fe78274ffe9786ed910764849d1677ca7125553ec7b77d51d2107e599ea8f0d2`.
+Checksums, both Developer ID requirements, notarization, packed Node/Bun imports
+and installed doctor passed. Active-turn signed replacement completed with one
+confirmed synthetic reply and returned to ready; the previous uncertain event
+remained parked without replay. Fresh self-chat recent context and tagged memory
+save also passed, with one confirmed send each. No automated remote messages
+were sent.
+
+After 32 new untagged self-chat messages and an idle restart, the new recall
+request was visible in Messages but absent from the journal. The log reported
+duration-limit while status falsely reported ready. Candidate.2 is therefore
+also disqualified. Local regressions cover readiness before subscription,
+persisted recovery degradation, and checkpoint retry after a catch-up deadline.
+Those runtime changes require another immutable signed candidate and fresh
+qualification. Public v0.4.0 remains blocked; the matrix below remains historical.
+
 ## Current matrix
 
 | Surface | Qualified version | Evidence | Status |

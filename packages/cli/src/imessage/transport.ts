@@ -3,6 +3,7 @@ import type {
   ConversationFacts,
   ConversationReference,
   MessagesEvent,
+  MessagesRecoveryOutcome,
   MessagesSubscription,
   ProntoMessages,
 } from "pronto-imessage";
@@ -76,6 +77,7 @@ export class ImsgTransport {
   async watch(input: {
     onActivation: (request: ActivatedRequest) => void | Promise<void>;
     onMessageRowId?: (rowId: number) => void | Promise<void>;
+    onRecovery?: (outcome: MessagesRecoveryOutcome) => void | Promise<void>;
     tags: readonly string[];
   }): Promise<MessagesSubscription> {
     return await this.messages.subscribe({
@@ -84,7 +86,8 @@ export class ImsgTransport {
         if (request !== null) await input.onActivation(request);
         await input.onMessageRowId?.(event.message.rowId);
       },
-      onRecovery: (outcome) => {
+      onRecovery: async (outcome) => {
+        await input.onRecovery?.(outcome);
         console.error(JSON.stringify({
           component: "pronto-messages",
           ...(outcome.status === "degraded" ? { reason: outcome.reason } : {}),

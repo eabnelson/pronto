@@ -112,7 +112,7 @@ export type MessagesRecoveryOutcome =
     readonly status: "recovered";
   }
   | {
-    readonly action: "live-events-only";
+    readonly action: "live-events-only" | "retrying-checkpoint";
     readonly reason: MessagesRecoveryReason;
     readonly rows: number;
     readonly status: "degraded";
@@ -132,6 +132,7 @@ export interface MessagesDiagnostics {
 export interface MessagesRecoveryLimits {
   readonly maxLiveAgeMs?: number;
   readonly maxAgeMs?: number;
+  /** Wall-clock budget per catch-up attempt; timed-out attempts retry with backoff. */
   readonly maxDurationMs?: number;
   readonly maxRows?: number;
 }

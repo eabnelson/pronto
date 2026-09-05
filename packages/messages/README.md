@@ -35,7 +35,7 @@ const subscription = await messages.subscribe({
   },
   onRecovery: async (outcome) => {
     if (outcome.status === "degraded") {
-      // Continue with live events and surface outcome.reason to the owner.
+      // Surface outcome.reason; retrying-checkpoint is not ready for live events.
     }
   },
 });
@@ -49,6 +49,15 @@ still present; otherwise it returns a structured rejection. An existing Pronto
 checkpoint is always preserved.
 
 The package binds durable checkpoints to a fingerprint of the current Messages database. It restarts and resubscribes after provider failure, performs catch-up within row-count, age, and wall-clock limits, skips stale recovery rows without hiding newer eligible rows, and rejects stale live notifications. The recovery and live age limits are independently configurable with `recoveryLimits.maxAgeMs` and `recoveryLimits.maxLiveAgeMs`. A send that may have reached the provider is returned as `ambiguous` and is never automatically replayed.
+
+`maxDurationMs` bounds each catch-up attempt. A duration timeout reports
+`action: "retrying-checkpoint"` and retries from the durable checkpoint with
+250 ms–30 s backoff instead of switching to future-only events. Completed rows
+continue to consume the recovery row budget across those retries. Successful
+recovery is reported only after watch subscription succeeds. Close cancels a
+pending retry; row-limit and database-identity boundaries retain their explicit
+live-only/fail-closed behavior. An in-flight consumer callback is awaited, not
+concurrently replayed, before checkpoint recovery proceeds.
 
 Every observed conversation carries a module-issued, versioned, tamper-evident reference with an expiry. References are process-local by default. A consumer with durable queued work can provide a stable owner-private `referenceKey` of at least 32 bytes; that permits an unexpired observed reference to be revalidated after restart without granting access to a different chat. Rotating the key invalidates outstanding references. History requires that exact reference plus an explicit message, row, byte, and RPC-call budget. Pagination continuations remain bound to the same conversation capability and database generation. They cannot be used to search another conversation.
 
