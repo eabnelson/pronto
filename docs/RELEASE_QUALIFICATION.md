@@ -3,11 +3,25 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The matrix below is historical v0.3.0 evidence. The v0.4.0 candidate has not yet
-passed fresh owner smoke or signed-to-signed replacement qualification. Its
-candidate-only CI build may run; public v0.4.0 release remains blocked until this
-matrix is updated with actual evidence. Never carry the v0.3.0 remote smoke
-forward across the v0.4.0 message-transport changes.
+The matrix below is historical v0.3.0 evidence. The v0.4.0 candidate.1 passed
+fresh self/remote replies, self-chat recent context, tagged memory beyond 32
+untagged messages and an idle restart on 2026-09-04. Active-turn replacement
+failed: launchd interrupted the synthetic turn before drain. The installer
+refused replacement and restored the listener; the uncertain synthetic turn
+remains parked without replay. Candidate.1 must not be promoted. A new candidate
+with bounded shutdown qualification is required; public v0.4.0 remains blocked.
+Never carry v0.3.0 remote evidence across v0.4.0's message-transport changes.
+
+Candidate.1 source: `e694dcb15b2342b3b88b344912eb98abb59dcba1`, protected CI run
+`33931479985`; arm64 SHA-256
+`1d1590881a567bbd4f0b2b5711da011deaba7fb9c38f4de1ae4c85543b37814a`.
+Both architectures passed checksum and Developer ID designated-requirement
+verification. CI required notarization submit and log status Accepted. The
+installed launchd candidate retained Full Disk Access and passed doctor, with
+Codex 0.153.0 and imsg 0.14.1 (both CLI version and qualified protocol response).
+The historical matrix's imsg 0.15.0 is not this candidate's live provider version.
+No automated follow-up messages were sent to the remote chat; the owner directed
+context, memory and updater tests to self-chat only.
 
 ## Current matrix
 

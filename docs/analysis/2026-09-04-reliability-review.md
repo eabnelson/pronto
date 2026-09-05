@@ -15,3 +15,26 @@ Regressions cover delayed live callbacks, bounded 10,000-notification recovery, 
 The exact candidate has not completed owner live smoke or signed-to-signed replacement. Historical v0.3.0 evidence cannot qualify changed v0.4.0 transport. Candidate artifacts are for qualification only; the public release gate deliberately still fails for v0.4.0. No real message was sent during local verification. Downstream durable-worker crash-boundary qualification and exact published-version adoption remain separate work, not established by these provider tests.
 
 Summary: Standards 0 unresolved blocking findings; Spec 1 release-blocking qualification gap (fresh signed-candidate owner smoke). Local typecheck/build, 256 tests and offline release validation passed before candidate publication; the protected CI run must independently repeat them.
+
+## Active-drain follow-up review
+
+The live candidate-1 updater check exposed a release-blocking shutdown defect,
+not a failed Messages transport or authorization check. A real launchd fixture
+reproduced the interrupted child with the generated plist. The selected fix
+declares a finite 120-second exit window and a matching 125-second unload wait,
+quiesces the coordinator synchronously on shutdown, and leaves unstarted work
+durable. The native fixture now drains a 25-second child successfully; the
+SQLite lifecycle regression drains one active turn, rejects a racing arrival,
+and retains the next queued receipt. A shutdown already requested during startup
+also quiesces before recovering/scheduling the queue.
+
+Standards: no new IPC, persistent disable flag, task framework, stored message
+format, provider ownership change or automatic replay is introduced. Existing
+unknown-effect recovery remains authoritative. Native tests use only an isolated
+task-owned LaunchAgent and opt in explicitly because hosted runners may lack a
+GUI domain. Unchanged user research is excluded from the commit.
+
+Spec: native and lifecycle regressions pass. Candidate 1 is now disqualified;
+the runtime change requires a new signed candidate and fresh live qualification.
+The finite bound does not promise completion of arbitrarily long requests:
+interrupted unknown effects must still park. Public release remains blocked.

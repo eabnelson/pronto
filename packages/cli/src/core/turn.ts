@@ -380,6 +380,7 @@ export class TurnProcessor {
 
 export class TurnCoordinator {
   #draining: Promise<void> | null = null;
+  #quiesced = false;
 
   constructor(
     readonly processor: TurnProcessor,
@@ -394,6 +395,7 @@ export class TurnCoordinator {
   }
 
   admit(request: ActivatedRequest): "accepted" | "duplicate" | "rate-limited" {
+    if (this.#quiesced) throw new Error("turn_coordinator_quiesced");
     const result = this.journal.admit({
       activationTag: request.activationTag,
       chatId: request.chatId,
@@ -410,16 +412,20 @@ export class TurnCoordinator {
     while (this.#draining !== null) await this.#draining;
   }
 
+  quiesce(): void {
+    this.#quiesced = true;
+  }
+
   #schedule(): void {
-    if (this.#draining !== null) return;
+    if (this.#draining !== null || this.#quiesced) return;
     this.#draining = this.#drain().finally(() => {
       this.#draining = null;
-      if (this.journal.nextRunnable() !== null) this.#schedule();
+      if (!this.#quiesced && this.journal.nextRunnable() !== null) this.#schedule();
     });
   }
 
   async #drain(): Promise<void> {
-    while (true) {
+    while (!this.#quiesced) {
       const event = this.journal.nextRunnable();
       if (event === null) return;
       await this.processor.process(event);

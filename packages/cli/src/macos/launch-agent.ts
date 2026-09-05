@@ -12,7 +12,8 @@ export interface ProcessResult {
 export type LaunchctlRunner = (args: readonly string[]) => Promise<ProcessResult>;
 
 const BOOTOUT_POLL_INTERVAL_MS = 100;
-const BOOTOUT_POLL_ATTEMPTS = 50;
+const LAUNCH_AGENT_DRAIN_SECONDS = 120;
+const BOOTOUT_POLL_ATTEMPTS = LAUNCH_AGENT_DRAIN_SECONDS * 10 + 50;
 
 export type LaunchAgentState = "running" | "loaded" | "stopped";
 
@@ -76,6 +77,8 @@ export function renderLaunchAgent(input: {
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <key>ExitTimeOut</key>
+  <integer>${LAUNCH_AGENT_DRAIN_SECONDS}</integer>
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>
