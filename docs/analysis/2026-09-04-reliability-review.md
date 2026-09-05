@@ -38,3 +38,34 @@ Spec: native and lifecycle regressions pass. Candidate 1 is now disqualified;
 the runtime change requires a new signed candidate and fresh live qualification.
 The finite bound does not promise completion of arbitrarily long requests:
 interrupted unknown effects must still park. Public release remains blocked.
+
+## Readiness and catch-up follow-up review
+
+Baseline for this slice: `a4991b1a21af2eae4961fcb6fde0896401ca4bb6` (candidate 2).
+The live restart check exposed a second blocker: catch-up timed out and left a
+new self-chat request unadmitted while daemon status remained ready. Synthetic
+public-module and real daemon/journal fixtures reproduced the two symptoms.
+
+Standards: provider retry remains inside the independent Messages module. There
+is one scheduled checkpoint retry per subscription, bounded backoff, close-aware
+timer cleanup and unchanged generation/age fences. Completed recovery rows retain
+their cumulative budget across timeout retries. No provider send or unknown
+consumer effect is automatically retried. No raw RPC ownership moves downstream;
+the daemon consumes recovery events through its existing adapter. Logs/status
+carry only bounded reason codes. Unrelated research and Studio UI work are excluded.
+
+Spec: startup clears stale readiness and waits for subscription; recovery
+degradation is durable and is not overwritten by ready. The new retry regression
+delivers its pending synthetic message exactly once; close cancels a pending
+retry. Recovery success is reported after watch subscription, retaining row
+accounting even when the first resubscribe fails. The public action union adds
+`retrying-checkpoint`; the documented duration is per attempt, not a guarantee of
+overall catch-up completion. Existing row/generation terminal boundaries remain.
+Studio's adapter inspects status/reason, not an exhaustive action switch, but its
+exact released dependency adoption still needs cross-repo verification. Candidate
+2 cannot qualify these runtime changes; signed/live qualification remains open.
+
+Verification: 261 tests passed, one native test skipped by default; typecheck,
+build and offline packed-release validation passed. The native active-drain test
+passed before this slice and candidate 2's actual active replacement succeeded.
+It must still be repeated on the next signed runtime candidate.

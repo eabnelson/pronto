@@ -45,7 +45,7 @@ export interface OperationalStatus {
 }
 
 export interface DaemonHealth {
-  state: "failed" | "ready" | "stopped";
+  state: "starting" | "degraded" | "failed" | "ready" | "stopped";
   updatedAt: number;
 }
 
@@ -225,7 +225,7 @@ export class DeliveryJournal {
     const state = values.get("daemon_state");
     const updatedAt = Number(values.get("daemon_updated_at"));
     if (
-      (state !== "failed" && state !== "ready" && state !== "stopped") ||
+      (state !== "starting" && state !== "degraded" && state !== "failed" && state !== "ready" && state !== "stopped") ||
       !Number.isSafeInteger(updatedAt) ||
       updatedAt <= 0
     ) {

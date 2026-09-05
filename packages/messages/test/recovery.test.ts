@@ -53,6 +53,63 @@ function checkpointWitness(rowId = 40, providerMessageId = "checkpoint-guid") {
   };
 }
 
+test.each([false, true])("timed-out catch-up resumes its checkpoint or closes promptly (close=%s)", async (closeEarly) => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const statePath = join(directory, "provider-state.json");
+  await writeFile(databasePath, "synthetic database evidence");
+  const generation = await databaseGeneration(databasePath);
+  await new ProviderStateStore(statePath).advance(generation, 40, checkpointWitness());
+  const row = { chat_id: 42, created_at: new Date().toISOString(), guid: "pending-41", id: 41,
+    is_from_me: true, service: "iMessage", text: "synthetic pending request" };
+  const executable = await executableWithSource(directory, `
+    let delayed = false;
+    ${rpcLoop(`
+      let result = { ok: true };
+      if (request.method === "initialize") result = {
+        protocol_version: 1, version: "0.14.1",
+        database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+        methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"],
+      };
+      if (request.method === "messages.after") {
+        const since = request.params.since_rowid;
+        result = since === 39
+          ? { has_more: false, messages: [{ guid: "checkpoint-guid", id: 40 }], next_rowid: 40 }
+          : { has_more: false, messages: since < 41 ? [${JSON.stringify(row)}] : [], next_rowid: Math.max(41, since) };
+      }
+      if (request.method === "messages.stats") {
+        if (!delayed) { delayed = true; await Bun.sleep(200); }
+        result = { chats: [{ chat_id: 42, service: "iMessage" }], sent_messages: 1 };
+      }
+      if (request.method === "watch.subscribe") result = { subscription: 1 };
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+    `)}
+  `);
+  const messages = createProntoMessages({ imsgPath: executable, statePath,
+    recoveryLimits: { maxDurationMs: 50, maxAgeMs: 60_000, maxRows: 10 } });
+  const delivered: number[] = [];
+  const outcomes: MessagesRecoveryOutcome[] = [];
+  let subscription: Awaited<ReturnType<typeof messages.subscribe>> | undefined;
+  try {
+    subscription = await messages.subscribe({ onEvent: (event) => { delivered.push(event.message.rowId); },
+      onRecovery: (outcome) => { outcomes.push(outcome); } });
+    expect(outcomes).toContainEqual(expect.objectContaining({ status: "degraded", reason: "duration-limit", action: "retrying-checkpoint" }));
+    if (closeEarly) {
+      const closingAt = Date.now();
+      await subscription.close();
+      expect(Date.now() - closingAt).toBeLessThan(150);
+      await Bun.sleep(350);
+      expect(delivered).toEqual([]);
+      return;
+    }
+    const deadline = Date.now() + 2_000;
+    while (messages.diagnostics().state !== "ready" && Date.now() < deadline) await Bun.sleep(10);
+    expect(delivered).toEqual([41]);
+    expect(messages.diagnostics().state).toBe("ready");
+    expect(outcomes.at(-1)).toMatchObject({ status: "recovered" });
+  } finally { await subscription?.close(); await messages.close(); }
+});
+
 test("keeps both fresh live messages when the first consumer takes six minutes", async () => {
   const directory = await fixtureDirectory();
   const databasePath = join(directory, "chat.db");

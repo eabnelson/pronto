@@ -57,6 +57,7 @@ export class ProntoDaemon {
   async run(): Promise<void> {
     const database = openProntoDatabase(this.paths.databasePath);
     const journal = new DeliveryJournal(database);
+    journal.recordDaemonHealth("starting");
     const legacyUnscopedCursor = journal.cursor();
     const messages = createProntoMessages(standaloneMessagesOptions({
       chatKeySalt: this.config.chatKeySalt,
@@ -103,15 +104,17 @@ export class ProntoDaemon {
       if (this.#stopRequested) coordinator.quiesce();
       const recovered = coordinator.start();
       journal.recordDegradedCapabilities(qualification.degraded);
-      journal.recordDaemonHealth("ready");
-      console.log(
-        JSON.stringify({
-          component: "daemon",
-          degradedCapabilities: qualification.degraded,
-          recovery: recovered,
-          state: "ready",
-        }),
-      );
+      let subscriptionReady = false;
+      let recoveryReason: string | undefined;
+      const updateHealth = () => {
+        if (this.#stopRequested) return;
+        journal.recordDaemonHealth(recoveryReason !== undefined
+          ? "degraded" : subscriptionReady ? "ready" : "starting");
+        journal.recordDegradedCapabilities([
+          ...qualification.degraded,
+          ...(recoveryReason === undefined ? [] : [`messages-recovery-${recoveryReason}`]),
+        ]);
+      };
 
       const stopSignal = new Promise<"stop">((resolve) => {
         this.#stop = () => {
@@ -125,8 +128,22 @@ export class ProntoDaemon {
           coordinator.admit(request);
         },
         onMessageRowId: (rowId) => journal.advanceCursor(rowId),
+        onRecovery: (outcome) => {
+          recoveryReason = outcome.status === "degraded" ? outcome.reason : undefined;
+          updateHealth();
+        },
         tags: this.config.tags,
       });
+      subscriptionReady = true;
+      updateHealth();
+      if (!this.#stopRequested) {
+        console.log(JSON.stringify({
+          component: "daemon",
+          degradedCapabilities: journal.degradedCapabilities(),
+          recovery: recovered,
+          state: journal.daemonHealth()?.state,
+        }));
+      }
       const outcome = await Promise.race([
         stopSignal,
         activeWatch.terminated.then(() => "transport-closed" as const),
