@@ -1,6 +1,10 @@
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
+import {
+  normalizeTag as normalizeTriggerTag,
+  normalizeTags as normalizeTriggerTags,
+} from "pronto-imessage/tags";
 
 export const CONFIG_VERSION = 2 as const;
 export const UNRESTRICTED_TRUST_VERSION = 1 as const;
@@ -31,16 +35,17 @@ export type ConfigInput = Omit<
 };
 
 export function normalizeTag(value: string): string {
+  // Validate before case folding: e.g. Kelvin sign must not become an allowed K.
   const input = value.trim();
   const tag = input.startsWith("@") ? input : `@${input}`;
   if (!TAG_PATTERN.test(tag)) {
     throw new Error("Tag must match @[A-Za-z0-9_-]{1,32}");
   }
-  return tag.toLowerCase();
+  return normalizeTriggerTag(tag);
 }
 
 export function normalizeTags(values: readonly string[]): string[] {
-  const tags = [...new Set(values.map(normalizeTag))];
+  const tags = normalizeTriggerTags(values.map(normalizeTag));
   if (tags.length === 0) {
     throw new Error("Configure at least one tag");
   }

@@ -22,6 +22,10 @@ afterEach(async () => {
 });
 
 describe("trigger tag validation", () => {
+  test("does not admit non-ASCII input that case-folds to an ASCII tag", () => {
+    expect(() => normalizeTag("@Kelvin")).toThrow("Tag must match");
+    expect(() => normalizeTags(["@helper", "@Kelvin"])).toThrow("Tag must match");
+  });
   test("adds one optional @ and normalizes tags for case-insensitive matching", () => {
     expect(normalizeTag("Helper_1")).toBe("@helper_1");
     expect(normalizeTag("@Helper_1")).toBe("@helper_1");

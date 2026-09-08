@@ -20,6 +20,11 @@
       "types": "./dist/index.d.ts",
       "bun": "./dist/index.js",
       "import": "./dist/index.js"
+    },
+    "./tags": {
+      "types": "./dist/tags.d.ts",
+      "bun": "./dist/tags.js",
+      "import": "./dist/tags.js"
     }
   },
   "engines": {

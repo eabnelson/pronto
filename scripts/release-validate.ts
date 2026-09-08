@@ -62,8 +62,13 @@ if ("private" in messagesPackageJson && messagesPackageJson.private === true) {
 if (messagesPackageJson.repository?.directory !== "packages/messages") {
   failures.push("Messages package repository directory is missing");
 }
-if (Object.keys(messagesPackageJson.exports).join(",") !== ".") {
-  failures.push("Messages package root must not export internal RPC subpaths");
+if (Object.keys(messagesPackageJson.exports).sort().join(",") !== ".,./tags") {
+  failures.push("Messages package may export only the scoped root and public tags module");
+}
+if (messagesPackageJson.exports["./tags"].import !== "./dist/tags.js" ||
+    messagesPackageJson.exports["./tags"].bun !== "./dist/tags.js" ||
+    messagesPackageJson.exports["./tags"].types !== "./dist/tags.d.ts") {
+  failures.push("The public tags module must resolve to its compiled entry points");
 }
 
 const [license, notices, provenance] = await Promise.all([
@@ -86,6 +91,8 @@ const requiredFiles = [
   "dist/pronto",
   "packages/messages/dist/index.js",
   "packages/messages/dist/index.d.ts",
+  "packages/messages/dist/tags.js",
+  "packages/messages/dist/tags.d.ts",
 ];
 const requiredFileChecks = await Promise.all(
   requiredFiles.map(async (path) => ({
@@ -218,7 +225,15 @@ try {
               runtime,
               "--input-type=module",
               "--eval",
-              'import("pronto-imessage").then((module) => { if (typeof module.createProntoMessages !== "function") process.exit(1); })',
+              `import { createProntoMessages } from "pronto-imessage";
+               import { matchTaggedMessage, normalizeTags, findTagRanges } from "pronto-imessage/tags";
+               if (typeof createProntoMessages !== "function") process.exit(1);
+               const tags = normalizeTags(["Helper", "@plan", "@HELPER"]);
+               if (JSON.stringify(tags) !== JSON.stringify(["@helper", "@plan"])) process.exit(1);
+               const result = matchTaggedMessage("@PLAN hello", tags);
+               if (result.status !== "matched" || result.tag !== "@plan" || result.message !== "hello") process.exit(1);
+               if (matchTaggedMessage("@helper @plan hello", tags).status !== "ignored") process.exit(1);
+               if (findTagRanges("email@helper.example", "@helper").length !== 0) process.exit(1);`,
             ],
             { cwd: packageConsumer, stderr: "pipe", stdout: "pipe" },
           );
