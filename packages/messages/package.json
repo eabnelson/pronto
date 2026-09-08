@@ -1,6 +1,6 @@
 {
   "name": "pronto-imessage",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Reusable local Apple Messages transport for Pronto consumers",
   "type": "module",
   "license": "MIT",
@@ -20,6 +20,11 @@
       "types": "./dist/index.d.ts",
       "bun": "./dist/index.js",
       "import": "./dist/index.js"
+    },
+    "./tags": {
+      "types": "./dist/tags.d.ts",
+      "bun": "./dist/tags.js",
+      "import": "./dist/tags.js"
     }
   },
   "engines": {

@@ -72,6 +72,19 @@ test("provider ownership permits the public package seam and unrelated CLI behav
     "packages/cli/src/imessage/consumer.ts":
       'import type { ProntoMessages } from "pronto-imessage";\nexport type Consumer = ProntoMessages;',
     "packages/cli/src/runtime.ts": "export const status = 'ready';",
+    "packages/cli/src/tags.ts": 'export { matchTaggedMessage } from "pronto-imessage/tags";',
   });
   expect(await providerOwnershipViolations(root)).toEqual([]);
+});
+
+test("the public tags subpath does not open internal or nested imports", async () => {
+  for (const subpath of ["tags/internal", "tags.js", "tags/../internal", "dist/tags.js"]) {
+    const root = await fixture({
+      "packages/cli/src/consumer.ts":
+        `import "pronto-imessage/tags";\nimport "pronto-imessage/${subpath}";`,
+    });
+    expect(await providerOwnershipViolations(root)).toContain(
+      "packages/cli/src/consumer.ts imports a pronto-imessage implementation detail",
+    );
+  }
 });

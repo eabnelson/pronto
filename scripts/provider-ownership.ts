@@ -50,7 +50,9 @@ export async function providerOwnershipViolations(root: string): Promise<string[
   for (const path of await sourceFiles(cliRoot)) {
     const source = await readFile(path, "utf8");
     const displayPath = relative(root, path);
-    if (source.includes("messages/src/internal") || source.includes("pronto-imessage/")) {
+    // Only this explicitly published subpath is public; nested paths remain private.
+    const withoutPublicTags = source.replace(/(["'])pronto-imessage\/tags\1/gu, "");
+    if (source.includes("messages/src/internal") || withoutPublicTags.includes("pronto-imessage/")) {
       violations.push(`${displayPath} imports a pronto-imessage implementation detail`);
     }
     for (const method of PROVIDER_PROTOCOL_LITERALS) {

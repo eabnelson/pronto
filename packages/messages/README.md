@@ -1,6 +1,6 @@
 # pronto-imessage
 
-`pronto-imessage` is Pronto's reusable, in-process interface to local Apple Messages on macOS. It owns the `imsg` JSON-RPC child process, capability qualification, provider-event normalization, watch notifications, exact-chat reply routing, and local delivery outcomes. It does not launch agents, interpret activation tags, or grant access to consumer resources.
+`pronto-imessage` is Pronto's reusable, in-process interface to local Apple Messages on macOS. It owns the `imsg` JSON-RPC child process, capability qualification, provider-event normalization, watch notifications, exact-chat reply routing, and local delivery outcomes. It does not launch agents, decide which messages may activate them, or grant access to consumer resources.
 
 ```ts
 import { createProntoMessages } from "pronto-imessage";
@@ -82,3 +82,39 @@ submission ambiguity, and retry classification remain owned by this module;
 the consumer remains responsible for authorizing and cleaning its staged file.
 
 The package root exposes normalized, versioned provider facts and delivery outcomes. Raw JSON-RPC methods, database paths, and payloads remain internal. The package is standard ESM and supports current Node.js and Bun consumers; the standalone `pronto` CLI is one ordinary workspace consumer.
+
+## Shared tag mechanics
+
+The optional `pronto-imessage/tags` module contains pure text operations; importing
+it does not open Messages or load the transport. This subpath is new development
+work and is not available in the published 0.4.0 package.
+
+```ts
+import { matchTaggedMessage, normalizeTags } from "pronto-imessage/tags";
+
+const tags = normalizeTags(["Olle", "@pronto"]);
+// The consumer validates allowed syntax, ownership and count before accepting tags.
+const match = matchTaggedMessage("@pronto say hey", tags);
+// { status: "matched", tag: "@pronto", message: "say hey" }
+```
+
+`normalizeTag` trims, adds a missing `@`, and lowercases. `normalizeTags` also
+deduplicates, retaining first-occurrence order. These functions deliberately do
+not validate syntax or reject an empty configuration. A consumer requiring
+ASCII input should validate before case folding, since some Unicode characters
+lowercase to ASCII. Pronto's CLI keeps its existing syntax and nonempty-tag rules;
+other consumers may retain their own compatible syntax.
+
+`matchTaggedMessage` accepts already-validated candidates. It matches bounded
+literal names case-insensitively, strips every occurrence of the one selected
+candidate, and returns the configured spelling and cleaned message. A tag-only
+message becomes `Help with this conversation.` Missing or ambiguous matches
+return only a reason, never the ignored content. Multiple different configured
+tags in a message are ambiguous. Duplicate candidates also stay ambiguous so
+two bindings cannot silently claim one tag; do not deduplicate candidates from
+different owners. `findTagRanges` exposes the same matching with UTF-16 offsets.
+
+A match is not permission to run an agent, read a conversation, or send a reply.
+Eligibility, mirror suppression, binding selection, permissions, signed admission
+and delivery authorization remain the consumer's responsibility. Tags alone
+never establish identity or authority.
