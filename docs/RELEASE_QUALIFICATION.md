@@ -3,7 +3,39 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The current matrix qualifies v0.4.0 from candidate.4. Earlier failed candidates
+## v0.5.0 candidate qualification — Pending
+
+The shared `pronto-imessage/tags` interface and standalone activation/configuration
+refactor require a new immutable signed candidate. Local tests, typecheck, build
+and packed Node/Bun consumer validation are automated evidence only. They do not
+qualify a public release. Fresh exact-candidate self-chat and separate-participant
+smokes remain Pending; the activation change is not eligible for remote-evidence
+carry-forward. No v0.4.0 live evidence below qualifies v0.5.0.
+
+On 2026-09-08 the isolated native launchd drain test also passed: its synthetic
+child completed after 25 seconds, without Messages, credentials, models or a
+production listener. The final release qualification validator still correctly
+refuses this Pending matrix.
+
+## Current matrix
+
+| Surface | Qualified version | Evidence | Status |
+| --- | --- | --- | --- |
+| macOS | Pending signed candidate | Exact-candidate qualification required | Pending |
+| Bun | 1.3.14 | Frozen install, typecheck, 284 tests, build and offline release validation on 2026-09-08 | Pass |
+| Node.js | Pending CI candidate | Packed consumer must pass on the release runtime | Pending |
+| imsg | Pending signed candidate | Fresh provider qualification required | Pending |
+| Codex CLI | Pending signed candidate | Fresh runtime inspection required | Pending |
+| Claude Code | Pending signed candidate | Fresh runtime inspection required | Pending |
+| Codex effective local probe | Pending signed candidate | Fresh effective probe required | Pending |
+| Claude effective local probe | Pending signed candidate | Fresh effective probe required | Pending |
+| Messages Automation | v0.5.0 candidate pending | Fresh self/remote confirmed send required | Pending |
+| Self-chat mirror handling | v0.5.0 candidate pending | Exactly-one reply and echo suppression required | Pending |
+| Full remote tagged flow | v0.5.0 | Fresh participant evidence required; activation changed | Pending |
+
+## Historical v0.4.0 qualification
+
+The following matrix qualifies v0.4.0 from candidate.4. Earlier failed candidates
 are retained below as historical evidence, not release qualification.
 
 The v0.4.0 candidate.1 passed
@@ -84,7 +116,7 @@ parked event. Qualification-period log checks found no tested message content.
 Only this qualification record and its review may differ from candidate.4 at
 the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
-## Current matrix
+## Historical v0.4.0 matrix
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
