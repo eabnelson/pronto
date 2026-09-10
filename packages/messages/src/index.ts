@@ -21,6 +21,7 @@ import {
   ConversationReferenceExpiredError,
   ScopedMessagesAccess,
 } from "./internal/scoped.js";
+import { ScopedMessagesPresence } from "./internal/presence.js";
 import {
   MemoryCheckpointStore,
   ProviderStateStore,
@@ -45,6 +46,10 @@ import type {
 } from "./types.js";
 
 export type {
+  MessagesPresence,
+  MessagesPresenceStatus,
+  PresenceOutcome,
+  StandardReaction,
   ConversationFacts,
   ConversationReference,
   AttachmentReference,
@@ -125,6 +130,7 @@ function isGenerationBoundary(error: unknown): error is RecoveryBoundaryError {
 }
 
 class ProntoMessagesClient implements ProntoMessages {
+  readonly presence: ScopedMessagesPresence;
   readonly #rpc: ResilientRpcClient;
   readonly #scoped: ScopedMessagesAccess;
   readonly #recentOutgoing = new Map<string, MessagesEvent>();
@@ -171,6 +177,23 @@ class ProntoMessagesClient implements ProntoMessages {
       ...(input.referenceKey === undefined ? {} : { referenceKey: input.referenceKey }),
       rpc: this.#rpc,
       ...(input.scratchRoot === undefined ? {} : { scratchRoot: input.scratchRoot }),
+    });
+    this.presence = new ScopedMessagesPresence({
+      command: input.imsgPath,
+      enabled: input.presence === true,
+      validate: async (reference) => {
+        const scope = await this.#scoped.conversation(reference);
+        const routing = scope.facts.routing;
+        if (routing === undefined) throw new Error("messages_presence_route_unavailable");
+        const current = await this.resolveConversation({
+          accountId: routing.accountId, conversationId: routing.conversationId,
+        });
+        if (current === null || current.conversation.chatId !== scope.chatId ||
+            JSON.stringify(current.facts) !== JSON.stringify(scope.facts)) {
+          throw new Error("messages_presence_route_changed");
+        }
+        await this.#scoped.conversation(reference);
+      },
     });
   }
 
@@ -1102,7 +1125,7 @@ class ProntoMessagesClient implements ProntoMessages {
 
   async close(): Promise<void> {
     this.#closed = true;
-    await this.#rpc.close();
+    await Promise.all([this.presence.close(), this.#rpc.close()]);
   }
 }
 

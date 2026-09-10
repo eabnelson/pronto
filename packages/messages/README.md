@@ -82,3 +82,32 @@ submission ambiguity, and retry classification remain owned by this module;
 the consumer remains responsible for authorizing and cleaning its staged file.
 
 The package root exposes normalized, versioned provider facts and delivery outcomes. Raw JSON-RPC methods, database paths, and payloads remain internal. The package is standard ESM and supports current Node.js and Bun consumers; the standalone `pronto` CLI is one ordinary workspace consumer.
+
+## Optional presence
+
+The next release adds `createProntoMessages({ imsgPath, presence: true })`. Presence defaults off. `messages.presence.status()` probes the running helper without launching it and reports independent `reactions` and `typing` booleans plus a bounded reason code. A method advertised by the provider is insufficient: the bridge and matching selectors must also be ready.
+
+```ts
+const status = await messages.presence?.status();
+if (status?.reactions) {
+  const outcome = await messages.presence!.react({
+    conversation: event.conversation,
+    target: {
+      providerMessageId: event.message.providerMessageId,
+      rowId: event.message.rowId,
+    },
+    reaction: "like",
+  });
+}
+await messages.presence?.setTyping({ conversation: event.conversation, typing: true });
+// On completion/cancellation, while the conversation remains authorized:
+await messages.presence?.setTyping({ conversation: event.conversation, typing: false });
+```
+
+`react` accepts the six standard reaction names (`love`, `like`, `dislike`, `laugh`, `emphasis`, `question`), an optional non-negative `partIndex`, and optional `remove`. The module verifies the target row and GUID belong to the scoped chat and rechecks the observed route and database generation. It never substitutes a latest-message UI action for an exact target.
+
+Outcomes are `accepted` (provider acknowledgment, not recipient delivery), `unavailable`, `failed` with `retryable`, or `ambiguous`. An uncertain mutation suspends automatic presence mutations for the lifetime of that module instance. Do not recreate it just to retry an uncertain reaction. A separate non-restarting RPC process prevents optional operations from blocking the normal reply lane. Competing presence mutations are dropped as unavailable rather than queued.
+
+The caller owns typing refresh, expiry, overlap, and shutdown cleanup. A process crash cannot guarantee a remote stop; recipients expire typing independently. `close()` closes both processes.
+
+SIP-off setup and helper launch are explicit owner operations, described in [imsg Advanced IMCore](https://github.com/openclaw/imsg/blob/v0.15.0/docs/advanced-imcore.md). The module changes no OS protections and does not call `imsg launch`. imsg 0.15's typing method can still attempt its direct-IMCore fallback if the helper disappears after the readiness probe; that race cannot be eliminated by a consumer status check. Prove recipient-visible behavior on the specific host OS before claiming support. RCS rich behavior is independently qualified.
