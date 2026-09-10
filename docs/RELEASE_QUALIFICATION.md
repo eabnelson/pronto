@@ -3,11 +3,11 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The new v0.5.0 optional presence API is **not live-qualified**. Synthetic
+The new v0.5.0-presence.1 optional presence API is **not live-qualified**. Synthetic
 exact-target, unavailable-helper, typing lifecycle, and uncertainty tests pass,
 but the designated Mac mini (macOS 26.6.2, imsg 0.15.0) has SIP enabled and
 reports its injected helper unavailable as of 2026-09-10. Build immutable signed
-candidates for qualification only. Do not publish v0.5.0 or carry the older
+candidates for qualification only. Do not publish v0.5.0-presence.1 or carry the older
 remote evidence forward across these runtime changes. New exact-candidate
 baseline and recipient-visible presence evidence is required.
 
