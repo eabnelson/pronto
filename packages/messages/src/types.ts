@@ -172,6 +172,8 @@ export interface MaterializedAttachment {
 }
 
 export interface CreateProntoMessagesOptions {
+  /** Opt in to presence through an already-running injected Messages helper. */
+  readonly presence?: boolean;
   readonly attachmentsRoot?: string;
   readonly imsgPath: string;
   readonly legacyUnscopedCursor?: number;
@@ -188,6 +190,8 @@ export interface MessagesSubscription {
 }
 
 export interface ProntoMessages {
+  /** Optional for compatibility with earlier consumers and provider implementations. */
+  readonly presence?: MessagesPresence;
   adoptCheckpoint?(input: MessagesCheckpointCandidate): Promise<MessagesCheckpointAdoptionOutcome>;
   close(): Promise<void>;
   diagnostics(): MessagesDiagnostics;
@@ -220,4 +224,33 @@ export interface ProntoMessages {
     readonly onOverflow?: (resumeAfterRowId: number) => void | Promise<void>;
     readonly onRecovery?: (outcome: MessagesRecoveryOutcome) => void | Promise<void>;
   }): Promise<MessagesSubscription>;
+}
+
+export type StandardReaction = "love" | "like" | "dislike" | "laugh" | "emphasis" | "question";
+
+export interface MessagesPresenceStatus {
+  readonly reactions: boolean;
+  readonly typing: boolean;
+  readonly reason: "ready" | "disabled" | "bridge_unavailable" | "provider_unavailable" | "mutation_uncertain";
+}
+
+export type PresenceOutcome =
+  | { readonly status: "accepted" }
+  | { readonly status: "unavailable" }
+  | { readonly status: "failed"; readonly retryable: boolean }
+  | { readonly status: "ambiguous" };
+
+export interface MessagesPresence {
+  status(): Promise<MessagesPresenceStatus>;
+  react(input: {
+    readonly conversation: ConversationReference;
+    readonly target: { readonly providerMessageId: string; readonly rowId: number };
+    readonly reaction: StandardReaction;
+    readonly partIndex?: number;
+    readonly remove?: boolean;
+  }): Promise<PresenceOutcome>;
+  setTyping(input: {
+    readonly conversation: ConversationReference;
+    readonly typing: boolean;
+  }): Promise<PresenceOutcome>;
 }
