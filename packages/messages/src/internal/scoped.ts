@@ -16,6 +16,7 @@ import {
   randomBytes,
 } from "node:crypto";
 import { normalizeEvent, record } from "./normalize.js";
+import { markHistoryMirrors } from "./mirrors.js";
 import type { ResilientRpcClient } from "./rpc.js";
 import type {
   AttachmentReference,
@@ -497,7 +498,7 @@ export class ScopedMessagesAccess {
     usage.historyRows -= remaining.maxRows - rawMessages.length;
     return {
       hasMore,
-      messages: events,
+      messages: markHistoryMirrors(events),
       scannedBytes: bytes,
       scannedRows: rawMessages.length,
       ...(hasMore ? {

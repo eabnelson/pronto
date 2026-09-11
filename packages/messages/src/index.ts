@@ -6,6 +6,7 @@ import {
 } from "./internal/rpc.js";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
+import { isMirrorPair } from "./internal/mirrors.js";
 import {
   databasePath,
   normalizeConversationFacts,
@@ -85,26 +86,6 @@ function messageDateMs(value: string | null): number | null {
 function rawMessageDateMs(value: Record<string, unknown>): number | null {
   const occurredAt = value.created_at ?? value.date;
   return typeof occurredAt === "string" ? messageDateMs(occurredAt) : null;
-}
-
-function isMirrorPair(message: MessagesEvent, original: MessagesEvent): boolean {
-  if (
-    original.conversation.chatId !== message.conversation.chatId ||
-    !original.message.fromMe ||
-    original.message.text !== message.message.text
-  ) {
-    return false;
-  }
-  const rowDistance = message.message.rowId - original.message.rowId;
-  if (rowDistance < 1) return false;
-  const messageTime = messageDateMs(message.message.occurredAt);
-  const originalTime = messageDateMs(original.message.occurredAt);
-  return (
-    messageTime !== null &&
-    originalTime !== null &&
-    messageTime <= originalTime &&
-    originalTime - messageTime <= 1_000
-  );
 }
 
 class RecoveryBoundaryError extends Error {

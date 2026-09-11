@@ -61,6 +61,8 @@ concurrently replayed, before checkpoint recovery proceeds.
 
 Every observed conversation carries a module-issued, versioned, tamper-evident reference with an expiry. References are process-local by default. A consumer with durable queued work can provide a stable owner-private `referenceKey` of at least 32 bytes; that permits an unexpired observed reference to be revalidated after restart without granting access to a different chat. Rotating the key invalidates outstanding references. History requires that exact reference plus an explicit message, row, byte, and RPC-call budget. Pagination continuations remain bound to the same conversation capability and database generation. They cannot be used to search another conversation.
 
+History preserves self-chat echoes as rows and marks `message.selfChatMirror` when the matching outgoing witness is present in the same returned page. It uses the same provider rule as live intake without extra RPC calls or additional history reads. An absent in-page witness does not establish that a row is an echo; consumers must not infer mirror status merely from repeated text. The flag does not change cursors, budgets, message order, or delivery settlement.
+
 When `conversationFacts.routing` is present, it contains the exact provider
 conversation, account, destination, group, and roster facts jointly verified
 from the anchored message and chat catalog. Consumers that require those facts
