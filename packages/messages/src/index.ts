@@ -17,6 +17,7 @@ import {
 import {
   databaseGeneration,
   legacyDatabaseGeneration,
+  compatibleOldDatabaseGeneration,
 } from "./internal/generation.js";
 import {
   ConversationReferenceExpiredError,
@@ -193,7 +194,8 @@ class ProntoMessagesClient implements ProntoMessages {
     const path = this.#databasePath;
     if (path === undefined) throw new Error("messages_database_generation_unavailable");
     const compatible = input.databaseGeneration === qualification.databaseGeneration ||
-      input.databaseGeneration === await legacyDatabaseGeneration(path);
+      input.databaseGeneration === await legacyDatabaseGeneration(path) ||
+      await compatibleOldDatabaseGeneration(path, input.databaseGeneration);
     if (!compatible) {
       return { reason: "database-generation-mismatch", status: "rejected" };
     }
@@ -372,7 +374,7 @@ class ProntoMessagesClient implements ProntoMessages {
     };
     const recover = async (boundaryReason?: MessagesRecoveryReason): Promise<void> => {
       if (closed) return;
-      const previous = await this.#state.currentCheckpoint();
+      let previous = await this.#state.currentCheckpoint();
       const qualification = await this.qualify();
       if (closed) return;
       databaseGeneration = qualification.databaseGeneration;
@@ -390,6 +392,15 @@ class ProntoMessagesClient implements ProntoMessages {
         });
         await subscribeProvider(false);
         return;
+      }
+      if (previous !== undefined && previous.databaseGeneration !== databaseGeneration &&
+          this.#databasePath !== undefined && (previous.witnesses?.length ?? 0) > 0 &&
+          await compatibleOldDatabaseGeneration(this.#databasePath, previous.databaseGeneration) &&
+          await this.#checkpointWitnessMatches(previous) &&
+          await this.#refreshGeneration() === databaseGeneration) {
+        if (await this.#state.rebind(previous, databaseGeneration)) {
+          previous = await this.#state.currentCheckpoint();
+        }
       }
       if (
         previous !== undefined &&

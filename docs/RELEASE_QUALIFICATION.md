@@ -3,8 +3,20 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The current matrix qualifies v0.4.0 from candidate.4. Earlier failed candidates
-are retained below as historical evidence, not release qualification.
+The current candidate is v0.4.1. Its immutable signed build and fresh live
+qualification are pending. The v0.4.0 records below are historical evidence,
+not qualification for this transport-changing release.
+
+## v0.4.1 scope
+
+History and intake share witnessed self-chat mirror classification. Database
+generation v2 excludes transient mount numbers and normalizes creation-time
+precision. An older checkpoint is upgraded only when its exact digest can be
+reproduced with the current non-mount fields (bounded to nearby mount numbers)
+and saved message witnesses match. Upgrade writes a private backup and preserves
+the cursor and witnesses. Missing, changed or unprovable evidence remains blocked.
+Local remount, compatible-upgrade, changed/missing-witness and replacement tests
+pass; this does not substitute for the owner-run signed candidate checks.
 
 The v0.4.0 candidate.1 passed
 fresh self/remote replies, self-chat recent context, tagged memory beyond 32
@@ -96,9 +108,9 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 | Claude Code | 2.1.260 | Auth/help inspection and adapter fixtures | Pass |
 | Codex effective local probe | 0.153.0 | Setup noninteractive file-tool probe | Pass |
 | Claude effective local probe | 2.1.260 | Fresh noninteractive file-tool probe; all qualification checks passed | Pass |
-| Messages Automation | v0.4.0-candidate.4 | Same-identity signed install retained FDA; fresh self/remote requests each had one confirmed send on 2026-09-04 | Pass |
-| Self-chat mirror handling | v0.4.0-candidate.4 | Fresh context and active-drain requests each delivered once, with no echo after one minute; idle restart did not replay settled work | Pass |
-| Full remote tagged flow | v0.4.0 | Fresh candidate.4 participant request had exactly one confirmed reply; owner confirmed receipt. Self-chat context, out-of-window memory, idle restart and active replacement passed as recorded above | Pass |
+| Messages Automation | v0.4.1 | Exact signed candidate smoke required | Pending |
+| Self-chat mirror handling | v0.4.1 | Exact signed candidate smoke required | Pending |
+| Full remote tagged flow | v0.4.1 | Fresh owner-run participant test required; no automated remote messages | Pending |
 
 The automated matrix and owner smoke record versions tested on 2026-09-04.
 Capability checks, not version

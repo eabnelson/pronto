@@ -33,6 +33,7 @@ export interface CheckpointStore {
   ): Promise<void>;
   checkpoint(databaseGeneration: string): Promise<ProviderCheckpoint | undefined>;
   currentCheckpoint(): Promise<ProviderCheckpoint | undefined>;
+  rebind(expected: ProviderCheckpoint, databaseGeneration: string): Promise<boolean>;
   initialize(
     databaseGeneration: string,
     rowId: number,
@@ -106,6 +107,27 @@ export class ProviderStateStore implements CheckpointStore {
 
   currentCheckpoint(): Promise<ProviderCheckpoint | undefined> {
     return this.#serialized(async () => (await this.#load()).checkpoint ?? undefined);
+  }
+
+  rebind(expected: ProviderCheckpoint, databaseGeneration: string): Promise<boolean> {
+    return this.#serialized(async () => {
+      const state = await this.#load();
+      if (JSON.stringify(state.checkpoint) !== JSON.stringify(expected)) return false;
+      const backup = `${this.#path}.generation-v1.backup`;
+      try {
+        await copyFile(this.#path, backup, constants.COPYFILE_EXCL);
+        await chmod(backup, 0o600);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const metadata = await lstat(backup);
+        if (!metadata.isFile() || metadata.isSymbolicLink() ||
+            JSON.stringify(parseV2(object(JSON.parse(await readFile(backup, "utf8"))))) !== JSON.stringify(state)) {
+          throw new Error("provider_state_backup_conflict");
+        }
+      }
+      await this.#save({ ...state, checkpoint: { ...expected, databaseGeneration } });
+      return true;
+    });
   }
 
   advance(
@@ -237,6 +259,12 @@ export class MemoryCheckpointStore implements CheckpointStore {
 
   async currentCheckpoint(): Promise<ProviderCheckpoint | undefined> {
     return this.#checkpoint;
+  }
+
+  async rebind(expected: ProviderCheckpoint, databaseGeneration: string): Promise<boolean> {
+    if (JSON.stringify(this.#checkpoint) !== JSON.stringify(expected)) return false;
+    this.#checkpoint = { ...expected, databaseGeneration };
+    return true;
   }
 
   async initialize(
