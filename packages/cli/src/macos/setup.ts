@@ -1,4 +1,4 @@
-import { access, chmod, copyFile, mkdir, readFile, realpath, rename, rm, stat, unlink } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -388,8 +388,10 @@ export type InstalledExecutableRunner = (
   args: readonly string[],
 ) => Promise<ProcessResult>;
 
-const INSTALLED_STATUS_POLL_INTERVAL_MS = 250;
-const INSTALLED_STATUS_POLL_ATTEMPTS = 40;
+// Match the signed updater's five-minute readiness window: durable catch-up
+// can span several bounded recovery passes before the listener is ready.
+const INSTALLED_STATUS_POLL_INTERVAL_MS = 500;
+const INSTALLED_STATUS_POLL_ATTEMPTS = 600;
 
 export async function qualifyInstalledExecutable(
   executablePath: string,
@@ -423,6 +425,7 @@ export async function qualifyInstalledExecutable(
 }
 
 export async function completeSetupCutover(input: {
+  paths?: ProntoPaths;
   install: () => Promise<void>;
   prepareMigration: () => Promise<LegacyMigration>;
   preflight: () => Promise<void>;
@@ -430,16 +433,25 @@ export async function completeSetupCutover(input: {
   removeProntoAgent: () => Promise<void>;
   suspendProntoAgent?: () => Promise<() => Promise<void>>;
 }): Promise<void> {
-  const migration = await input.prepareMigration();
-  const restoreProntoAgent = await input.suspendProntoAgent?.() ?? (async () => undefined);
+  let retained: Awaited<ReturnType<typeof retainSetupFiles>> | undefined;
+  let migration: LegacyMigration | undefined;
+  let migrationAttempted = false;
+  let restoreProntoAgent = async () => {};
   let installAttempted = false;
   try {
+    restoreProntoAgent = await input.suspendProntoAgent?.() ?? restoreProntoAgent;
+    retained = input.paths === undefined ? undefined : await retainSetupFiles(input.paths);
+    migrationAttempted = true;
+    migration = await input.prepareMigration();
     await input.preflight();
     installAttempted = true;
     await input.install();
     await input.qualify();
   } catch (error) {
     const rollbackErrors: unknown[] = [];
+    if (migrationAttempted && migration === undefined) {
+      rollbackErrors.push(new Error("setup_migration_not_completed"));
+    }
     let prontoStopped = true;
     if (installAttempted) {
       await input.removeProntoAgent().catch((rollbackError) => {
@@ -448,12 +460,16 @@ export async function completeSetupCutover(input: {
       });
     }
     if (prontoStopped) {
-      await migration.rollback().catch((rollbackError) => {
+      await migration?.rollback().catch((rollbackError) => {
         rollbackErrors.push(rollbackError);
       });
-      await restoreProntoAgent().catch((rollbackError) => {
-        rollbackErrors.push(rollbackError);
-      });
+      if (installAttempted) await retained?.restore().catch((rollbackError) => {
+          rollbackErrors.push(rollbackError);
+        });
+      // Never restart from a partially restored executable/configuration pair.
+      if (rollbackErrors.length === 0) await restoreProntoAgent().catch((rollbackError) => {
+          rollbackErrors.push(rollbackError);
+        });
     }
     if (rollbackErrors.length > 0) {
       throw new AggregateError(
@@ -461,9 +477,47 @@ export async function completeSetupCutover(input: {
         "Pronto setup failed and the previous listener could not be fully restored",
       );
     }
+    await retained?.discard();
     throw error;
   }
-  await migration.finalize();
+  await migration!.finalize();
+  await retained?.discard();
+}
+
+/** Retain installation files, never rewind delivery journals or provider checkpoints. */
+async function retainSetupFiles(paths: ProntoPaths): Promise<{
+  restore: () => Promise<void>;
+  discard: () => Promise<void>;
+}> {
+  await ensurePrivateDirectory(paths.appSupportDirectory);
+  const directory = await mkdtemp(join(paths.appSupportDirectory, ".setup-rollback-"));
+  const files: Array<{ path: string; backup?: string; mode?: number }> = [];
+  try {
+    for (const path of [paths.executablePath, paths.configPath, paths.launchAgentPath, paths.updaterLaunchAgentPath]) {
+      const metadata = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (metadata === undefined) { files.push({ path }); continue; }
+      if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("setup_retained_file_unsafe");
+      const backup = join(directory, String(files.length));
+      await copyFile(path, backup, constants.COPYFILE_EXCL);
+      await chmod(backup, 0o600);
+      files.push({ path, backup, mode: metadata.mode & 0o777 });
+    }
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    restore: async () => {
+      for (const file of files) {
+        if (file.backup === undefined) await rm(file.path, { force: true });
+        else { await copyFile(file.backup, file.path); await chmod(file.path, file.mode!); }
+      }
+    },
+    discard: async () => { await rm(directory, { recursive: true, force: true }); },
+  };
 }
 
 export async function resolveWorkspaceSelection(

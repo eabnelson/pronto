@@ -8,6 +8,14 @@ qualification failed; it must not be published. A corrected immutable candidate 
 fresh live qualification are required. The v0.4.0 records below are historical evidence,
 not qualification for this transport-changing release.
 
+The replacement implementation aligns setup with the updater's bounded five-minute
+readiness window. Setup drains existing agents before retaining the executable,
+configuration and launch files; failed qualification restores that pair before
+restarting the previous listener. Delivery journals and provider checkpoints are never
+rewound. Local public setup/cutover regressions cover delayed readiness, bounded failure,
+deleted launch files and writes completing during drain. A new signed candidate and
+fresh live restart qualification remain required.
+
 ## v0.4.1 scope
 
 Candidate.1 source: `460b38975556f312c624e09eb2e9aed3b52e0b03`, immutable tag

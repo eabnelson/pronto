@@ -834,9 +834,22 @@ test("installed qualification waits for the restored daemon to become ready", as
   expect(statusAttempts).toBe(2);
 });
 
+test("installed qualification allows a recovering daemon to become ready after forty-five seconds", async () => {
+  let elapsed = 0;
+  await qualifyInstalledExecutable(
+    "/Users/example/Library/Application Support/pronto/bin/pronto",
+    async (_executable, args) => args[0] === "doctor" || elapsed >= 45_000
+      ? { exitCode: 0, stderr: "", stdout: "ready" }
+      : { exitCode: 1, stderr: "", stdout: "daemon starting" },
+    async () => async () => undefined,
+    async (milliseconds) => { elapsed += milliseconds; },
+  );
+  expect(elapsed).toBeGreaterThanOrEqual(45_000);
+  expect(elapsed).toBeLessThanOrEqual(300_000);
+});
+
 test("installed qualification fails closed when the restored daemon never becomes ready", async () => {
-  let statusAttempts = 0;
-  let waits = 0;
+  let elapsed = 0;
 
   await expect(qualifyInstalledExecutable(
     "/Users/example/Library/Application Support/pronto/bin/pronto",
@@ -844,17 +857,16 @@ test("installed qualification fails closed when the restored daemon never become
       if (args[0] === "doctor") {
         return { exitCode: 0, stderr: "", stdout: "ok" };
       }
-      statusAttempts += 1;
       return { exitCode: 1, stderr: "daemon failed", stdout: "" };
     },
     async () => async () => undefined,
-    async () => {
-      waits += 1;
+    async (milliseconds) => {
+      elapsed += milliseconds;
     },
   )).rejects.toThrow("Restored Pronto listener qualification failed: daemon failed");
 
-  expect(statusAttempts).toBe(40);
-  expect(waits).toBe(39);
+  expect(elapsed).toBeGreaterThanOrEqual(299_000);
+  expect(elapsed).toBeLessThanOrEqual(300_000);
 });
 
 test("installed qualification restores the suspended daemon after offline doctor fails", async () => {
@@ -1036,8 +1048,8 @@ test("cutover restores legacy and the suspended Pronto listener after preflight 
   })).rejects.toThrow("preflight failed");
 
   expect(lifecycle).toEqual([
-    "stop-legacy",
     "stop-pronto",
+    "stop-legacy",
     "provider-preflight",
     "restore-legacy",
     "restore-pronto",
@@ -1076,6 +1088,47 @@ test("cutover stops Pronto and restores legacy after installed qualification fai
     "remove-pronto",
     "rollback",
   ]);
+});
+
+test("failed setup restores the prior installation before restarting its listener", async () => {
+  const home = await mkdtemp(join(tmpdir(), "pronto-setup-restore-"));
+  temporaryDirectories.push(home);
+  const paths = pathsForHome(home);
+  await mkdir(join(paths.appSupportDirectory, "bin"), { recursive: true });
+  await mkdir(join(home, "Library", "LaunchAgents"), { recursive: true });
+  const originals = new Map([
+    [paths.executablePath, "previous-signed-executable"],
+    [paths.configPath, "previous-paired-configuration"],
+    [paths.launchAgentPath, "previous-launch-configuration"],
+    [paths.updaterLaunchAgentPath, "previous-updater-configuration"],
+  ]);
+  for (const [path, contents] of originals) await writeFile(path, contents, { mode: 0o600 });
+  await writeFile(paths.databasePath, "delivery-journal-before-test", { mode: 0o600 });
+  let restored = false;
+  await expect(completeSetupCutover({
+    paths,
+    prepareMigration: async () => ({ status: "not_found", finalize: async () => {}, rollback: async () => {} }),
+    suspendProntoAgent: async () => {
+      // A retiring updater may finish its current write while it drains.
+      originals.set(paths.configPath, "previous-configuration-after-drain");
+      await writeFile(paths.configPath, originals.get(paths.configPath)!);
+      return async () => {
+        // launchctl bootstrap needs the retained on-disk plist, not merely its path.
+        await access(paths.launchAgentPath);
+        restored = true;
+      };
+    },
+    preflight: async () => {},
+    install: async () => {
+      for (const path of originals.keys()) await writeFile(path, "unqualified-candidate");
+      await writeFile(paths.databasePath, "delivery-journal-with-new-settlement");
+    },
+    qualify: async () => { throw new Error("candidate qualification failed"); },
+    removeProntoAgent: async () => { await rm(paths.launchAgentPath); },
+  })).rejects.toThrow("candidate qualification failed");
+  expect(restored).toBeTrue();
+  for (const [path, contents] of originals) expect(await readFile(path, "utf8")).toBe(contents);
+  expect(await readFile(paths.databasePath, "utf8")).toBe("delivery-journal-with-new-settlement");
 });
 
 test("setup leaves the installed executable and config paired when config persistence fails", async () => {
