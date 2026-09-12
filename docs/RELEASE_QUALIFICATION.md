@@ -3,11 +3,21 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The current candidate is v0.4.1. Its immutable signed build and fresh live
-qualification are pending. The v0.4.0 records below are historical evidence,
+The current candidate is v0.4.1. Its immutable signed build passed; fresh live
+qualification is pending. The v0.4.0 records below are historical evidence,
 not qualification for this transport-changing release.
 
 ## v0.4.1 scope
+
+Candidate.1 source: `460b38975556f312c624e09eb2e9aed3b52e0b03`, immutable tag
+`v0.4.1-candidate.1`, protected candidate-only CI run `34713722441` (2026-09-12).
+Both signed binaries, candidate manifest and SDK package passed SHA-256 checks;
+both binaries passed the explicit `dev.pronto.cli` Developer ID requirement for
+team `9YCNUWK84C`. CI signing, notarization and signed artifact smoke passed.
+Arm64 SHA-256: `9614df3dc11e682243a5f6f52b77961b9f529399f2861399ddd1ca200c322dfe`.
+Full local suite: 266 passed, one opt-in native fixture skipped; that launchd drain
+fixture passed separately. PR CI and CodeQL passed. No public release or npm
+publication occurred. No fresh live row below is qualified by these automated checks.
 
 History and intake share witnessed self-chat mirror classification. Database
 generation v2 excludes transient mount numbers and normalizes creation-time
