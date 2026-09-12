@@ -3,8 +3,9 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The current candidate is v0.4.1. Its immutable signed build passed; fresh live
-qualification is pending. The v0.4.0 records below are historical evidence,
+The current candidate is v0.4.1. Candidate.1's signed build passed, but live restart
+qualification failed; it must not be published. A corrected immutable candidate and
+fresh live qualification are required. The v0.4.0 records below are historical evidence,
 not qualification for this transport-changing release.
 
 ## v0.4.1 scope
@@ -18,6 +19,23 @@ Arm64 SHA-256: `9614df3dc11e682243a5f6f52b77961b9f529399f2861399ddd1ca200c322dfe
 Full local suite: 266 passed, one opt-in native fixture skipped; that launchd drain
 fixture passed separately. PR CI and CodeQL passed. No public release or npm
 publication occurred. No fresh live row below is qualified by these automated checks.
+
+Candidate.1 live checks on 2026-09-12 used macOS 26.6.2, imsg 0.15.0 and Codex
+0.154.0. After owner-granted Full Disk Access and the Messages Automation approval,
+the installed background listener was ready. Fresh self-chat reply, untagged recent
+context and tagged memory save each produced one confirmed outbound GUID, witnessed
+once in Messages. More than one minute later there was no echo turn. All 32 untagged
+synthetic filler messages produced no agent reply. Tested content was absent from logs.
+
+Restart through setup then failed: the restored daemon was still `starting` when
+setup's approximately ten-second readiness budget expired. Provider recovery logs
+reported duration-limited progress (7 then 6 rows). Setup subsequently failed to
+restore its previous listener with launchctl bootstrap error 5. The exact signed
+candidate is therefore disqualified; memory recall after restart was not sent.
+Regression work must cover both the readiness budget and rollback's retained launch
+configuration. No participant-originated test has been run; the owner was told to hold
+that test. The pre-test consumer listener was restored and its two existing ambiguous
+delivery fences were unchanged. No messages, credentials or checkpoints were reset.
 
 History and intake share witnessed self-chat mirror classification. Database
 generation v2 excludes transient mount numbers and normalizes creation-time
@@ -118,7 +136,7 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 | Claude Code | 2.1.260 | Auth/help inspection and adapter fixtures | Pass |
 | Codex effective local probe | 0.153.0 | Setup noninteractive file-tool probe | Pass |
 | Claude effective local probe | 2.1.260 | Fresh noninteractive file-tool probe; all qualification checks passed | Pass |
-| Messages Automation | v0.4.1 | Exact signed candidate smoke required | Pending |
+| Messages Automation | v0.4.1 | Candidate.1 initial send passed but restart failed; corrected candidate required | Blocked |
 | Self-chat mirror handling | v0.4.1 | Exact signed candidate smoke required | Pending |
 | Full remote tagged flow | v0.4.1 | Fresh owner-run participant test required; no automated remote messages | Pending |
 
