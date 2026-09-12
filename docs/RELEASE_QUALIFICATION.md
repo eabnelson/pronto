@@ -18,6 +18,23 @@ fresh live restart qualification remain required.
 
 ## v0.4.1 scope
 
+Candidate.2 source: `2d785b1d52418e8611a39eb430bd01f843317c7d`, immutable tag
+`v0.4.1-candidate.2`, protected candidate-only CI run `34715754669` (2026-09-12).
+Both binaries passed signing/notarization and explicit Developer ID requirements;
+binary, manifest and SDK checksums passed. Arm64 SHA-256:
+`ca0c776932e7f184b376b3a25c62fe6fc2fad398d396af97d7c6ac5f4313f1a3`.
+Local suite: 268 passed, one opt-in fixture skipped; native drain fixture passed
+separately. Full PR review against `402ee7d` found no outstanding standards or
+implementation findings; live qualification remains required.
+
+The exact candidate was installed on Omini (macOS 26.6.2, imsg 0.15.0, Codex
+0.154.0). Effective runtime qualification passed without an agent approval prompt.
+Setup recovered the saved checkpoint through bounded duration-limited passes and
+reached ready; the installed hash still matches. No extra Full Disk Access or
+Automation grant was needed. One fresh synthetic self-chat request has delivered
+exactly once, with one matching Messages outbound GUID. Further qualification is
+in progress; this is not approval to publish, and candidate.1 evidence is not reused.
+
 Candidate.1 source: `460b38975556f312c624e09eb2e9aed3b52e0b03`, immutable tag
 `v0.4.1-candidate.1`, protected candidate-only CI run `34713722441` (2026-09-12).
 Both signed binaries, candidate manifest and SDK package passed SHA-256 checks;
