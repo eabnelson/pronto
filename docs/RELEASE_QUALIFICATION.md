@@ -3,10 +3,11 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The current candidate is v0.4.1. Candidate.1's signed build passed, but live restart
-qualification failed; it must not be published. A corrected immutable candidate and
-fresh live qualification are required. The v0.4.0 records below are historical evidence,
-not qualification for this transport-changing release.
+The current candidate is v0.4.1-candidate.2. Candidate.1's live restart qualification
+failed and it must not be published. Candidate.2 has passed fresh self-chat context,
+memory and idle-restart checks; remaining qualification is recorded below. The
+v0.4.0 records are historical evidence, not remote qualification for this
+transport-changing release.
 
 The replacement implementation aligns setup with the updater's bounded five-minute
 readiness window. Setup drains existing agents before retaining the executable,
@@ -32,8 +33,16 @@ The exact candidate was installed on Omini (macOS 26.6.2, imsg 0.15.0, Codex
 Setup recovered the saved checkpoint through bounded duration-limited passes and
 reached ready; the installed hash still matches. No extra Full Disk Access or
 Automation grant was needed. One fresh synthetic self-chat request has delivered
-exactly once, with one matching Messages outbound GUID. Further qualification is
-in progress; this is not approval to publish, and candidate.1 evidence is not reused.
+exactly once, with one matching Messages outbound GUID. Fresh recent untagged context
+and tagged memory save each passed. After 32 untagged filler messages and a full
+signed setup restart, memory recall returned the correct name exactly once. The
+filler messages invoked no agent and the four completed requests were not replayed.
+Tested content was absent from daemon logs. Setup then drained a fifth synthetic
+request, including its 25-second child command, and confirmed exactly one reply
+before replacement; the restored listener returned to ready. All five outbound GUIDs
+were witnessed exactly once in Messages, without a synthetic echo turn more than
+one minute later. Fresh participant evidence remains pending. This is not approval to publish, and candidate.1 evidence
+is not reused.
 
 Candidate.1 source: `460b38975556f312c624e09eb2e9aed3b52e0b03`, immutable tag
 `v0.4.1-candidate.1`, protected candidate-only CI run `34713722441` (2026-09-12).
@@ -161,8 +170,8 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 | Claude Code | 2.1.260 | Auth/help inspection and adapter fixtures | Pass |
 | Codex effective local probe | 0.153.0 | Setup noninteractive file-tool probe | Pass |
 | Claude effective local probe | 2.1.260 | Fresh noninteractive file-tool probe; all qualification checks passed | Pass |
-| Messages Automation | v0.4.1 | Candidate.1 initial send passed but restart failed; corrected candidate required | Blocked |
-| Self-chat mirror handling | v0.4.1 | Exact signed candidate smoke required | Pending |
+| Messages Automation | v0.4.1-candidate.2 | Five fresh confirmed sends on Omini; setup restart and active-turn replacement passed | Pass |
+| Self-chat mirror handling | v0.4.1-candidate.2 | Exact candidate self-chat, recent context and memory after 32 fillers/restart passed; no echo | Pass |
 | Full remote tagged flow | v0.4.1 | Fresh owner-run participant test required; no automated remote messages | Pending |
 
 The automated matrix and owner smoke record versions tested on 2026-09-04.
