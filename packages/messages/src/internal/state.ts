@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { createHash } from "node:crypto";
 import {
   chmod,
   copyFile,
@@ -82,9 +83,13 @@ function nextCheckpoint(
 export class ProviderStateStore implements CheckpointStore {
   readonly #path: string;
   readonly #legacyUnscopedCursor: number | undefined;
+  readonly #persistedGeneration: ((generation: string) => Promise<string>) | undefined;
   #operation: Promise<void> = Promise.resolve();
 
-  constructor(path: string, input: { readonly legacyUnscopedCursor?: number } = {}) {
+  constructor(path: string, input: {
+    readonly legacyUnscopedCursor?: number;
+    readonly persistedGeneration?: (generation: string) => Promise<string>;
+  } = {}) {
     if (path.trim() === "") throw new Error("provider_state_path_invalid");
     if (
       input.legacyUnscopedCursor !== undefined &&
@@ -94,6 +99,7 @@ export class ProviderStateStore implements CheckpointStore {
     }
     this.#path = path;
     this.#legacyUnscopedCursor = input.legacyUnscopedCursor;
+    this.#persistedGeneration = input.persistedGeneration;
   }
 
   checkpoint(databaseGeneration: string): Promise<ProviderCheckpoint | undefined> {
@@ -114,17 +120,27 @@ export class ProviderStateStore implements CheckpointStore {
       const state = await this.#load();
       if (JSON.stringify(state.checkpoint) !== JSON.stringify(expected)) return false;
       const backup = `${this.#path}.generation-v1.backup`;
-      try {
-        await copyFile(this.#path, backup, constants.COPYFILE_EXCL);
-        await chmod(backup, 0o600);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const metadata = await lstat(backup);
-        if (!metadata.isFile() || metadata.isSymbolicLink() ||
-            JSON.stringify(parseV2(object(JSON.parse(await readFile(backup, "utf8"))))) !== JSON.stringify(state)) {
-          throw new Error("provider_state_backup_conflict");
+      const digest = createHash("sha256").update(JSON.stringify(state)).digest("hex");
+      let backedUp = false;
+      // A prior rollback reader may have advanced since an earlier upgrade.
+      // Retain both generations; never replace the earlier private backup.
+      for (const target of [backup, `${backup}.${digest}`]) {
+        try {
+          await copyFile(this.#path, target, constants.COPYFILE_EXCL);
+          await chmod(target, 0o600);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          const metadata = await lstat(target);
+          if (!metadata.isFile() || metadata.isSymbolicLink()) {
+            throw new Error("provider_state_backup_conflict");
+          }
+          const retained = parseV2(object(JSON.parse(await readFile(target, "utf8"))));
+          if (JSON.stringify(retained) !== JSON.stringify(state)) continue;
         }
+        backedUp = true;
+        break;
       }
+      if (!backedUp) throw new Error("provider_state_backup_conflict");
       await this.#save({ ...state, checkpoint: { ...expected, databaseGeneration } });
       return true;
     });
@@ -224,10 +240,24 @@ export class ProviderStateStore implements CheckpointStore {
   }
 
   async #save(state: ProviderStateV2): Promise<void> {
+    const checkpoint = state.checkpoint;
+    // Older SDKs read the same cursor and witnesses but ignore this extra field.
+    // New SDKs use the stable identity; an older writer drops it on advancement,
+    // which requires the existing witness-checked upgrade path on return.
+    const persisted = checkpoint?.databaseGeneration.startsWith("v2:") && this.#persistedGeneration !== undefined
+      ? {
+        ...state,
+        checkpoint: {
+          ...checkpoint,
+          databaseGeneration: await this.#persistedGeneration(checkpoint.databaseGeneration),
+          stableDatabaseGeneration: checkpoint.databaseGeneration,
+        },
+      }
+      : state;
     const temporaryPath = `${this.#path}.tmp-${process.pid}-${Date.now()}`;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
-      await file.writeFile(`${JSON.stringify(state)}\n`, "utf8");
+      await file.writeFile(`${JSON.stringify(persisted)}\n`, "utf8");
       await file.sync();
     } finally {
       await file.close();
@@ -303,9 +333,16 @@ function parseV2(value: Record<string, unknown>): ProviderStateV2 {
     if (legacyUnscopedCursor !== undefined && nonNegativeInteger(legacyUnscopedCursor) === undefined) {
       throw new Error("provider_state_invalid");
     }
+    const stable = candidate.stableDatabaseGeneration;
+    if (stable !== undefined && (
+      typeof stable !== "string" || !/^v2:[A-Za-z0-9_-]{43}$/u.test(stable) ||
+      !/^[A-Za-z0-9_-]{43}$/u.test(candidate.databaseGeneration)
+    )) {
+      throw new Error("provider_state_invalid");
+    }
     return {
       checkpoint: {
-        databaseGeneration: candidate.databaseGeneration,
+        databaseGeneration: stable ?? candidate.databaseGeneration,
         rowId,
         ...providerCheckpointWitnessList(candidate, rowId),
         version: 1,

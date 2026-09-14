@@ -16,6 +16,7 @@ import {
 } from "./internal/normalize.js";
 import {
   databaseGeneration,
+  databaseGenerations,
   legacyDatabaseGeneration,
   compatibleOldDatabaseGeneration,
 } from "./internal/generation.js";
@@ -141,6 +142,12 @@ class ProntoMessagesClient implements ProntoMessages {
     this.#state = input.statePath === undefined
       ? new MemoryCheckpointStore()
       : new ProviderStateStore(input.statePath, {
+        persistedGeneration: async (generation) => {
+          if (this.#databasePath === undefined) throw new Error("messages_database_generation_unavailable");
+          const observed = await databaseGenerations(this.#databasePath);
+          if (observed.current !== generation) throw new Error("messages_database_generation_changed");
+          return observed.rollback;
+        },
         ...(input.legacyUnscopedCursor === undefined
           ? {}
           : { legacyUnscopedCursor: input.legacyUnscopedCursor }),

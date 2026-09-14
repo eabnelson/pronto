@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import * as fsPromises from "node:fs/promises";
 import { createProntoMessages, type MessagesRecoveryOutcome } from "../src/index";
+import { createProntoMessages as createPreviousMessages } from "pronto-imessage-v0-2-0";
+import { createProntoMessages as createPublishedMessages } from "pronto-imessage-v0-4-1";
 import { databaseGeneration } from "../src/internal/generation";
 import { ProviderStateStore } from "../src/internal/state";
 
@@ -53,6 +55,85 @@ function checkpointWitness(rowId = 40, providerMessageId = "checkpoint-guid") {
     rowId,
   };
 }
+
+test.each(["adoption", "idle upgrade from 0.4.1", "remount"])("the released previous SDK can resume after upgrade and upgrade again without replay (%s)", async (seed) => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const statePath = join(directory, "provider-state.json");
+  const headPath = join(directory, "head.json");
+  await writeFile(databasePath, "synthetic rollback database");
+  await writeFile(headPath, "1");
+  const occurredAt = new Date().toISOString();
+  const executable = await executableWithSource(directory, rpcLoop(`
+    let result = { ok: true };
+    if (request.method === "initialize") result = { protocol_version: 1, version: "0.14.1",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"] };
+    if (request.method === "messages.after") {
+      const head = Number(await Bun.file(${JSON.stringify(headPath)}).text());
+      const messages = Array.from({length:head}, (_,i)=>({id:i+1, guid:'synthetic-'+(i+1),
+        chat_id:42, created_at:${JSON.stringify(occurredAt)}, is_from_me:true, service:'iMessage', text:'synthetic request '+(i+1)}))
+        .filter(row=>row.id>request.params.since_rowid).slice(0, request.params.limit);
+      result = {messages, has_more:false, next_rowid:messages.at(-1)?.id ?? request.params.since_rowid};
+    }
+    if (request.method === "messages.stats") result = {sent_messages:1, chats:[{chat_id:42,service:'iMessage'}]};
+    if (request.method === "watch.subscribe") result = {subscription:1};
+    process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\\n');
+  `));
+  const previous = createPreviousMessages({ imsgPath: executable });
+  let oldGeneration: string;
+  try {
+    oldGeneration = (await previous.qualify()).databaseGeneration;
+  } finally {
+    await previous.close();
+  }
+  const createSeed = seed === "idle upgrade from 0.4.1" ? createPublishedMessages : createProntoMessages;
+  const first = createSeed({ imsgPath: executable, statePath });
+  try {
+    if (first.adoptCheckpoint === undefined) throw new Error("fixture SDK requires checkpoint adoption");
+    expect(await first.adoptCheckpoint({
+      version: 1, databaseGeneration: oldGeneration, rowId: 1, providerMessageId: "synthetic-1",
+    })).toEqual({ status: "adopted" });
+  } finally {
+    await first.close();
+  }
+  const originalStat = fsPromises.stat;
+  const remount = seed === "remount" ? spyOn(fsPromises, "stat").mockImplementation((async (...args: Parameters<typeof originalStat>) => {
+    const metadata = await originalStat(...args);
+    if (metadata !== undefined && String(args[0]) === databasePath) Object.defineProperty(metadata, "dev", {
+      value: typeof metadata.dev === "bigint" ? metadata.dev + 4n : metadata.dev + 4,
+    });
+    return metadata;
+  }) as typeof originalStat) : undefined;
+  try {
+    if (seed !== "adoption") {
+      const upgraded = createProntoMessages({ imsgPath: executable, statePath });
+      const rows: number[] = [];
+      try {
+        await upgraded.subscribe({ onEvent: event => { rows.push(event.message.rowId); } });
+        expect(rows).toEqual([]);
+      } finally {
+        await upgraded.close();
+      }
+    }
+    for (const [head, create] of [
+      [2, createPreviousMessages], [3, createProntoMessages],
+      [4, createPreviousMessages], [5, createProntoMessages],
+    ] as const) {
+      await writeFile(headPath, String(head));
+      const messages = create({ imsgPath: executable, statePath });
+      const rows: number[] = [];
+      try {
+        await messages.subscribe({ onEvent: event => { rows.push(event.message.rowId); } });
+        expect(rows).toEqual([head]);
+      } finally {
+        await messages.close();
+      }
+    }
+  } finally {
+    remount?.mockRestore();
+  }
+});
 
 test("qualification identity survives a remount of the unchanged Messages database", async () => {
   const directory = await fixtureDirectory();

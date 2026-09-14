@@ -3,7 +3,31 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The current candidate is v0.4.1-candidate.2. Candidate.1's live restart qualification
+The current candidate is v0.4.2-candidate.1, pending signed live qualification.
+It preserves checkpoint rollback compatibility with the released 0.2.0 SDK while
+retaining the reboot-stable generation and witnessed, no-rewind recovery. The
+0.4.1 release below is historical evidence, not qualification for this change.
+
+## v0.4.2 scope
+
+The checkpoint's legacy identity remains readable by older SDKs; a validated
+additional field carries the reboot-stable identity for the new SDK. Old writers
+may drop that field, so returning to the new SDK uses the existing fingerprint
+and witness checks. Repeated upgrades retain distinct private recovery backups.
+Public-interface tests exercise the real released 0.2.0 SDK across repeated
+upgrade/rollback cycles, idle upgrade from released 0.4.1, and simulated remount.
+No consumer state repair, cursor rewind, or new public SDK interface is required.
+
+Rollback qualification targets the prior consumer's pre-0.4 SDK, not 0.4.1.
+An exploratory downgrade to released 0.4.1 after repeated upgrades is unsupported:
+that binary's fixed-name migration backup rejects a changed saved checkpoint.
+The new code does not delete or replace that evidence to accommodate it. Upgrading
+from 0.4.1 is covered, including an idle listener. Keep the original consumer
+release as the operational rollback target, not the intermediate 0.4.1 release.
+
+## Historical v0.4.1 qualification
+
+The qualified candidate was v0.4.1-candidate.2. Candidate.1's live restart qualification
 failed and it must not be published. Candidate.2 has passed fresh self-chat context,
 memory, idle-restart and fresh remote-participant checks. The
 v0.4.0 records are historical evidence, not remote qualification for this
@@ -165,6 +189,22 @@ Only this qualification record and its review may differ from candidate.4 at
 the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
 ## Current matrix
+
+| Surface | Qualified version | Evidence | Status |
+| --- | --- | --- | --- |
+| macOS | 26.6.2 | Exact signed candidate installation still required | Pending |
+| Bun | 1.3.14 | 271 local tests passed, one opt-in fixture skipped; frozen install, typecheck and build passed | Pass |
+| Node.js | 22.23.1 | Packed import passed locally; clean signed CI validation pending | Pending |
+| imsg | 0.15.0 | Exact candidate protocol and live read/watch/send pending | Pending |
+| Codex CLI | 0.154.0 | Fresh setup and live turns pending | Pending |
+| Claude Code | 2.1.260 | Adapter fixtures pass; unchanged runtime adapter qualification requires review | Pending |
+| Codex effective local probe | 0.154.0 | Fresh exact-candidate setup probe pending | Pending |
+| Claude effective local probe | 2.1.260 | Unchanged runtime adapter qualification requires review | Pending |
+| Messages Automation | v0.4.2-candidate.1 | Fresh confirmed self-chat send pending | Pending |
+| Self-chat mirror handling | v0.4.2-candidate.1 | Fresh reply, context, memory, restart and no-replay checks pending | Pending |
+| Full remote tagged flow | v0.4.2 | Fresh participant request required; 0.4.1 transport evidence is not carried forward | Pending |
+
+## Historical v0.4.1 matrix
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
