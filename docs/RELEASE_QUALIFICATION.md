@@ -3,7 +3,93 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The current candidate is v0.4.1-candidate.2. Candidate.1's live restart qualification
+The qualified candidate is v0.4.2-candidate.3. Candidate.1 failed restart qualification;
+candidate.2 was disqualified during review before installation. Neither may publish.
+It preserves checkpoint rollback compatibility with the released 0.2.0 SDK while
+retaining the reboot-stable generation and witnessed, no-rewind recovery. The
+0.4.1 release below is historical evidence. The release owner's explicit remote
+test exception is recorded below; it is not a fresh 0.4.2 participant test.
+
+## v0.4.2 scope
+
+Candidate.3 source `63fb67d3a8d2b4bb30c46f32c1cfec7d66852f30`, immutable tag
+`v0.4.2-candidate.3`, passed protected signed CI `34860874276` on 2026-09-14.
+Both architectures passed checksum verification, explicit Developer ID requirements,
+notarization and packed Node/Bun smoke. Installed arm64 SHA-256:
+`0b998f2de47246c53bfa288eb288854b489570a2ae044b4afa5f9cd3b2b7bf7d`.
+Omini's exact signed installation passed setup and its effective Codex probe with
+the existing macOS permissions. Fresh self-chat reply, untagged recent context and
+tagged memory save each delivered exactly once. After 32 untagged fillers, full
+setup restart passed in 89.68 seconds including setup/probe, without extending the
+readiness budget. Fresh recall returned the saved name exactly once.
+
+Replacement during a fifth synthetic request was confirmed while its 25-second
+child was active. Setup drained that request and confirmed its single reply before
+replacement, then returned the listener to ready. All five delivered events each
+have one outbound GUID witnessed once in Messages; no synthetic echo turn appeared
+more than one minute later. Tested content is absent from daemon logs. The installed
+hash still matches, with zero active/ambiguous/parked Pronto events. The original
+consumer's two parked delivery fences are unchanged. All automated sends stayed
+in self-chat. No new participant message is claimed.
+
+Final source may differ from candidate.3 only in the documented test synchronization
+fix and qualification/review documentation, not runtime, dependencies or build inputs.
+The full local suite passed 275 tests with one opt-in fixture skipped; typecheck,
+build, frozen install and offline release validation passed. Claude-specific evidence
+is reviewed carry-forward from the historical matrix: its adapter and invocation are
+unchanged, while Omini selected Codex for all fresh transport qualification.
+
+Candidate.1 source `cb0981308f03997b55ad62fc8a14a9343864b7bc` passed protected
+signed CI `34857911542`, checksum verification, Developer ID requirements and
+notarization. Arm64 SHA-256:
+`253f6457f57fe782c7f31178516da53c07550bccf83051855fecb307a4eab147`.
+Fresh self-chat reply, recent untagged context and tagged memory save each delivered
+exactly once. After 32 untagged fillers, full setup restart exceeded its existing
+readiness window while checkpoint catch-up was still advancing. No request replayed,
+but recall was not sent and this candidate is disqualified. The original consumer
+listener was restored; its two parked delivery records were unchanged.
+
+Read-only provider profiling found 128-chat catalog reads cost 1.48–1.74 seconds
+each, versus 173 ms for a 20-chat page containing the recent test chat. Stats and
+single-row reads cost about 40 ms. The replacement starts with the smaller page
+while retaining every larger fallback and fresh per-message routing checks. It
+does not increase readiness limits, cache authority or alter checkpoints manually.
+
+Candidate.2 source `b53acb9` and build `34860445807` were stopped before live testing:
+review found that a smaller first page must apply only when the message already
+carries the unique provider chat ID. Address-only resolution retains its previous
+larger ambiguity search. A new regression caught duplicate address matches beyond
+the first 20 chats before that restriction, then passed after it. Candidate.3 has
+both the bounded recovery improvement and the preserved ambiguity check.
+
+The checkpoint's legacy identity remains readable by older SDKs; a validated
+additional field carries the reboot-stable identity for the new SDK. Old writers
+may drop that field, so returning to the new SDK uses the existing fingerprint
+and witness checks. Repeated upgrades retain distinct private recovery backups.
+Public-interface tests exercise the real released 0.2.0 SDK across repeated
+upgrade/rollback cycles, idle upgrade from released 0.4.1, and simulated remount.
+No consumer state repair, cursor rewind, or new public SDK interface is required.
+
+On 2026-09-14, the release owner said the approved remote participant was unavailable
+and explicitly approved trusting the previous successful test. This is a one-release
+exception to the fresh-participant step for 0.4.2 only. The carried-forward evidence
+is the exact once-only participant request/reply on 0.4.1-candidate.2, verified on
+2026-09-14. No new 0.4.2 remote test is claimed. Activation, runtime invocation,
+outbound delivery and echo suppression are unchanged; checkpoint persistence does
+change, so the ordinary unchanged-transport exception alone would not suffice.
+Fresh signed 0.4.2 self-chat, context, memory, restart and no-replay checks remain
+required. Signing, automated gates and consumer integration are not waived.
+
+Rollback qualification targets the prior consumer's pre-0.4 SDK, not 0.4.1.
+An exploratory downgrade to released 0.4.1 after repeated upgrades is unsupported:
+that binary's fixed-name migration backup rejects a changed saved checkpoint.
+The new code does not delete or replace that evidence to accommodate it. Upgrading
+from 0.4.1 is covered, including an idle listener. Keep the original consumer
+release as the operational rollback target, not the intermediate 0.4.1 release.
+
+## Historical v0.4.1 qualification
+
+The qualified candidate was v0.4.1-candidate.2. Candidate.1's live restart qualification
 failed and it must not be published. Candidate.2 has passed fresh self-chat context,
 memory, idle-restart and fresh remote-participant checks. The
 v0.4.0 records are historical evidence, not remote qualification for this
@@ -165,6 +251,22 @@ Only this qualification record and its review may differ from candidate.4 at
 the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
 ## Current matrix
+
+| Surface | Qualified version | Evidence | Status |
+| --- | --- | --- | --- |
+| macOS | 26.6.2 | Exact signed candidate.3 installation and replacements on Omini | Pass |
+| Bun | 1.3.14 | 275 local tests passed, one opt-in fixture skipped; frozen install, typecheck and build passed | Pass |
+| Node.js | 22.23.1 | Clean packed import and public-interface smoke passed in signed CI 34860874276 | Pass |
+| imsg | 0.15.0 | Candidate.3 protocol qualification and live read/watch/send passed | Pass |
+| Codex CLI | 0.154.0 | Fresh candidate.3 setup qualification and five live turns passed | Pass |
+| Claude Code | 2.1.260 | Adapter fixtures pass; reviewed unchanged adapter carries historical auth/help evidence | Pass |
+| Codex effective local probe | 0.154.0 | Fresh exact-candidate noninteractive setup probes passed | Pass |
+| Claude effective local probe | 2.1.260 | Reviewed unchanged adapter/invocation carries historical effective probe evidence | Pass |
+| Messages Automation | v0.4.2-candidate.3 | Five once-only self-chat sends; idle and active-turn replacement passed | Pass |
+| Self-chat mirror handling | v0.4.2-candidate.3 | Fresh reply, context, memory beyond 32 fillers/restart, no replay or echo passed | Pass |
+| Full remote tagged flow | v0.4.2 | Owner-approved one-release exception on 2026-09-14 carries 0.4.1-candidate.2 remote evidence; no fresh 0.4.2 remote test claimed | Pass |
+
+## Historical v0.4.1 matrix
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |

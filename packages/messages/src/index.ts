@@ -16,6 +16,7 @@ import {
 } from "./internal/normalize.js";
 import {
   databaseGeneration,
+  databaseGenerations,
   legacyDatabaseGeneration,
   compatibleOldDatabaseGeneration,
 } from "./internal/generation.js";
@@ -141,6 +142,12 @@ class ProntoMessagesClient implements ProntoMessages {
     this.#state = input.statePath === undefined
       ? new MemoryCheckpointStore()
       : new ProviderStateStore(input.statePath, {
+        persistedGeneration: async (generation) => {
+          if (this.#databasePath === undefined) throw new Error("messages_database_generation_unavailable");
+          const observed = await databaseGenerations(this.#databasePath);
+          if (observed.current !== generation) throw new Error("messages_database_generation_changed");
+          return observed.rollback;
+        },
         ...(input.legacyUnscopedCursor === undefined
           ? {}
           : { legacyUnscopedCursor: input.legacyUnscopedCursor }),
@@ -814,7 +821,10 @@ class ProntoMessagesClient implements ProntoMessages {
     readonly conversationId: string;
     readonly timeoutMs?: number;
   }): Promise<Record<string, unknown> | null> {
-    for (const limit of CHAT_CATALOG_LIMITS) {
+    // Provider events already carry a unique chat ID. Resolve those from a small
+    // recent page first, but retain the address-only ambiguity search unchanged.
+    const limits = input.chatId === undefined ? CHAT_CATALOG_LIMITS : [20, ...CHAT_CATALOG_LIMITS];
+    for (const limit of limits) {
       const response = record(await this.#rpc.request(
         "chats.list",
         { limit },
