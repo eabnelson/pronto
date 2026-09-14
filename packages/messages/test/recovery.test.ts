@@ -56,6 +56,57 @@ function checkpointWitness(rowId = 40, providerMessageId = "checkpoint-guid") {
   };
 }
 
+test("a busy recent conversation catches up within its budget despite expensive catalog reads", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const statePath = join(directory, "provider-state.json");
+  await writeFile(databasePath, "synthetic routing latency fixture");
+  const occurredAt = new Date().toISOString();
+  const executable = await executableWithSource(directory, rpcLoop(`
+    let result = { ok: true };
+    if (request.method === "initialize") result = { protocol_version: 1, version: "0.15.0",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"] };
+    if (request.method === "messages.after") {
+      const messages = Array.from({ length: 17 }, (_, index) => ({
+        id: index + 1, guid: "synthetic-" + (index + 1), chat_id: 42,
+        chat_guid: "iMessage;-;synthetic", is_group: false, participants: ["guest@example.com"],
+        created_at: ${JSON.stringify(occurredAt)}, is_from_me: true, service: "iMessage", text: "synthetic request",
+      })).filter(row => row.id > request.params.since_rowid).slice(0, request.params.limit);
+      result = { messages, has_more: false, next_rowid: messages.at(-1)?.id ?? request.params.since_rowid };
+    }
+    if (request.method === "messages.stats") result = { sent_messages: 1, chats: [{ chat_id: 42, service: "iMessage" }] };
+    if (request.method === "chats.list") {
+      // The real provider's catalog cost grows with the requested page size.
+      await Bun.sleep(request.params.limit * 2);
+      result = { chats: [{ id: 42, guid: "iMessage;-;synthetic", is_group: false,
+        account_id: "synthetic-account", account_login: "owner@example.com",
+        last_addressed_handle: "owner@example.com", service: "iMessage" }] };
+    }
+    if (request.method === "watch.subscribe") result = { subscription: 1 };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+  `));
+  const client = createProntoMessages({ imsgPath: executable, statePath, recoveryLimits: { maxDurationMs: 2_000 } });
+  const rows: number[] = [];
+  const outcomes: MessagesRecoveryOutcome[] = [];
+  try {
+    if (client.adoptCheckpoint === undefined) throw new Error("checkpoint adoption required");
+    expect(await client.adoptCheckpoint({ version: 1,
+      databaseGeneration: (await client.qualify()).databaseGeneration,
+      rowId: 1, providerMessageId: "synthetic-1",
+    })).toEqual({ status: "adopted" });
+    await client.subscribe({
+      onEvent: event => {
+        expect(event.conversationFacts.routing?.accountId).toBe("synthetic-account");
+        rows.push(event.message.rowId);
+      },
+      onRecovery: outcome => { outcomes.push(outcome); },
+    });
+    expect(rows).toEqual(Array.from({ length: 16 }, (_, index) => index + 2));
+    expect(outcomes).not.toContainEqual(expect.objectContaining({ reason: "duration-limit" }));
+  } finally { await client.close(); }
+}, 15_000);
+
 test.each(["adoption", "idle upgrade from 0.4.1", "remount"])("the released previous SDK can resume after upgrade and upgrade again without replay (%s)", async (seed) => {
   const directory = await fixtureDirectory();
   const databasePath = join(directory, "chat.db");

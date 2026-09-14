@@ -3,12 +3,30 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The current candidate is v0.4.2-candidate.1, pending signed live qualification.
+The next candidate is v0.4.2-candidate.2. Candidate.1 failed restart qualification
+and must not be published.
 It preserves checkpoint rollback compatibility with the released 0.2.0 SDK while
 retaining the reboot-stable generation and witnessed, no-rewind recovery. The
-0.4.1 release below is historical evidence, not qualification for this change.
+0.4.1 release below is historical evidence. The release owner's explicit remote
+test exception is recorded below; it is not a fresh 0.4.2 participant test.
 
 ## v0.4.2 scope
+
+Candidate.1 source `cb0981308f03997b55ad62fc8a14a9343864b7bc` passed protected
+signed CI `34857911542`, checksum verification, Developer ID requirements and
+notarization. Arm64 SHA-256:
+`253f6457f57fe782c7f31178516da53c07550bccf83051855fecb307a4eab147`.
+Fresh self-chat reply, recent untagged context and tagged memory save each delivered
+exactly once. After 32 untagged fillers, full setup restart exceeded its existing
+readiness window while checkpoint catch-up was still advancing. No request replayed,
+but recall was not sent and this candidate is disqualified. The original consumer
+listener was restored; its two parked delivery records were unchanged.
+
+Read-only provider profiling found 128-chat catalog reads cost 1.48–1.74 seconds
+each, versus 173 ms for a 20-chat page containing the recent test chat. Stats and
+single-row reads cost about 40 ms. The replacement starts with the smaller page
+while retaining every larger fallback and fresh per-message routing checks. It
+does not increase readiness limits, cache authority or alter checkpoints manually.
 
 The checkpoint's legacy identity remains readable by older SDKs; a validated
 additional field carries the reboot-stable identity for the new SDK. Old writers
@@ -17,6 +35,16 @@ and witness checks. Repeated upgrades retain distinct private recovery backups.
 Public-interface tests exercise the real released 0.2.0 SDK across repeated
 upgrade/rollback cycles, idle upgrade from released 0.4.1, and simulated remount.
 No consumer state repair, cursor rewind, or new public SDK interface is required.
+
+On 2026-09-14, the release owner said the approved remote participant was unavailable
+and explicitly approved trusting the previous successful test. This is a one-release
+exception to the fresh-participant step for 0.4.2 only. The carried-forward evidence
+is the exact once-only participant request/reply on 0.4.1-candidate.2, verified on
+2026-09-14. No new 0.4.2 remote test is claimed. Activation, runtime invocation,
+outbound delivery and echo suppression are unchanged; checkpoint persistence does
+change, so the ordinary unchanged-transport exception alone would not suffice.
+Fresh signed 0.4.2 self-chat, context, memory, restart and no-replay checks remain
+required. Signing, automated gates and consumer integration are not waived.
 
 Rollback qualification targets the prior consumer's pre-0.4 SDK, not 0.4.1.
 An exploratory downgrade to released 0.4.1 after repeated upgrades is unsupported:
@@ -193,16 +221,16 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
 | macOS | 26.6.2 | Exact signed candidate installation still required | Pending |
-| Bun | 1.3.14 | 271 local tests passed, one opt-in fixture skipped; frozen install, typecheck and build passed | Pass |
+| Bun | 1.3.14 | 274 local tests passed, one opt-in fixture skipped; frozen install, typecheck and build passed | Pass |
 | Node.js | 22.23.1 | Packed import passed locally; clean signed CI validation pending | Pending |
 | imsg | 0.15.0 | Exact candidate protocol and live read/watch/send pending | Pending |
 | Codex CLI | 0.154.0 | Fresh setup and live turns pending | Pending |
 | Claude Code | 2.1.260 | Adapter fixtures pass; unchanged runtime adapter qualification requires review | Pending |
 | Codex effective local probe | 0.154.0 | Fresh exact-candidate setup probe pending | Pending |
 | Claude effective local probe | 2.1.260 | Unchanged runtime adapter qualification requires review | Pending |
-| Messages Automation | v0.4.2-candidate.1 | Fresh confirmed self-chat send pending | Pending |
-| Self-chat mirror handling | v0.4.2-candidate.1 | Fresh reply, context, memory, restart and no-replay checks pending | Pending |
-| Full remote tagged flow | v0.4.2 | Fresh participant request required; 0.4.1 transport evidence is not carried forward | Pending |
+| Messages Automation | v0.4.2-candidate.2 | Fresh confirmed self-chat send pending | Pending |
+| Self-chat mirror handling | v0.4.2-candidate.2 | Fresh reply, context, memory, restart and no-replay checks pending | Pending |
+| Full remote tagged flow | v0.4.2 | Owner-approved one-release exception on 2026-09-14 carries 0.4.1-candidate.2 remote evidence; no fresh 0.4.2 remote test claimed | Pass |
 
 ## Historical v0.4.1 matrix
 

@@ -71,7 +71,9 @@ export type {
   ResolvedConversation,
 } from "./types.js";
 
-const CHAT_CATALOG_LIMITS = [128, 512, 2_048, 4_096] as const;
+// Most observed messages belong to recent chats. Keep each lookup fresh without
+// paying for a large catalog on every recovery row; older chats retain fallbacks.
+const CHAT_CATALOG_LIMITS = [20, 128, 512, 2_048, 4_096] as const;
 const MAX_PENDING_NOTIFICATIONS = 256;
 
 function safeProviderCoordinate(value: unknown): value is string {

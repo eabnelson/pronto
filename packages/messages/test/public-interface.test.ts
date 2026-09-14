@@ -13,6 +13,7 @@ afterEach(async () => {
 });
 
 interface TranscriptScenario {
+  readonly catalogPosition?: number;
   readonly chatGuid?: string;
   readonly chatIsGroup?: boolean;
   readonly event: Record<string, unknown>;
@@ -70,6 +71,14 @@ for await (const chunk of Bun.stdin.stream()) {
           service: "iMessage",
         }],
       };
+      if (scenario.catalogPosition !== undefined) {
+        result.chats = [
+          ...Array.from({ length: scenario.catalogPosition }, (_, index) => ({
+            id: 1000 + index, guid: "iMessage;-;unrelated-" + index,
+          })),
+          ...result.chats,
+        ].slice(0, request.params.limit);
+      }
     } else if (request.method === "messages.history") {
       if (scenario.replaceDatabaseDuringHistory === true) {
         const replacement = scenario.databasePath + ".replacement";
@@ -147,6 +156,17 @@ const inboundEvent = {
   service: "iMessage",
   text: "hello from Messages",
 };
+
+test.each([30, 700])("preserves exact routing for a conversation outside the recent catalog (%s)", async (catalogPosition) => {
+  const messages = await transcriptClient({ event: inboundEvent, sentMessages: 3, catalogPosition });
+  try {
+    const event = await nextEvent(messages);
+    expect(event.conversationFacts.routing).toMatchObject({
+      accountId: "E:owner@example.com",
+      conversationId: "iMessage;-;+15550000000",
+    });
+  } finally { await messages.close(); }
+});
 
 test("normalizes one imsg 0.15 transcript event and replies to its exact conversation", async () => {
   const messages = await transcriptClient({

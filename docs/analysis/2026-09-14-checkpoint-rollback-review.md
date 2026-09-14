@@ -30,10 +30,28 @@ fixed-name backup. An exploratory real-reader test demonstrated this limitation.
 Upgrading from 0.4.1 is supported; use the original pre-0.4 consumer as rollback.
 The compatibility contract does not claim every historical SDK is rollback-safe.
 
-Open gates: exact-candidate signed CI and fresh owner-authorized self/participant
-qualification; then immutable publication and the consumer's original unchanged
-rollback regression, complete suite and signed rollout. Local passing tests do not
-qualify those gates. Historical 0.4.1 live evidence is not reused for 0.4.2.
+Candidate.1 passed signed CI but failed live restart after 32 untagged fillers.
+The saved checkpoint advanced without replay but exceeded installer readiness.
+Read-only profiling identified repeated 128-chat catalogs at 1.48–1.74 seconds per
+call, compared with 173 ms for a 20-chat page containing the recent self-chat.
+Stats and single-row reads were approximately 40 ms. The fix adds the provider's
+default 20-chat first page to the existing bounded fallback sequence. It caches no
+routing or authority and retains exact account/conversation matching. A public
+subscribe regression reproduced incomplete catch-up (7/16 rows), then recovered all
+16 inside the same budget. Public subscription fixtures preserve older-chat routing
+beyond both the first and second catalog pages. No installer deadline was increased.
+
+The provider's [v0.15.0 RPC contract](https://github.com/openclaw/imsg/blob/v0.15.0/docs/rpc.md#chatslist)
+supports the default-sized list plus a positive limit; no undocumented selector or
+new provider release is required. Re-review found no outstanding Standards or Spec
+implementation findings. Candidate.1 remains disqualified; the new source needs an
+immutable candidate.2 and fresh signed self-chat/restart qualification.
+
+The owner explicitly approved carrying forward the prior Christina test because
+that participant is unavailable. RELEASE_QUALIFICATION.md records the one-release
+0.4.2 exception, not a fresh remote test. Automated/signing and fresh self-chat,
+context, memory and restart checks remain mandatory, followed by immutable
+publication and the consumer's unchanged rollback regression and signed rollout.
 
 Summary: Standards 0 outstanding findings. Spec implementation passes its local
 contract; signed/live and consumer release gates remain open.
