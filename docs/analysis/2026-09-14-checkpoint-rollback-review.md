@@ -59,7 +59,10 @@ context, memory and restart checks remain mandatory, followed by immutable
 publication and the consumer's unchanged rollback regression and signed rollout.
 
 Summary: Standards 0 outstanding findings. Spec implementation passes its local
-contract; signed/live and consumer release gates remain open.
+contract. Candidate.3 subsequently passed signed CI and all fresh self-chat,
+context, memory, restart and active-turn replacement checks; see the qualification
+record. The explicitly waived fresh-participant step is recorded honestly. Public
+publication and the consumer's exact-package integration/signed rollout remain open.
 
 ## Test synchronization follow-up
 

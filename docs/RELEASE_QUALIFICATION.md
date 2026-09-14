@@ -3,7 +3,7 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The next candidate is v0.4.2-candidate.3. Candidate.1 failed restart qualification;
+The qualified candidate is v0.4.2-candidate.3. Candidate.1 failed restart qualification;
 candidate.2 was disqualified during review before installation. Neither may publish.
 It preserves checkpoint rollback compatibility with the released 0.2.0 SDK while
 retaining the reboot-stable generation and witnessed, no-rewind recovery. The
@@ -11,6 +11,33 @@ retaining the reboot-stable generation and witnessed, no-rewind recovery. The
 test exception is recorded below; it is not a fresh 0.4.2 participant test.
 
 ## v0.4.2 scope
+
+Candidate.3 source `63fb67d3a8d2b4bb30c46f32c1cfec7d66852f30`, immutable tag
+`v0.4.2-candidate.3`, passed protected signed CI `34860874276` on 2026-09-14.
+Both architectures passed checksum verification, explicit Developer ID requirements,
+notarization and packed Node/Bun smoke. Installed arm64 SHA-256:
+`0b998f2de47246c53bfa288eb288854b489570a2ae044b4afa5f9cd3b2b7bf7d`.
+Omini's exact signed installation passed setup and its effective Codex probe with
+the existing macOS permissions. Fresh self-chat reply, untagged recent context and
+tagged memory save each delivered exactly once. After 32 untagged fillers, full
+setup restart passed in 89.68 seconds including setup/probe, without extending the
+readiness budget. Fresh recall returned the saved name exactly once.
+
+Replacement during a fifth synthetic request was confirmed while its 25-second
+child was active. Setup drained that request and confirmed its single reply before
+replacement, then returned the listener to ready. All five delivered events each
+have one outbound GUID witnessed once in Messages; no synthetic echo turn appeared
+more than one minute later. Tested content is absent from daemon logs. The installed
+hash still matches, with zero active/ambiguous/parked Pronto events. The original
+consumer's two parked delivery fences are unchanged. All automated sends stayed
+in self-chat. No new participant message is claimed.
+
+Final source may differ from candidate.3 only in the documented test synchronization
+fix and qualification/review documentation, not runtime, dependencies or build inputs.
+The full local suite passed 275 tests with one opt-in fixture skipped; typecheck,
+build, frozen install and offline release validation passed. Claude-specific evidence
+is reviewed carry-forward from the historical matrix: its adapter and invocation are
+unchanged, while Omini selected Codex for all fresh transport qualification.
 
 Candidate.1 source `cb0981308f03997b55ad62fc8a14a9343864b7bc` passed protected
 signed CI `34857911542`, checksum verification, Developer ID requirements and
@@ -227,16 +254,16 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
-| macOS | 26.6.2 | Exact signed candidate installation still required | Pending |
+| macOS | 26.6.2 | Exact signed candidate.3 installation and replacements on Omini | Pass |
 | Bun | 1.3.14 | 275 local tests passed, one opt-in fixture skipped; frozen install, typecheck and build passed | Pass |
-| Node.js | 22.23.1 | Packed import passed locally; clean signed CI validation pending | Pending |
-| imsg | 0.15.0 | Exact candidate protocol and live read/watch/send pending | Pending |
-| Codex CLI | 0.154.0 | Fresh setup and live turns pending | Pending |
-| Claude Code | 2.1.260 | Adapter fixtures pass; unchanged runtime adapter qualification requires review | Pending |
-| Codex effective local probe | 0.154.0 | Fresh exact-candidate setup probe pending | Pending |
-| Claude effective local probe | 2.1.260 | Unchanged runtime adapter qualification requires review | Pending |
-| Messages Automation | v0.4.2-candidate.3 | Fresh confirmed self-chat send pending | Pending |
-| Self-chat mirror handling | v0.4.2-candidate.3 | Fresh reply, context, memory, restart and no-replay checks pending | Pending |
+| Node.js | 22.23.1 | Clean packed import and public-interface smoke passed in signed CI 34860874276 | Pass |
+| imsg | 0.15.0 | Candidate.3 protocol qualification and live read/watch/send passed | Pass |
+| Codex CLI | 0.154.0 | Fresh candidate.3 setup qualification and five live turns passed | Pass |
+| Claude Code | 2.1.260 | Adapter fixtures pass; reviewed unchanged adapter carries historical auth/help evidence | Pass |
+| Codex effective local probe | 0.154.0 | Fresh exact-candidate noninteractive setup probes passed | Pass |
+| Claude effective local probe | 2.1.260 | Reviewed unchanged adapter/invocation carries historical effective probe evidence | Pass |
+| Messages Automation | v0.4.2-candidate.3 | Five once-only self-chat sends; idle and active-turn replacement passed | Pass |
+| Self-chat mirror handling | v0.4.2-candidate.3 | Fresh reply, context, memory beyond 32 fillers/restart, no replay or echo passed | Pass |
 | Full remote tagged flow | v0.4.2 | Owner-approved one-release exception on 2026-09-14 carries 0.4.1-candidate.2 remote evidence; no fresh 0.4.2 remote test claimed | Pass |
 
 ## Historical v0.4.1 matrix
