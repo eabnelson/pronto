@@ -52,7 +52,7 @@ Candidate.2's build was cancelled and it is not qualified. Re-review finds no
 outstanding Standards or Spec implementation issues. Candidate.3 needs fresh signed
 self-chat/restart qualification; neither earlier candidate may publish.
 
-The owner explicitly approved carrying forward the prior Christina test because
+The owner explicitly approved carrying forward the prior participant test because
 that participant is unavailable. RELEASE_QUALIFICATION.md records the one-release
 0.4.2 exception, not a fresh remote test. Automated/signing and fresh self-chat,
 context, memory and restart checks remain mandatory, followed by immutable
@@ -60,3 +60,14 @@ publication and the consumer's unchanged rollback regression and signed rollout.
 
 Summary: Standards 0 outstanding findings. Spec implementation passes its local
 contract; signed/live and consumer release gates remain open.
+
+## Test synchronization follow-up
+
+One branch CI run exposed an existing recovery-test race: checkpoint row 2 was
+durable while replacement-watch diagnostics were still `starting`. A 100 ms provider
+subscription delay reproduced it locally. The test now awaits both checkpoint and
+public `ready` diagnostics within its original four-second budget, retaining every
+delivery-order and state assertion. The delayed-provider test and all 275 tests pass.
+This is a test-only change after candidate.3 (`63fb67d`); no runtime, build input,
+dependency or installer change is qualified by that follow-up. Final release may
+differ from candidate.3 only in tests and qualification/review documentation.

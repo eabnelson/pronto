@@ -1346,6 +1346,7 @@ ${rpcLoop(`
     } else if (request.method === "messages.stats") result = { chats: [{ chat_id: 42, service: "iMessage" }], sent_messages: 1 };
     else if (request.method === "watch.subscribe") {
       subscriptions += 1;
+      if (subscriptions > 1) await Bun.sleep(100);
       result = { subscription: subscriptions };
     } else result = { ok: true };
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
@@ -1369,7 +1370,9 @@ ${rpcLoop(`
   const deadline = Date.now() + 4_000;
   let checkpoint = await new ProviderStateStore(statePath)
     .checkpoint(await databaseGeneration(databasePath));
-  while (checkpoint?.rowId !== 2 && Date.now() < deadline) {
+  // Durable delivery can finish before the replacement watch becomes ready.
+  // Await both observable outcomes instead of racing the final status assertion.
+  while ((checkpoint?.rowId !== 2 || messages.diagnostics().state !== "ready") && Date.now() < deadline) {
     await Bun.sleep(20);
     checkpoint = await new ProviderStateStore(statePath)
       .checkpoint(await databaseGeneration(databasePath));
