@@ -43,9 +43,14 @@ beyond both the first and second catalog pages. No installer deadline was increa
 
 The provider's [v0.15.0 RPC contract](https://github.com/openclaw/imsg/blob/v0.15.0/docs/rpc.md#chatslist)
 supports the default-sized list plus a positive limit; no undocumented selector or
-new provider release is required. Re-review found no outstanding Standards or Spec
-implementation findings. Candidate.1 remains disqualified; the new source needs an
-immutable candidate.2 and fresh signed self-chat/restart qualification.
+new provider release is required. Review caught one additional Spec issue before
+candidate.2 installation: reducing the first page for address-only resolution could
+miss a duplicate match previously visible in the 128-chat page. A public regression
+reproduced the incorrect reference, then passed when the fast path was restricted
+to provider events with an exact chat ID. Address-only search is unchanged.
+Candidate.2's build was cancelled and it is not qualified. Re-review finds no
+outstanding Standards or Spec implementation issues. Candidate.3 needs fresh signed
+self-chat/restart qualification; neither earlier candidate may publish.
 
 The owner explicitly approved carrying forward the prior Christina test because
 that participant is unavailable. RELEASE_QUALIFICATION.md records the one-release

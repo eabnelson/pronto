@@ -71,9 +71,7 @@ export type {
   ResolvedConversation,
 } from "./types.js";
 
-// Most observed messages belong to recent chats. Keep each lookup fresh without
-// paying for a large catalog on every recovery row; older chats retain fallbacks.
-const CHAT_CATALOG_LIMITS = [20, 128, 512, 2_048, 4_096] as const;
+const CHAT_CATALOG_LIMITS = [128, 512, 2_048, 4_096] as const;
 const MAX_PENDING_NOTIFICATIONS = 256;
 
 function safeProviderCoordinate(value: unknown): value is string {
@@ -823,7 +821,10 @@ class ProntoMessagesClient implements ProntoMessages {
     readonly conversationId: string;
     readonly timeoutMs?: number;
   }): Promise<Record<string, unknown> | null> {
-    for (const limit of CHAT_CATALOG_LIMITS) {
+    // Provider events already carry a unique chat ID. Resolve those from a small
+    // recent page first, but retain the address-only ambiguity search unchanged.
+    const limits = input.chatId === undefined ? CHAT_CATALOG_LIMITS : [20, ...CHAT_CATALOG_LIMITS];
+    for (const limit of limits) {
       const response = record(await this.#rpc.request(
         "chats.list",
         { limit },

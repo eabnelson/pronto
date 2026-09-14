@@ -14,6 +14,7 @@ afterEach(async () => {
 
 interface TranscriptScenario {
   readonly catalogPosition?: number;
+  readonly duplicateCatalogMatch?: boolean;
   readonly chatGuid?: string;
   readonly chatIsGroup?: boolean;
   readonly event: Record<string, unknown>;
@@ -77,6 +78,15 @@ for await (const chunk of Bun.stdin.stream()) {
             id: 1000 + index, guid: "iMessage;-;unrelated-" + index,
           })),
           ...result.chats,
+        ].slice(0, request.params.limit);
+      }
+      if (scenario.duplicateCatalogMatch === true) {
+        result.chats = [
+          ...result.chats,
+          ...Array.from({ length: 30 }, (_, index) => ({
+            id: 1000 + index, guid: "iMessage;-;unrelated-" + index,
+          })),
+          { ...result.chats[0], id: 43 },
         ].slice(0, request.params.limit);
       }
     } else if (request.method === "messages.history") {
@@ -256,6 +266,18 @@ test("resolves one exact known conversation and preserves one outbound attachmen
     conversationId: "iMessage;-;+15550000000",
   })).toBeNull();
   await messages.close();
+});
+
+test("known-address resolution refuses duplicate matches beyond the recent catalog page", async () => {
+  const messages = await transcriptClient({
+    event: inboundEvent, sentMessages: 3, duplicateCatalogMatch: true,
+  });
+  try {
+    const resolved = await messages.resolveConversation({
+      accountId: "E:owner@example.com", conversationId: "iMessage;-;+15550000000",
+    });
+    expect(resolved === null).toBeTrue();
+  } finally { await messages.close(); }
 });
 
 test("does not issue a conversation reference across database generations", async () => {

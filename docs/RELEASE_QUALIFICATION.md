@@ -3,8 +3,8 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The next candidate is v0.4.2-candidate.2. Candidate.1 failed restart qualification
-and must not be published.
+The next candidate is v0.4.2-candidate.3. Candidate.1 failed restart qualification;
+candidate.2 was disqualified during review before installation. Neither may publish.
 It preserves checkpoint rollback compatibility with the released 0.2.0 SDK while
 retaining the reboot-stable generation and witnessed, no-rewind recovery. The
 0.4.1 release below is historical evidence. The release owner's explicit remote
@@ -27,6 +27,13 @@ each, versus 173 ms for a 20-chat page containing the recent test chat. Stats an
 single-row reads cost about 40 ms. The replacement starts with the smaller page
 while retaining every larger fallback and fresh per-message routing checks. It
 does not increase readiness limits, cache authority or alter checkpoints manually.
+
+Candidate.2 source `b53acb9` and build `34860445807` were stopped before live testing:
+review found that a smaller first page must apply only when the message already
+carries the unique provider chat ID. Address-only resolution retains its previous
+larger ambiguity search. A new regression caught duplicate address matches beyond
+the first 20 chats before that restriction, then passed after it. Candidate.3 has
+both the bounded recovery improvement and the preserved ambiguity check.
 
 The checkpoint's legacy identity remains readable by older SDKs; a validated
 additional field carries the reboot-stable identity for the new SDK. Old writers
@@ -221,15 +228,15 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
 | macOS | 26.6.2 | Exact signed candidate installation still required | Pending |
-| Bun | 1.3.14 | 274 local tests passed, one opt-in fixture skipped; frozen install, typecheck and build passed | Pass |
+| Bun | 1.3.14 | 275 local tests passed, one opt-in fixture skipped; frozen install, typecheck and build passed | Pass |
 | Node.js | 22.23.1 | Packed import passed locally; clean signed CI validation pending | Pending |
 | imsg | 0.15.0 | Exact candidate protocol and live read/watch/send pending | Pending |
 | Codex CLI | 0.154.0 | Fresh setup and live turns pending | Pending |
 | Claude Code | 2.1.260 | Adapter fixtures pass; unchanged runtime adapter qualification requires review | Pending |
 | Codex effective local probe | 0.154.0 | Fresh exact-candidate setup probe pending | Pending |
 | Claude effective local probe | 2.1.260 | Unchanged runtime adapter qualification requires review | Pending |
-| Messages Automation | v0.4.2-candidate.2 | Fresh confirmed self-chat send pending | Pending |
-| Self-chat mirror handling | v0.4.2-candidate.2 | Fresh reply, context, memory, restart and no-replay checks pending | Pending |
+| Messages Automation | v0.4.2-candidate.3 | Fresh confirmed self-chat send pending | Pending |
+| Self-chat mirror handling | v0.4.2-candidate.3 | Fresh reply, context, memory, restart and no-replay checks pending | Pending |
 | Full remote tagged flow | v0.4.2 | Owner-approved one-release exception on 2026-09-14 carries 0.4.1-candidate.2 remote evidence; no fresh 0.4.2 remote test claimed | Pass |
 
 ## Historical v0.4.1 matrix
