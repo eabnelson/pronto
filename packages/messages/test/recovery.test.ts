@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import * as fsPromises from "node:fs/promises";
 import { createProntoMessages, type MessagesRecoveryOutcome } from "../src/index";
 import { databaseGeneration } from "../src/internal/generation";
 import { ProviderStateStore } from "../src/internal/state";
@@ -52,6 +53,82 @@ function checkpointWitness(rowId = 40, providerMessageId = "checkpoint-guid") {
     rowId,
   };
 }
+
+test("qualification identity survives a remount of the unchanged Messages database", async () => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  await writeFile(databasePath, "synthetic database evidence");
+  const executable = await executableWithSource(directory, rpcLoop(`
+    const result = { protocol_version: 1, version: "0.14.1",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"] };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+  `));
+  const messages = createProntoMessages({ imsgPath: executable });
+  const original = fsPromises.stat;
+  let remount: ReturnType<typeof spyOn> | undefined;
+  try {
+    const before = await messages.qualify();
+    const remountedStat = async (...args: Parameters<typeof original>) => {
+      const metadata = await original(...args);
+      if (metadata !== undefined && String(args[0]) === databasePath) Object.defineProperty(metadata, "dev", {
+        value: typeof metadata.dev === "bigint" ? metadata.dev + 4n : metadata.dev + 4,
+      });
+      return metadata;
+    };
+    remount = spyOn(fsPromises, "stat").mockImplementation(remountedStat as typeof original);
+    expect((await messages.qualify()).databaseGeneration).toBe(before.databaseGeneration);
+  } finally { remount?.mockRestore(); await messages.close(); }
+});
+
+test.each(["matching", "changed", "missing"])("upgrades a mount-sensitive checkpoint only with matching witnesses (%s)", async (evidence) => {
+  const directory = await fixtureDirectory();
+  const databasePath = join(directory, "chat.db");
+  const statePath = join(directory, "provider-state.json");
+  await writeFile(databasePath, "synthetic database evidence");
+  const metadata = await fsPromises.stat(databasePath);
+  // Persisted pre-upgrade format, from a prior mount, independent of the new algorithm.
+  const oldGeneration = createHash("sha256").update(JSON.stringify({
+    birthtimeMs: metadata.birthtimeMs, device: String(metadata.dev - 4),
+    inode: String(metadata.ino), path: await fsPromises.realpath(databasePath),
+  })).digest("base64url");
+  const initial = { version: 2, checkpoint: { version: 1, databaseGeneration: oldGeneration, rowId: 40,
+    ...(evidence === "missing" ? {} : { witnesses: [checkpointWitness()] }) } };
+  await writeFile(statePath, JSON.stringify(initial));
+  const row = { chat_id: 42, created_at: new Date().toISOString(), guid: "pending-41", id: 41,
+    is_from_me: true, service: "iMessage", text: "synthetic pending request" };
+  const executable = await executableWithSource(directory, rpcLoop(`
+    let result = { ok: true };
+    if (request.method === "initialize") result = { protocol_version: 1, version: "0.14.1",
+      database: { path: ${JSON.stringify(databasePath)}, ready: true, features: { routing_metadata: true } },
+      methods: ["initialize", "status", "chats.list", "messages.history", "messages.after", "messages.stats", "watch.subscribe", "watch.unsubscribe", "send"] };
+    if (request.method === "messages.after") {
+      const since = request.params.since_rowid;
+      result = since === 39 ? { has_more: false, messages: [{ id: 40, guid: ${JSON.stringify(evidence === "changed" ? "different-guid" : "checkpoint-guid")} }], next_rowid: 40 }
+        : { has_more: false, messages: since < 41 ? [${JSON.stringify(row)}] : [], next_rowid: Math.max(41, since) };
+    }
+    if (request.method === "messages.stats") result = { chats: [{ chat_id: 42, service: "iMessage" }], sent_messages: 1 };
+    if (request.method === "watch.subscribe") result = { subscription: 1 };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+  `));
+  const messages = createProntoMessages({ imsgPath: executable, statePath });
+  const rows: number[] = [];
+  const outcomes: MessagesRecoveryOutcome[] = [];
+  try {
+    await messages.subscribe({ onEvent: (event) => { rows.push(event.message.rowId); },
+      onRecovery: (outcome) => { outcomes.push(outcome); } });
+    if (evidence === "matching") {
+      expect(rows).toEqual([41]);
+      expect(JSON.parse(await readFile(`${statePath}.generation-v1.backup`, "utf8"))).toEqual(initial);
+      expect((await new ProviderStateStore(statePath).currentCheckpoint())?.databaseGeneration)
+        .toBe((await messages.qualify()).databaseGeneration);
+    } else {
+      expect(rows).toEqual([]);
+      expect(outcomes).toContainEqual(expect.objectContaining({ reason: "database-generation-changed" }));
+      expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual(initial);
+    }
+  } finally { await messages.close(); }
+});
 
 test.each([false, true])("timed-out catch-up resumes its checkpoint or closes promptly (close=%s)", async (closeEarly) => {
   const directory = await fixtureDirectory();

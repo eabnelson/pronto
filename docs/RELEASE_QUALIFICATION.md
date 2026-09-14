@@ -3,8 +3,88 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
-The current matrix qualifies v0.4.0 from candidate.4. Earlier failed candidates
-are retained below as historical evidence, not release qualification.
+The current candidate is v0.4.1-candidate.2. Candidate.1's live restart qualification
+failed and it must not be published. Candidate.2 has passed fresh self-chat context,
+memory, idle-restart and fresh remote-participant checks. The
+v0.4.0 records are historical evidence, not remote qualification for this
+transport-changing release.
+
+The replacement implementation aligns setup with the updater's bounded five-minute
+readiness window. Setup drains existing agents before retaining the executable,
+configuration and launch files; failed qualification restores that pair before
+restarting the previous listener. Delivery journals and provider checkpoints are never
+rewound. Local public setup/cutover regressions cover delayed readiness, bounded failure,
+deleted launch files and writes completing during drain. Candidate.2 passed the
+fresh signed live restart and active-turn replacement checks.
+
+## v0.4.1 scope
+
+Candidate.2 source: `2d785b1d52418e8611a39eb430bd01f843317c7d`, immutable tag
+`v0.4.1-candidate.2`, protected candidate-only CI run `34715754669` (2026-09-12).
+Both binaries passed signing/notarization and explicit Developer ID requirements;
+binary, manifest and SDK checksums passed. Arm64 SHA-256:
+`ca0c776932e7f184b376b3a25c62fe6fc2fad398d396af97d7c6ac5f4313f1a3`.
+Local suite: 268 passed, one opt-in fixture skipped; native drain fixture passed
+separately. Full PR review against `402ee7d` found no outstanding standards or
+implementation findings; fresh live qualification is recorded below.
+
+The exact candidate was installed on Omini (macOS 26.6.2, imsg 0.15.0, Codex
+0.154.0). Effective runtime qualification passed without an agent approval prompt.
+Setup recovered the saved checkpoint through bounded duration-limited passes and
+reached ready; the installed hash still matches. No extra Full Disk Access or
+Automation grant was needed. One fresh synthetic self-chat request has delivered
+exactly once, with one matching Messages outbound GUID. Fresh recent untagged context
+and tagged memory save each passed. After 32 untagged filler messages and a full
+signed setup restart, memory recall returned the correct name exactly once. The
+filler messages invoked no agent and the four completed requests were not replayed.
+Tested content was absent from daemon logs. Setup then drained a fifth synthetic
+request, including its 25-second child command, and confirmed exactly one reply
+before replacement; the restored listener returned to ready. All five outbound GUIDs
+were witnessed exactly once in Messages, without a synthetic echo turn more than
+one minute later. On 2026-09-14 the owner reported the approved remote participant
+sent the fresh candidate.2 test. Read-only journal and Messages evidence confirmed
+an incoming participant request (not a self-chat/outgoing mirror), the exact requested
+synthetic response, and exactly one outbound GUID in that same conversation. Tested
+content remained absent from logs; the installed checksum still matches candidate.2.
+No automated test message was sent to that participant. Candidate.1 evidence is not
+reused. Only qualification documentation may differ from candidate.2 at v0.4.1;
+no runtime change is qualified by this record.
+
+Candidate.1 source: `460b38975556f312c624e09eb2e9aed3b52e0b03`, immutable tag
+`v0.4.1-candidate.1`, protected candidate-only CI run `34713722441` (2026-09-12).
+Both signed binaries, candidate manifest and SDK package passed SHA-256 checks;
+both binaries passed the explicit `dev.pronto.cli` Developer ID requirement for
+team `9YCNUWK84C`. CI signing, notarization and signed artifact smoke passed.
+Arm64 SHA-256: `9614df3dc11e682243a5f6f52b77961b9f529399f2861399ddd1ca200c322dfe`.
+Full local suite: 266 passed, one opt-in native fixture skipped; that launchd drain
+fixture passed separately. PR CI and CodeQL passed. No public release or npm
+publication occurred. No fresh live row below is qualified by these automated checks.
+
+Candidate.1 live checks on 2026-09-12 used macOS 26.6.2, imsg 0.15.0 and Codex
+0.154.0. After owner-granted Full Disk Access and the Messages Automation approval,
+the installed background listener was ready. Fresh self-chat reply, untagged recent
+context and tagged memory save each produced one confirmed outbound GUID, witnessed
+once in Messages. More than one minute later there was no echo turn. All 32 untagged
+synthetic filler messages produced no agent reply. Tested content was absent from logs.
+
+Restart through setup then failed: the restored daemon was still `starting` when
+setup's approximately ten-second readiness budget expired. Provider recovery logs
+reported duration-limited progress (7 then 6 rows). Setup subsequently failed to
+restore its previous listener with launchctl bootstrap error 5. The exact signed
+candidate is therefore disqualified; memory recall after restart was not sent.
+Regression work must cover both the readiness budget and rollback's retained launch
+configuration. No participant-originated test has been run; the owner was told to hold
+that test. The pre-test consumer listener was restored and its two existing ambiguous
+delivery fences were unchanged. No messages, credentials or checkpoints were reset.
+
+History and intake share witnessed self-chat mirror classification. Database
+generation v2 excludes transient mount numbers and normalizes creation-time
+precision. An older checkpoint is upgraded only when its exact digest can be
+reproduced with the current non-mount fields (bounded to nearby mount numbers)
+and saved message witnesses match. Upgrade writes a private backup and preserves
+the cursor and witnesses. Missing, changed or unprovable evidence remains blocked.
+Local remount, compatible-upgrade, changed/missing-witness and replacement tests
+pass; this does not substitute for the owner-run signed candidate checks.
 
 The v0.4.0 candidate.1 passed
 fresh self/remote replies, self-chat recent context, tagged memory beyond 32
@@ -88,19 +168,22 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
-| macOS | 26.5.1 (25F80) | Local build and synthetic suite | Pass |
+| macOS | 26.6.2 | Exact signed candidate.2 live qualification on Omini | Pass |
 | Bun | 1.3.14 | Frozen install, typecheck, tests, compiled build | Pass |
 | Node.js | 22.23.1 | Clean packed `pronto-imessage` import and public-interface smoke | Pass |
-| imsg | 0.14.1 | Fresh CLI version, protocol/capability qualification and live read/watch/send on candidate.4 | Pass |
-| Codex CLI | 0.153.0 | Auth/help inspection and adapter fixtures | Pass |
+| imsg | 0.15.0 | Candidate.2 protocol/capability qualification and live read/watch/send | Pass |
+| Codex CLI | 0.154.0 | Candidate.2 setup auth/interface qualification and live turns | Pass |
 | Claude Code | 2.1.260 | Auth/help inspection and adapter fixtures | Pass |
-| Codex effective local probe | 0.153.0 | Setup noninteractive file-tool probe | Pass |
+| Codex effective local probe | 0.154.0 | Candidate.2 setup noninteractive file-tool probe | Pass |
 | Claude effective local probe | 2.1.260 | Fresh noninteractive file-tool probe; all qualification checks passed | Pass |
-| Messages Automation | v0.4.0-candidate.4 | Same-identity signed install retained FDA; fresh self/remote requests each had one confirmed send on 2026-09-04 | Pass |
-| Self-chat mirror handling | v0.4.0-candidate.4 | Fresh context and active-drain requests each delivered once, with no echo after one minute; idle restart did not replay settled work | Pass |
-| Full remote tagged flow | v0.4.0 | Fresh candidate.4 participant request had exactly one confirmed reply; owner confirmed receipt. Self-chat context, out-of-window memory, idle restart and active replacement passed as recorded above | Pass |
+| Messages Automation | v0.4.1-candidate.2 | Five fresh confirmed sends on Omini; setup restart and active-turn replacement passed | Pass |
+| Self-chat mirror handling | v0.4.1-candidate.2 | Exact candidate self-chat, recent context and memory after 32 fillers/restart passed; no echo | Pass |
+| Full remote tagged flow | v0.4.1 | Fresh candidate.2 participant request and exact once-only reply verified 2026-09-14; no automated remote messages | Pass |
 
-The automated matrix and owner smoke record versions tested on 2026-09-04.
+Candidate.2 automated/self-chat checks ran on 2026-09-12; the fresh remote test ran
+on 2026-09-14. Claude-specific probe evidence is retained from 2026-09-04: its
+runtime adapter and invocation were unchanged; Omini selected Codex for all fresh
+transport qualification. No prior transport or remote-participant proof is carried forward.
 Capability checks, not version
 strings alone, determine whether setup and startup proceed.
 

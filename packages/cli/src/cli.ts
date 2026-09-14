@@ -41,7 +41,7 @@ import { qualifyRuntime } from "./runtimes/qualification";
 import { createRuntimeAdapter } from "./runtimes/factory";
 import { ImsgTransport } from "./imessage/transport";
 import { DeliveryJournal } from "./storage/journal";
-import { LAUNCH_AGENT_LABEL } from "./macos/paths";
+import { LAUNCH_AGENT_LABEL, UPDATER_LAUNCH_AGENT_LABEL } from "./macos/paths";
 import { createProntoMessages } from "pronto-imessage";
 import {
   PRONTO_ATTEMPT_CAPABILITY_ENV,
@@ -166,6 +166,7 @@ async function runSetup(): Promise<number> {
     const bridgeExecutablePath = process.execPath;
     const bridgeExecutableArgs = sourceInvocation ? [resolve(sourceEntry)] : undefined;
     await completeSetupCutover({
+      paths,
       install: async () => {
         await installSetup({
           config,
@@ -237,15 +238,26 @@ async function runSetup(): Promise<number> {
           });
         });
       },
-      removeProntoAgent: () => removeLaunchAgent(paths.launchAgentPath),
+      removeProntoAgent: async () => {
+        await stopLaunchAgentForLabel({ label: UPDATER_LAUNCH_AGENT_LABEL });
+        await removeLaunchAgent(paths.launchAgentPath);
+      },
       suspendProntoAgent: async () => {
-        const state = await launchAgentStateForLabel({ label: LAUNCH_AGENT_LABEL });
-        if (state === "stopped") return async () => undefined;
-        await stopLaunchAgentForLabel({ label: LAUNCH_AGENT_LABEL });
-        return async () => await restoreLaunchAgentForLabel({
-          label: LAUNCH_AGENT_LABEL,
-          plistPath: paths.launchAgentPath,
-        });
+        const suspended: Array<{ label: string; plistPath: string }> = [];
+        const restore = async () => {
+          for (const agent of [...suspended].reverse()) await restoreLaunchAgentForLabel(agent);
+        };
+        try {
+          for (const agent of [
+            { label: UPDATER_LAUNCH_AGENT_LABEL, plistPath: paths.updaterLaunchAgentPath },
+            { label: LAUNCH_AGENT_LABEL, plistPath: paths.launchAgentPath },
+          ]) {
+            if (await launchAgentStateForLabel({ label: agent.label }) === "stopped") continue;
+            await stopLaunchAgentForLabel({ label: agent.label });
+            suspended.push(agent);
+          }
+        } catch (error) { await restore(); throw error; }
+        return restore;
       },
     });
     console.log(setupCompletionMessage(paths, config.tags));

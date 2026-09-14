@@ -6,6 +6,7 @@ import {
 } from "./internal/rpc.js";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
+import { isMirrorPair } from "./internal/mirrors.js";
 import {
   databasePath,
   normalizeConversationFacts,
@@ -16,6 +17,7 @@ import {
 import {
   databaseGeneration,
   legacyDatabaseGeneration,
+  compatibleOldDatabaseGeneration,
 } from "./internal/generation.js";
 import {
   ConversationReferenceExpiredError,
@@ -85,26 +87,6 @@ function messageDateMs(value: string | null): number | null {
 function rawMessageDateMs(value: Record<string, unknown>): number | null {
   const occurredAt = value.created_at ?? value.date;
   return typeof occurredAt === "string" ? messageDateMs(occurredAt) : null;
-}
-
-function isMirrorPair(message: MessagesEvent, original: MessagesEvent): boolean {
-  if (
-    original.conversation.chatId !== message.conversation.chatId ||
-    !original.message.fromMe ||
-    original.message.text !== message.message.text
-  ) {
-    return false;
-  }
-  const rowDistance = message.message.rowId - original.message.rowId;
-  if (rowDistance < 1) return false;
-  const messageTime = messageDateMs(message.message.occurredAt);
-  const originalTime = messageDateMs(original.message.occurredAt);
-  return (
-    messageTime !== null &&
-    originalTime !== null &&
-    messageTime <= originalTime &&
-    originalTime - messageTime <= 1_000
-  );
 }
 
 class RecoveryBoundaryError extends Error {
@@ -212,7 +194,8 @@ class ProntoMessagesClient implements ProntoMessages {
     const path = this.#databasePath;
     if (path === undefined) throw new Error("messages_database_generation_unavailable");
     const compatible = input.databaseGeneration === qualification.databaseGeneration ||
-      input.databaseGeneration === await legacyDatabaseGeneration(path);
+      input.databaseGeneration === await legacyDatabaseGeneration(path) ||
+      await compatibleOldDatabaseGeneration(path, input.databaseGeneration);
     if (!compatible) {
       return { reason: "database-generation-mismatch", status: "rejected" };
     }
@@ -391,7 +374,7 @@ class ProntoMessagesClient implements ProntoMessages {
     };
     const recover = async (boundaryReason?: MessagesRecoveryReason): Promise<void> => {
       if (closed) return;
-      const previous = await this.#state.currentCheckpoint();
+      let previous = await this.#state.currentCheckpoint();
       const qualification = await this.qualify();
       if (closed) return;
       databaseGeneration = qualification.databaseGeneration;
@@ -409,6 +392,15 @@ class ProntoMessagesClient implements ProntoMessages {
         });
         await subscribeProvider(false);
         return;
+      }
+      if (previous !== undefined && previous.databaseGeneration !== databaseGeneration &&
+          this.#databasePath !== undefined && (previous.witnesses?.length ?? 0) > 0 &&
+          await compatibleOldDatabaseGeneration(this.#databasePath, previous.databaseGeneration) &&
+          await this.#checkpointWitnessMatches(previous) &&
+          await this.#refreshGeneration() === databaseGeneration) {
+        if (await this.#state.rebind(previous, databaseGeneration)) {
+          previous = await this.#state.currentCheckpoint();
+        }
       }
       if (
         previous !== undefined &&
