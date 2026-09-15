@@ -5,7 +5,18 @@ import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
-import { addTag, loadConfig, normalizeTags, removeTag, saveConfig } from "./config";
+import {
+  addTag,
+  loadConfig,
+  normalizeConductorConfig,
+  normalizeTags,
+  removeTag,
+  saveConfig,
+  type ConductorAgentKind,
+  type ConductorEffort,
+  type LocalRuntimeKind,
+  type ProntoConfig,
+} from "./config";
 import {
   launchAgentStateForLabel,
   parseLaunchAgentState,
@@ -39,8 +50,14 @@ import { brokerQuery, runMcpStdio } from "./tools/mcp";
 import { ProntoDaemon } from "./core/daemon";
 import { qualifyRuntime } from "./runtimes/qualification";
 import { createRuntimeAdapter } from "./runtimes/factory";
+import { ConductorApiClient } from "./runtimes/conductor";
 import { ImsgTransport } from "./imessage/transport";
 import { DeliveryJournal } from "./storage/journal";
+import { ConductorBindingStore } from "./storage/conductor";
+import {
+  canonicalLinkedWorktree,
+  WorktreeBindingStore,
+} from "./storage/worktree-bindings";
 import { LAUNCH_AGENT_LABEL, UPDATER_LAUNCH_AGENT_LABEL } from "./macos/paths";
 import { createProntoMessages } from "pronto-imessage";
 import {
@@ -59,6 +76,8 @@ Commands:
   status      Show listener health without conversation content
   doctor      Check local capabilities and permissions
   tags        List, add, or remove trigger tags
+  worktree    Bind a chat to a local linked Git worktree
+  conductor   Configure the optional Conductor Cloud tag
   update      Check for or install a verified Pronto update
   stop        Stop the installed listener
   forget      Remove one chat's tagged memory and workspace state
@@ -153,6 +172,7 @@ async function runSetup(): Promise<number> {
       : await createWorkspaceDirectory(selection.path);
     const config = prepareSetupConfig({
       ...(existing === null ? {} : { chatKeySalt: existing.chatKeySalt }),
+      ...(existing?.conductor === undefined ? {} : { conductor: existing.conductor }),
       discovery,
       ...(wantsFallback && fallbackCandidate !== undefined
         ? { fallbackRuntime: fallbackCandidate }
@@ -513,6 +533,14 @@ async function runTags(args: readonly string[]): Promise<number> {
   let normalizedValue: string;
   try {
     normalizedValue = normalizeTags([value])[0]!;
+    if (
+      action === "remove" &&
+      config.conductor?.tag === normalizedValue
+    ) {
+      throw new Error(
+        `Tag ${normalizedValue} is reserved for Conductor; run pronto conductor disable`,
+      );
+    }
     tags = action === "add" ? addTag(config.tags, value) : removeTag(config.tags, value);
   } catch (error) {
     console.error((error as Error).message);
@@ -531,6 +559,345 @@ async function runTags(args: readonly string[]): Promise<number> {
   }
   console.log(`Configured tags: ${tags.join(", ")}`);
   return 0;
+}
+
+function configuredRuntimePath(
+  config: ProntoConfig,
+  agent: LocalRuntimeKind,
+): string | undefined {
+  if (config.primaryRuntime === agent) return config.primaryRuntimePath;
+  if (config.fallbackRuntime === agent) return config.fallbackRuntimePath;
+  return undefined;
+}
+
+function expandedPath(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+  return resolve(path);
+}
+
+async function runWorktree(args: readonly string[]): Promise<number> {
+  const paths = pathsForHome(homedir());
+  let config: ProntoConfig;
+  try {
+    config = await loadConfig(paths.configPath);
+  } catch {
+    console.error("Run pronto setup before binding a worktree.");
+    return 1;
+  }
+
+  const [action = "list", ...rest] = args;
+  if (action === "list") {
+    if (rest.length !== 0) {
+      console.error("Usage: pronto worktree [list|bind <chat-key> <path> --agent <codex|claude>|unbind <chat-key>]");
+      return 2;
+    }
+    const database = openProntoDatabase(paths.databasePath);
+    try {
+      for (const binding of new WorktreeBindingStore(database).list()) {
+        console.log(`${binding.chatKey}\t${binding.agent}\t${binding.worktreePath}`);
+      }
+    } finally {
+      database.close();
+    }
+    return 0;
+  }
+
+  if (action === "unbind") {
+    const [chatKey, extra] = rest;
+    if (
+      chatKey === undefined ||
+      extra !== undefined ||
+      !/^[A-Za-z0-9_-]{8,128}$/u.test(chatKey)
+    ) {
+      console.error("Usage: pronto worktree unbind <chat-key>");
+      return 2;
+    }
+    const database = openProntoDatabase(paths.databasePath);
+    try {
+      if (!new WorktreeBindingStore(database).delete(chatKey)) {
+        console.error(`No worktree binding exists for ${chatKey}.`);
+        return 1;
+      }
+    } finally {
+      database.close();
+    }
+    console.log(`Removed the worktree binding for ${chatKey}.`);
+    return 0;
+  }
+
+  if (action !== "bind") {
+    console.error("Usage: pronto worktree [list|bind <chat-key> <path> --agent <codex|claude>|unbind <chat-key>]");
+    return 2;
+  }
+  const [chatKey, requestedPath, agentFlag, rawAgent, extra] = rest;
+  if (
+    chatKey === undefined ||
+    requestedPath === undefined ||
+    agentFlag !== "--agent" ||
+    (rawAgent !== "codex" && rawAgent !== "claude") ||
+    extra !== undefined ||
+    !/^[A-Za-z0-9_-]{8,128}$/u.test(chatKey)
+  ) {
+    console.error("Usage: pronto worktree bind <chat-key> <path> --agent <codex|claude>");
+    return 2;
+  }
+  const agent: LocalRuntimeKind = rawAgent;
+  if (configuredRuntimePath(config, agent) === undefined) {
+    console.error(
+      `${agent} is not configured in Pronto. Run pronto setup and select it as the primary or fallback runtime first.`,
+    );
+    return 2;
+  }
+
+  let worktreePath: string;
+  try {
+    worktreePath = await canonicalLinkedWorktree(expandedPath(requestedPath));
+  } catch (error) {
+    console.error(`Unable to bind worktree: ${(error as Error).message}`);
+    return 1;
+  }
+  const database = openProntoDatabase(paths.databasePath);
+  try {
+    new WorktreeBindingStore(database).bind({ agent, chatKey, worktreePath });
+  } finally {
+    database.close();
+  }
+  console.log(`Bound ${chatKey} to ${worktreePath} using ${agent}.`);
+  console.log("Local tagged turns now use this worktree; the Conductor app chat remains separate.");
+  return 0;
+}
+
+const CONDUCTOR_DISCLOSURE =
+  "Conductor mode sends the authorized request and bounded conversation context to a " +
+  "Conductor cloud workspace. Conductor stores cloud session inputs and outputs, and the " +
+  "selected coding agent can change files in that cloud workspace. The Conductor tag is " +
+  "still not authentication: any participant in an eligible chat can invoke it.";
+
+function conductorOptions(args: readonly string[]): {
+  readonly flags: Set<string>;
+  readonly values: Map<string, string>;
+} {
+  const booleanFlags = new Set(["--accept-cloud-data", "--fast"]);
+  const allowedValues = new Set([
+    "--agent",
+    "--branch",
+    "--effort",
+    "--model",
+    "--project",
+    "--tag",
+  ]);
+  const flags = new Set<string>();
+  const values = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 1) {
+    const key = args[index]!;
+    if (booleanFlags.has(key)) {
+      if (flags.has(key)) throw new Error(`Duplicate option: ${key}`);
+      flags.add(key);
+      continue;
+    }
+    if (!allowedValues.has(key)) throw new Error(`Unknown option: ${key}`);
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`Missing value for ${key}`);
+    }
+    if (values.has(key)) throw new Error(`Duplicate option: ${key}`);
+    values.set(key, value);
+    index += 1;
+  }
+  return { flags, values };
+}
+
+function conductorApiKey(
+  configured: string | undefined,
+): string | undefined {
+  const environment = process.env.CONDUCTOR_API_KEY?.trim();
+  return environment === undefined || environment === "" ? configured : environment;
+}
+
+async function runConductor(args: readonly string[]): Promise<number> {
+  const paths = pathsForHome(homedir());
+  const [action = "status", ...rest] = args;
+  let config;
+  try {
+    config = await loadConfig(paths.configPath);
+  } catch {
+    console.error("Run pronto setup before configuring Conductor.");
+    return 1;
+  }
+
+  if (action === "projects") {
+    if (rest.length !== 0) {
+      console.error("Usage: pronto conductor projects");
+      return 2;
+    }
+    const apiKey = conductorApiKey(config.conductor?.apiKey);
+    if (apiKey === undefined) {
+      console.error("Set CONDUCTOR_API_KEY before listing Conductor projects.");
+      return 2;
+    }
+    try {
+      for (const project of await new ConductorApiClient(apiKey).listProjects()) {
+        console.log(`${project.id}\t${project.name}\t${project.gitRemote}`);
+      }
+      return 0;
+    } catch (error) {
+      console.error(`Unable to list Conductor projects: ${(error as Error).message}`);
+      return 1;
+    }
+  }
+
+  if (action === "configure") {
+    let options;
+    try {
+      options = conductorOptions(rest);
+    } catch (error) {
+      console.error((error as Error).message);
+      return 2;
+    }
+    if (!options.flags.has("--accept-cloud-data")) {
+      console.error(CONDUCTOR_DISCLOSURE);
+      console.error("Re-run with --accept-cloud-data to confirm this cloud data flow.");
+      return 2;
+    }
+    const projectId = options.values.get("--project") ?? config.conductor?.projectId;
+    const apiKey = conductorApiKey(config.conductor?.apiKey);
+    if (projectId === undefined || apiKey === undefined) {
+      console.error(
+        "Usage: CONDUCTOR_API_KEY=... pronto conductor configure " +
+        "--project <project-id> [--agent codex] [--model <model>] " +
+        "[--tag @conductor] --accept-cloud-data",
+      );
+      return 2;
+    }
+    const agent = (options.values.get("--agent") ??
+      config.conductor?.agent ??
+      "codex") as ConductorAgentKind;
+    const effort = (options.values.get("--effort") ??
+      config.conductor?.effort) as ConductorEffort | undefined;
+    let conductor;
+    try {
+      conductor = normalizeConductorConfig({
+        agent,
+        apiKey,
+        ...(options.values.has("--branch")
+          ? { branch: options.values.get("--branch")! }
+          : config.conductor?.branch === undefined
+            ? {}
+            : { branch: config.conductor.branch }),
+        ...(effort === undefined ? {} : { effort }),
+        ...(options.flags.has("--fast")
+          ? { fastMode: true }
+          : config.conductor?.fastMode === undefined
+            ? {}
+            : { fastMode: config.conductor.fastMode }),
+        ...(options.values.has("--model")
+          ? { model: options.values.get("--model")! }
+          : config.conductor?.model === undefined
+            ? {}
+            : { model: config.conductor.model }),
+        projectId,
+        tag: options.values.get("--tag") ?? config.conductor?.tag ?? "@conductor",
+      });
+      const project = await new ConductorApiClient(apiKey).getProject(projectId);
+      const previousConductorTag = config.conductor?.tag;
+      await saveConfig(paths.configPath, {
+        ...config,
+        conductor,
+        tags: addTag(
+          previousConductorTag === undefined ||
+              previousConductorTag === conductor.tag
+            ? config.tags
+            : config.tags.filter((tag) => tag !== previousConductorTag),
+          conductor.tag,
+        ),
+      });
+      const restarted = await restartLaunchAgent();
+      if (restarted.exitCode !== 0) {
+        console.error(
+          "Conductor was configured, but the listener could not restart. Run pronto setup to repair it.",
+        );
+        return 1;
+      }
+      console.log(
+        `Configured ${conductor.tag} for Conductor project ${project.name} ` +
+        `using ${conductor.agent}${conductor.model === undefined ? "" : `/${conductor.model}`}.`,
+      );
+      return 0;
+    } catch (error) {
+      console.error(`Unable to configure Conductor: ${(error as Error).message}`);
+      return 1;
+    }
+  }
+
+  if (action === "disable") {
+    if (rest.length !== 0) {
+      console.error("Usage: pronto conductor disable");
+      return 2;
+    }
+    if (config.conductor === undefined) {
+      console.log("Conductor is not configured.");
+      return 0;
+    }
+    let tags;
+    try {
+      tags = removeTag(config.tags, config.conductor.tag);
+    } catch (error) {
+      console.error(`${(error as Error).message}. Add another tag before disabling Conductor.`);
+      return 2;
+    }
+    const { conductor: _conductor, ...withoutConductor } = config;
+    await saveConfig(paths.configPath, { ...withoutConductor, tags });
+    const restarted = await restartLaunchAgent();
+    if (restarted.exitCode !== 0) {
+      console.error(
+        "Conductor was disabled, but the listener could not restart. Run pronto setup to repair it.",
+      );
+      return 1;
+    }
+    console.log("Conductor integration disabled.");
+    return 0;
+  }
+
+  if (action === "bindings") {
+    if (rest.length !== 0) {
+      console.error("Usage: pronto conductor bindings");
+      return 2;
+    }
+    const database = openProntoDatabase(paths.databasePath);
+    try {
+      for (const binding of new ConductorBindingStore(database).list()) {
+        console.log(
+          `${binding.chatKey}\t${binding.workspaceName}\t${binding.deepLink}`,
+        );
+      }
+    } finally {
+      database.close();
+    }
+    return 0;
+  }
+
+  if (action === "status") {
+    if (rest.length !== 0) {
+      console.error("Usage: pronto conductor status");
+      return 2;
+    }
+    if (config.conductor === undefined) {
+      console.log("disabled");
+      return 0;
+    }
+    console.log(`tag       ${config.conductor.tag}`);
+    console.log(`project   ${config.conductor.projectId}`);
+    console.log(`agent     ${config.conductor.agent}`);
+    console.log(`model     ${config.conductor.model ?? "default"}`);
+    console.log(`branch    ${config.conductor.branch ?? "default"}`);
+    return 0;
+  }
+
+  console.error(
+    "Usage: pronto conductor [status|projects|configure|bindings|disable]",
+  );
+  return 2;
 }
 
 export async function runCli(args: readonly string[]): Promise<number> {
@@ -561,6 +928,8 @@ export async function runCli(args: readonly string[]): Promise<number> {
   if (command === "doctor") return runDoctor(args.includes("--json"), args.includes("--offline"));
   if (command === "status") return runStatus(args.includes("--json"), args.includes("--chats"));
   if (command === "tags" || command === "tag") return runTags(args.slice(1));
+  if (command === "worktree") return runWorktree(args.slice(1));
+  if (command === "conductor") return runConductor(args.slice(1));
   if (command === "update") return runUpdate(args.slice(1));
   if (command === "stop") {
     const result = await stopLaunchAgent();

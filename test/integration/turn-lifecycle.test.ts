@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ActivatedRequest } from "../../packages/cli/src/activation";
@@ -16,6 +16,7 @@ import { openProntoDatabase } from "../../packages/cli/src/storage/database";
 import { DeliveryJournal } from "../../packages/cli/src/storage/journal";
 import { MemoryStore } from "../../packages/cli/src/storage/memory";
 import { promoteWorkspace, WorkspaceStore } from "../../packages/cli/src/storage/workspaces";
+import { WorktreeBindingStore } from "../../packages/cli/src/storage/worktree-bindings";
 import { ConversationBroker, type CurrentChatSource } from "../../packages/cli/src/tools/broker";
 
 const temporaryDirectories: string[] = [];
@@ -113,13 +114,18 @@ const activation: ActivatedRequest = {
   rowId: 1,
 };
 
-async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
+async function harness(
+  primary: RuntimeAdapter,
+  fallback?: RuntimeAdapter,
+  conductor?: { adapter: RuntimeAdapter; tag: string },
+) {
   const directory = await mkdtemp(join(tmpdir(), "pronto-turn-"));
   temporaryDirectories.push(directory);
   const database = openProntoDatabase(join(directory, "state.sqlite"));
   const journal = new DeliveryJournal(database);
   const memory = new MemoryStore(database);
   const workspaces = new WorkspaceStore(database);
+  const worktreeBindings = new WorktreeBindingStore(database);
   const transport = new FakeTransport();
   const broker = new ConversationBroker(source);
   const processor = new TurnProcessor({
@@ -132,6 +138,21 @@ async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
     transport,
     defaultWorkingDirectory: directory,
     workspaces,
+    worktreeBindings,
+    worktreeRuntimes: {
+      [primary.kind]: new RuntimeChain(primary),
+      ...(fallback === undefined
+        ? {}
+        : { [fallback.kind]: new RuntimeChain(fallback) }),
+    },
+    ...(conductor === undefined
+      ? {}
+      : {
+          conductor: {
+            runtimes: new RuntimeChain(conductor.adapter),
+            tag: conductor.tag,
+          },
+        }),
   });
   const salt = "private-installation-salt";
   const coordinator = new TurnCoordinator(processor, journal, salt);
@@ -144,11 +165,230 @@ async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
     salt,
     transport,
     workspaces,
+    worktreeBindings,
     directory,
   };
 }
 
+async function linkedWorktree(base: string): Promise<string> {
+  const commonDirectory = join(base, "repository", ".git");
+  const gitDirectory = join(commonDirectory, "worktrees", "bound");
+  const worktree = join(base, "bound-worktree");
+  await mkdir(gitDirectory, { recursive: true });
+  await mkdir(worktree);
+  await writeFile(join(gitDirectory, "HEAD"), "ref: refs/heads/bound\n");
+  await writeFile(join(gitDirectory, "commondir"), "../..\n");
+  await writeFile(join(worktree, ".git"), `gitdir: ${gitDirectory}\n`);
+  await writeFile(join(gitDirectory, "gitdir"), `${join(worktree, ".git")}\n`);
+  return await realpath(worktree);
+}
+
 describe("turn lifecycle", () => {
+  test("routes only the configured Conductor tag to the cloud runtime", async () => {
+    const local = new FakeAdapter("codex", {
+      output: { reply: "local reply" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const cloud: RuntimeAdapter = {
+      executablePath: "https://api.conductor.build/v0",
+      kind: "conductor",
+      run: async () => ({
+        output: { reply: "cloud reply" },
+        status: "success",
+        toolActivity: "observed",
+      }),
+    };
+    const h = await harness(local, undefined, {
+      adapter: cloud,
+      tag: "@conductor",
+    });
+    try {
+      h.coordinator.admit({
+        ...activation,
+        activationTag: "@conductor",
+        providerGuid: "IN-CONDUCTOR",
+      });
+      await h.coordinator.idle();
+      expect(h.transport.sends[0]!.text).toBe("Conductor\ncloud reply");
+      expect(local.inputs).toHaveLength(0);
+
+      h.coordinator.admit({
+        ...activation,
+        activationTag: "@helper",
+        providerGuid: "IN-LOCAL",
+      });
+      await h.coordinator.idle();
+      expect(h.transport.sends[1]!.text).toBe("Helper\nlocal reply");
+      expect(local.inputs).toHaveLength(1);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("keeps Conductor turns independent from Mac-local workspace state", async () => {
+    const local = new FakeAdapter("codex", {
+      output: { reply: "local reply" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const cloudInputs: RuntimeInput[] = [];
+    const cloud: RuntimeAdapter = {
+      executablePath: "https://api.conductor.build/v0",
+      kind: "conductor",
+      run: async (input) => {
+        cloudInputs.push(input);
+        return {
+          output: { reply: "cloud reply" },
+          status: "success",
+          toolActivity: "observed",
+        };
+      },
+    };
+    const h = await harness(local, undefined, {
+      adapter: cloud,
+      tag: "@conductor",
+    });
+    const chatKey = chatKeyForId(42, h.salt);
+    const missingDirectory = join(h.directory, "deleted-local-workspace");
+    promoteWorkspace(h.database, {
+      candidates: [missingDirectory],
+      chatKey,
+      workingDirectory: missingDirectory,
+    });
+    try {
+      h.coordinator.admit({
+        ...activation,
+        activationTag: "@conductor",
+        providerGuid: "IN-CONDUCTOR-CLOUD-ONLY",
+        request: `use ${missingDirectory} to fix the cloud build`,
+      });
+      await h.coordinator.idle();
+      expect(h.transport.sends[0]!.text).toBe("Conductor\ncloud reply");
+      expect(local.inputs).toHaveLength(0);
+      expect(cloudInputs).toHaveLength(1);
+      expect(cloudInputs[0]!.capability).toBe("");
+      expect(cloudInputs[0]!.prompt).toContain(
+        "Mac-local folders and Pronto current-chat tools are not available",
+      );
+      expect(cloudInputs[0]!.prompt).not.toContain("TRUSTED PRONTO WORKSPACE STATE");
+      expect(h.workspaces.get(chatKey)).toEqual({
+        activeDirectory: missingDirectory,
+        pendingCandidates: [missingDirectory],
+      });
+    } finally {
+      h.close();
+    }
+  });
+
+  test("routes a bound chat to its selected local agent and linked worktree", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "default reply" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const selected = new FakeAdapter("claude", {
+      output: {
+        reply: "bound reply",
+        workspaceCandidates: ["/should/not/be/persisted"],
+      },
+      status: "success",
+      toolActivity: "observed",
+    });
+    const h = await harness(primary, selected);
+    const chatKey = chatKeyForId(42, h.salt);
+    const worktree = await linkedWorktree(h.directory);
+    const ignoredCandidate = join(h.directory, "ignored-candidate");
+    await mkdir(ignoredCandidate);
+    promoteWorkspace(h.database, {
+      candidates: [ignoredCandidate],
+      chatKey,
+      workingDirectory: h.directory,
+    });
+    h.worktreeBindings.bind({
+      agent: "claude",
+      chatKey,
+      worktreePath: worktree,
+    });
+    try {
+      h.coordinator.admit({
+        ...activation,
+        providerGuid: "IN-BOUND-WORKTREE",
+        request: `use ${ignoredCandidate} and fix the test`,
+      });
+      await h.coordinator.idle();
+      expect(primary.inputs).toHaveLength(0);
+      expect(selected.inputs).toHaveLength(1);
+      expect(selected.inputs[0]!.workingDirectory).toBe(worktree);
+      expect(selected.inputs[0]!.prompt).toContain(
+        "Folder policy: owner-bound linked worktree using claude",
+      );
+      expect(selected.inputs[0]!.prompt).not.toContain(
+        "search for likely existing directories",
+      );
+      expect(h.transport.sends[0]!.text).toBe("Helper\nbound reply");
+      expect(h.workspaces.get(chatKey)).toEqual({
+        activeDirectory: h.directory,
+        pendingCandidates: [ignoredCandidate],
+      });
+    } finally {
+      h.close();
+    }
+  });
+
+  test("fails safely when a bound worktree is no longer available", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "must not run" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const h = await harness(primary);
+    const chatKey = chatKeyForId(42, h.salt);
+    const worktree = await linkedWorktree(h.directory);
+    h.worktreeBindings.bind({ agent: "codex", chatKey, worktreePath: worktree });
+    await rm(worktree, { recursive: true });
+    try {
+      h.coordinator.admit({
+        ...activation,
+        providerGuid: "IN-MISSING-BOUND-WORKTREE",
+      });
+      await h.coordinator.idle();
+      expect(primary.inputs).toHaveLength(0);
+      expect(h.transport.sends[0]!.text).toContain("bound worktree is unavailable");
+    } finally {
+      h.close();
+    }
+  });
+
+  test("does not fall back from the agent selected by a worktree binding", async () => {
+    const primary = new FakeAdapter("codex", {
+      output: { reply: "must not run" },
+      status: "success",
+      toolActivity: "none",
+    });
+    const selected = new FakeAdapter("claude", {
+      reason: "offline",
+      status: "operational-failure",
+      toolActivity: "none",
+    });
+    const h = await harness(primary, selected);
+    const chatKey = chatKeyForId(42, h.salt);
+    const worktree = await linkedWorktree(h.directory);
+    h.worktreeBindings.bind({ agent: "claude", chatKey, worktreePath: worktree });
+    try {
+      h.coordinator.admit({
+        ...activation,
+        providerGuid: "IN-BOUND-NO-FALLBACK",
+      });
+      await h.coordinator.idle();
+      expect(primary.inputs).toHaveLength(0);
+      expect(selected.inputs).toHaveLength(1);
+      expect(h.transport.sends[0]!.text).toBe(`Helper\n${FAILURE_NOTICE}`);
+    } finally {
+      h.close();
+    }
+  });
+
   test("quiescing drains the active turn but preserves unstarted work for restart", async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();

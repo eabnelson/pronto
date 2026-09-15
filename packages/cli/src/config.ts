@@ -2,18 +2,40 @@ import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:f
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 
-export const CONFIG_VERSION = 2 as const;
+export const CONFIG_VERSION = 3 as const;
 export const UNRESTRICTED_TRUST_VERSION = 1 as const;
 export const TAG_PATTERN = /^@[A-Za-z0-9_-]{1,32}$/;
 
-export type RuntimeKind = "codex" | "claude";
+export type LocalRuntimeKind = "codex" | "claude";
+export type RuntimeKind = LocalRuntimeKind | "conductor";
+export type ConductorAgentKind = "acp" | "claude" | "codex" | "cursor";
+export type ConductorEffort =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | "ultra";
+
+export interface ConductorConfig {
+  agent: ConductorAgentKind;
+  apiKey: string;
+  branch?: string;
+  effort?: ConductorEffort;
+  fastMode?: boolean;
+  model?: string;
+  projectId: string;
+  tag: string;
+}
 
 export interface ProntoConfig {
   version: typeof CONFIG_VERSION;
   chatKeySalt: string;
   tags: string[];
-  primaryRuntime: RuntimeKind;
-  fallbackRuntime?: RuntimeKind;
+  primaryRuntime: LocalRuntimeKind;
+  fallbackRuntime?: LocalRuntimeKind;
+  conductor?: ConductorConfig;
   imsgPath: string;
   installedExecutableHash?: string;
   primaryRuntimePath?: string;
@@ -71,12 +93,57 @@ export function createConfig(input: ConfigInput): ProntoConfig {
   if (!isAbsolute(input.workingDirectory)) {
     throw new Error("Working directory must be absolute");
   }
+  const conductor = input.conductor === undefined
+    ? undefined
+    : normalizeConductorConfig(input.conductor);
 
   return {
     ...input,
     chatKeySalt: input.chatKeySalt ?? randomBytes(32).toString("base64url"),
-    tags: normalizeTags(input.tags),
+    ...(conductor === undefined ? {} : { conductor }),
+    tags: normalizeTags([
+      ...input.tags,
+      ...(conductor === undefined ? [] : [conductor.tag]),
+    ]),
     version: CONFIG_VERSION,
+  };
+}
+
+function safeConductorValue(value: string, label: string, maximum = 512): string {
+  const normalized = value.trim();
+  if (
+    normalized.length === 0 ||
+    normalized.length > maximum ||
+    /[\u0000-\u001f\u007f]/u.test(normalized)
+  ) {
+    throw new Error(`Invalid Conductor ${label}`);
+  }
+  return normalized;
+}
+
+export function normalizeConductorConfig(input: ConductorConfig): ConductorConfig {
+  if (!["acp", "claude", "codex", "cursor"].includes(input.agent)) {
+    throw new Error("Invalid Conductor agent");
+  }
+  if (
+    input.effort !== undefined &&
+    !["none", "low", "medium", "high", "xhigh", "max", "ultra"].includes(input.effort)
+  ) {
+    throw new Error("Invalid Conductor effort");
+  }
+  return {
+    agent: input.agent,
+    apiKey: safeConductorValue(input.apiKey, "API key", 4_096),
+    ...(input.branch === undefined
+      ? {}
+      : { branch: safeConductorValue(input.branch, "branch", 1_024) }),
+    ...(input.effort === undefined ? {} : { effort: input.effort }),
+    ...(input.fastMode === undefined ? {} : { fastMode: input.fastMode }),
+    ...(input.model === undefined
+      ? {}
+      : { model: safeConductorValue(input.model, "model", 256) }),
+    projectId: safeConductorValue(input.projectId, "project ID", 256),
+    tag: normalizeTag(input.tag),
   };
 }
 
@@ -130,15 +197,54 @@ export async function saveConfig(path: string, config: ProntoConfig): Promise<vo
   await atomicWritePrivate(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
-function isRuntime(value: unknown): value is RuntimeKind {
+function isRuntime(value: unknown): value is LocalRuntimeKind {
   return value === "codex" || value === "claude";
+}
+
+function isConductorAgent(value: unknown): value is ConductorAgentKind {
+  return value === "acp" || value === "claude" || value === "codex" || value === "cursor";
+}
+
+function isConductorEffort(value: unknown): value is ConductorEffort {
+  return value === "none" || value === "low" || value === "medium" || value === "high" ||
+    value === "xhigh" || value === "max" || value === "ultra";
+}
+
+function conductorConfig(value: unknown): ConductorConfig | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid Conductor configuration");
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    !isConductorAgent(candidate.agent) ||
+    typeof candidate.apiKey !== "string" ||
+    typeof candidate.projectId !== "string" ||
+    typeof candidate.tag !== "string" ||
+    (candidate.branch !== undefined && typeof candidate.branch !== "string") ||
+    (candidate.effort !== undefined && !isConductorEffort(candidate.effort)) ||
+    (candidate.fastMode !== undefined && typeof candidate.fastMode !== "boolean") ||
+    (candidate.model !== undefined && typeof candidate.model !== "string")
+  ) {
+    throw new Error("Invalid Conductor configuration");
+  }
+  return normalizeConductorConfig({
+    agent: candidate.agent,
+    apiKey: candidate.apiKey,
+    ...(candidate.branch === undefined ? {} : { branch: candidate.branch }),
+    ...(candidate.effort === undefined ? {} : { effort: candidate.effort }),
+    ...(candidate.fastMode === undefined ? {} : { fastMode: candidate.fastMode }),
+    ...(candidate.model === undefined ? {} : { model: candidate.model }),
+    projectId: candidate.projectId,
+    tag: candidate.tag,
+  });
 }
 
 export async function loadConfig(path: string): Promise<ProntoConfig> {
   const raw: unknown = JSON.parse(await readFile(path, "utf8"));
   if (raw === null || typeof raw !== "object") throw new Error("Invalid configuration");
   const value = raw as Record<string, unknown>;
-  if (value.version !== 1 && value.version !== CONFIG_VERSION) {
+  if (value.version !== 1 && value.version !== 2 && value.version !== CONFIG_VERSION) {
     throw new Error("Unsupported configuration version");
   }
   if (!isRuntime(value.primaryRuntime)) throw new Error("Invalid primary runtime");
@@ -163,6 +269,9 @@ export async function loadConfig(path: string): Promise<ProntoConfig> {
   }
 
   return createConfig({
+    ...(value.version === CONFIG_VERSION && value.conductor !== undefined
+      ? { conductor: conductorConfig(value.conductor)! }
+      : {}),
     ...(value.fallbackRuntime === undefined
       ? {}
       : { fallbackRuntime: value.fallbackRuntime }),

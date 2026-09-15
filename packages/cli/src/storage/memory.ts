@@ -83,6 +83,8 @@ export class MemoryStore {
       this.database.query("DELETE FROM tagged_exchanges WHERE chat_key = ?").run(chatKey);
       this.database.query("DELETE FROM chat_memory WHERE chat_key = ?").run(chatKey);
       this.database.query("DELETE FROM chat_workspaces WHERE chat_key = ?").run(chatKey);
+      this.database.query("DELETE FROM conductor_bindings WHERE chat_key = ?").run(chatKey);
+      this.database.query("DELETE FROM worktree_bindings WHERE chat_key = ?").run(chatKey);
       this.database
         .query(
           `UPDATE delivery_events

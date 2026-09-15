@@ -14,7 +14,9 @@ export interface RuntimeInput {
   bridgeExecutablePath: string;
   brokerUrl: string;
   capability: string;
+  chatKey?: string;
   prompt: string;
+  requestId?: string;
   workingDirectory: string;
 }
 

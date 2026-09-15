@@ -3,11 +3,13 @@
 [![CI](https://github.com/eabnelson/pronto/actions/workflows/ci.yml/badge.svg)](https://github.com/eabnelson/pronto/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`pronto` is a small, local macOS bridge between Apple Messages and the Codex or
-Claude Code CLI. Create as many tags as you want, such as `@helper`, `@plan`, or
-`@research`. When anyone uses one in an iMessage or RCS chat you have already
-participated in, the bridge gives one bounded, one-shot turn to your chosen
-local agent and sends one plain-text reply.
+`pronto` is a small macOS bridge between Apple Messages and coding agents.
+Ordinary tags such as `@helper`, `@plan`, or `@research` give one bounded,
+one-shot turn to a local Codex or Claude Code CLI. A chat can optionally be
+bound to a local linked Git worktree, including one opened by Conductor, or a
+dedicated Conductor tag can delegate the turn to a persistent Conductor cloud
+workspace. When anyone uses a configured tag in an iMessage or RCS chat you
+have already participated in, Pronto sends one plain-text reply.
 
 Each reply starts with the triggering tag name on its own line, so conversations
 using several tags make it clear which agent identity answered.
@@ -28,9 +30,11 @@ your agent. `pronto` deliberately starts Claude Code and Codex with their approv
 and sandbox checks bypassed, so the agent can read or modify files, run commands,
 use configured tools anywhere your macOS user can access, and send conversation
 material to its model provider. Untagged chat history and attachment content are
-untrusted evidence, but can still influence the model. Only use `pronto` in chats
+untrusted evidence, but can still influence the model. Conductor mode sends the
+authorized request and bounded conversation context to Conductor Cloud, where
+session inputs and outputs are stored. Only use `pronto` in chats
 whose participants you trust, and tell them that tagged and nearby conversation
-material may be processed by your model provider.
+material may be processed by your model provider and, when enabled, Conductor.
 
 The working folder is context, not containment. Project instructions, hooks, and
 MCP servers from a selected folder may also run with unrestricted access. Do not
@@ -170,10 +174,80 @@ the outgoing copy. This requires no identity setting and stores no iMessage
 address. Ordinary one-to-one and group chats still accept tags from every
 participant.
 
+### Optional local worktree binding
+
+You can pin one Messages chat to a linked Git worktree and a specific local
+agent. This is useful for a Conductor workspace because Conductor workspaces are
+ordinary linked Git worktrees on your Mac. It does not require a Conductor API
+key or cloud workspace:
+
+```sh
+PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"
+"$PRONTO" status --chats
+"$PRONTO" worktree bind <opaque-chat-key> \
+  /path/to/conductor/worktree \
+  --agent codex
+```
+
+The agent must already be configured as Pronto's primary or fallback runtime.
+After binding, ordinary tagged turns from that chat run that exact agent in the
+bound worktree; they do not fall back to another runtime or honor requests to
+switch folders. Pronto checks that the path is still a live linked worktree
+before every turn.
+
+Use `pronto worktree list` to inspect bindings and `pronto worktree unbind
+<opaque-chat-key>` to return a chat to its normal per-chat folder. `pronto
+forget <opaque-chat-key>` also removes the binding.
+
+This shares the worktree's files and Git changes with Conductor, not
+Conductor's existing desktop chat. The Pronto-launched agent is a separate
+one-shot session, so do not let it and another agent edit the same worktree at
+the same time.
+
+### Optional Conductor Cloud tag
+
+Conductor integration creates or reuses one cloud workspace per opaque Pronto
+chat key and routing configuration, sends tagged turns to that workspace's
+first active session, waits for its agent reply, and returns the reply to
+Messages. Changing the Conductor project, agent, model, branch, effort, or fast
+mode starts a new binding on the next turn. Other Pronto tags continue to use
+the configured local Codex or Claude Code runtime.
+
+Create a Conductor API key, then list the projects visible to it:
+
+```sh
+export CONDUCTOR_API_KEY="your-owner-private-key"
+PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"
+"$PRONTO" conductor projects
+```
+
+Configure a dedicated tag using one returned project ID:
+
+```sh
+"$PRONTO" conductor configure \
+  --project <project-id> \
+  --agent codex \
+  --model <supported-model-id> \
+  --tag @conductor \
+  --accept-cloud-data
+unset CONDUCTOR_API_KEY
+```
+
+The key is saved in Pronto's owner-only configuration so the LaunchAgent can
+authenticate after the shell environment is gone. Send `@conductor <task>` to
+delegate work. Use `pronto conductor bindings` locally to see opaque chat keys
+and their Conductor deep links, or `pronto conductor disable` to remove the
+cloud tag. `pronto forget <opaque-chat-key>` removes the local binding but does
+not archive or delete its Conductor workspace.
+
+The Conductor API is beta. If Pronto loses a response after submitting work, it
+parks the turn instead of automatically submitting the coding task again.
+
 Each turn automatically includes at most 30 recent messages, 8 confirmed tagged
-exchanges, and one compact summary, all under fixed character budgets. Provider
-sessions are never resumed. Ordinary chat messages, participant rosters,
-attachment metadata, and tool results are not archived by `pronto`.
+exchanges, and one compact summary, all under fixed character budgets. Local
+Codex and Claude sessions are never resumed; a Conductor tag intentionally
+reuses its chat's bound cloud session. Ordinary chat messages, participant
+rosters, attachment metadata, and tool results are not archived by `pronto`.
 
 ## Operations
 
@@ -185,6 +259,11 @@ PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"
 "$PRONTO" tags
 "$PRONTO" tags add @plan
 "$PRONTO" tags remove @plan
+"$PRONTO" worktree list
+"$PRONTO" worktree bind <opaque-chat-key> <linked-worktree-path> --agent codex
+"$PRONTO" worktree unbind <opaque-chat-key>
+"$PRONTO" conductor status
+"$PRONTO" conductor bindings
 "$PRONTO" update --check
 "$PRONTO" update
 "$PRONTO" stop

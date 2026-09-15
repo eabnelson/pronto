@@ -6,7 +6,7 @@ import type {
 } from "./types";
 
 export type ChainedRuntimeResult = RuntimeAttemptResult & {
-  runtime: "codex" | "claude";
+  runtime: RuntimeKind;
 };
 
 export interface RuntimeChainOptions {
@@ -28,7 +28,9 @@ function sameContext(primary: RuntimeInput, fallback: RuntimeInput): boolean {
       JSON.stringify(fallback.bridgeExecutableArgs ?? []) &&
     primary.bridgeExecutablePath === fallback.bridgeExecutablePath &&
     primary.brokerUrl === fallback.brokerUrl &&
+    primary.chatKey === fallback.chatKey &&
     primary.prompt === fallback.prompt &&
+    primary.requestId === fallback.requestId &&
     primary.workingDirectory === fallback.workingDirectory
   );
 }

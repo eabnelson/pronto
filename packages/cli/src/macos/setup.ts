@@ -9,7 +9,8 @@ import {
   loadConfig,
   normalizeTags,
   saveConfig,
-  type RuntimeKind,
+  type ConductorConfig,
+  type LocalRuntimeKind,
   type ProntoConfig,
   UNRESTRICTED_TRUST_VERSION,
 } from "../config";
@@ -44,6 +45,7 @@ export interface WorkspaceSelection {
 
 export interface ExistingSetupDefaults {
   chatKeySalt: string;
+  conductor?: ConductorConfig;
   tags: string[];
   workingDirectory: string;
 }
@@ -88,7 +90,7 @@ export async function loadExistingSetupDefaults(
       tags = ["@s4"];
     } else if (value.version === 1) {
       tags = typeof value.tag === "string" ? normalizeTags([value.tag]) : null;
-    } else if (value.version === 2) {
+    } else if (value.version === 2 || value.version === 3) {
       tags = Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string")
         ? normalizeTags(value.tags)
         : null;
@@ -104,8 +106,12 @@ export async function loadExistingSetupDefaults(
     ) {
       throw new Error("existing configuration is missing stable setup defaults");
     }
+    const existingConfig = value.version === 3 ? await loadConfig(configPath) : undefined;
     return {
       chatKeySalt: value.chatKeySalt,
+      ...(existingConfig?.conductor === undefined
+        ? {}
+        : { conductor: existingConfig.conductor }),
       tags,
       workingDirectory: value.workingDirectory,
     };
@@ -549,7 +555,7 @@ export async function createWorkspaceDirectory(path: string): Promise<string> {
 
 export interface CommandDiscovery {
   imsgPath: string;
-  runtimes: Partial<Record<RuntimeKind, string>>;
+  runtimes: Partial<Record<LocalRuntimeKind, string>>;
 }
 
 export type CommandLookup = (command: string) => string | null;
@@ -562,7 +568,7 @@ export function discoverCommands(lookup: CommandLookup = (command) => Bun.which(
 
   const codex = lookup("codex");
   const claude = lookup("claude");
-  const runtimes: Partial<Record<RuntimeKind, string>> = {};
+  const runtimes: Partial<Record<LocalRuntimeKind, string>> = {};
   if (codex !== null && isAbsolute(codex)) runtimes.codex = codex;
   if (claude !== null && isAbsolute(claude)) runtimes.claude = claude;
 
@@ -571,9 +577,10 @@ export function discoverCommands(lookup: CommandLookup = (command) => Bun.which(
 
 export function prepareSetupConfig(input: {
   chatKeySalt?: string;
+  conductor?: ConductorConfig;
   discovery: CommandDiscovery;
-  fallbackRuntime?: RuntimeKind;
-  primaryRuntime: RuntimeKind;
+  fallbackRuntime?: LocalRuntimeKind;
+  primaryRuntime: LocalRuntimeKind;
   tags: readonly string[];
   workingDirectory: string;
 }): ProntoConfig {
@@ -593,6 +600,7 @@ export function prepareSetupConfig(input: {
   }
 
   return createConfig({
+    ...(input.conductor === undefined ? {} : { conductor: input.conductor }),
     ...(input.fallbackRuntime === undefined
       ? {}
       : { fallbackRuntime: input.fallbackRuntime, fallbackRuntimePath: fallbackRuntimePath! }),
