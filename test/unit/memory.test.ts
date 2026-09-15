@@ -6,6 +6,8 @@ import { openProntoDatabase } from "../../packages/cli/src/storage/database";
 import { MemoryStore } from "../../packages/cli/src/storage/memory";
 import { chatKeyForId } from "../../packages/cli/src/storage/chat-key";
 import { DeliveryJournal } from "../../packages/cli/src/storage/journal";
+import { ConductorBindingStore } from "../../packages/cli/src/storage/conductor";
+import { WorktreeBindingStore } from "../../packages/cli/src/storage/worktree-bindings";
 
 const temporaryDirectories: string[] = [];
 
@@ -54,6 +56,18 @@ test("retains eight exact exchanges, one valid summary, and supports forget", as
     expect(memory.get("chat-a").summary).toBe("summary");
 
     const journal = new DeliveryJournal(database);
+    new ConductorBindingStore(database).save({
+      chatKey: "chat-a",
+      deepLink: "conductor://workspace/one",
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      workspaceName: "pronto-chat",
+    });
+    new WorktreeBindingStore(database).bind({
+      agent: "codex",
+      chatKey: "chat-a",
+      worktreePath: "/worktree/one",
+    });
     journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "pending", request: "private" });
     const lease = journal.lease("pending")!;
     journal.accept("pending", lease, { reply: "private reply" });
@@ -61,6 +75,8 @@ test("retains eight exact exchanges, one valid summary, and supports forget", as
     journal.markAmbiguous("pending", lease);
     memory.forget("chat-a");
     expect(memory.get("chat-a")).toEqual({ exchanges: [], summary: null });
+    expect(new ConductorBindingStore(database).get("chat-a")).toBeNull();
+    expect(new WorktreeBindingStore(database).get("chat-a")).toBeNull();
     expect(
       database
         .query(

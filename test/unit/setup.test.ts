@@ -166,6 +166,38 @@ describe("setup discovery", () => {
     });
   });
 
+  test("preserves an existing Conductor configuration when setup is rerun", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pronto-setup-defaults-"));
+    temporaryDirectories.push(home);
+    const path = join(home, "config.json");
+    await saveConfig(path, {
+      version: 3,
+      chatKeySalt: "s".repeat(32),
+      conductor: {
+        agent: "codex",
+        apiKey: "owner-private-conductor-api-key",
+        model: "gpt-5.5",
+        projectId: "project-1",
+        tag: "@conductor",
+      },
+      imsgPath: "/usr/local/bin/imsg",
+      primaryRuntime: "codex",
+      tags: ["@helper", "@conductor"],
+      unrestrictedTrustVersion: 1,
+      workingDirectory: "/Users/example/project",
+    });
+
+    expect(await loadExistingSetupDefaults(path)).toMatchObject({
+      conductor: {
+        agent: "codex",
+        apiKey: "owner-private-conductor-api-key",
+        projectId: "project-1",
+        tag: "@conductor",
+      },
+      tags: ["@helper", "@conductor"],
+    });
+  });
+
   test("refuses to replace malformed existing setup state", async () => {
     const home = await mkdtemp(join(tmpdir(), "s4imsg-workspace-"));
     temporaryDirectories.push(home);
@@ -256,7 +288,7 @@ test("doctor detects a replaced executable without exposing private data", async
   await mkdir(join(paths.appSupportDirectory, "bin"), { recursive: true, mode: 0o700 });
   await writeFile(paths.executablePath, "original", { mode: 0o700 });
   await saveConfig(paths.configPath, {
-    version: 2,
+    version: 3,
     chatKeySalt: "x".repeat(32),
     imsgPath: "/usr/bin/true",
     installedExecutableHash: "not-the-current-hash",

@@ -1,6 +1,8 @@
 # Pronto
 
-Pronto is an independent public macOS messaging project that lets local agents participate in conversations and supplies reusable provider capabilities to other products.
+Pronto is an independent public macOS messaging project that lets local agents,
+and optionally Conductor cloud workspace agents, participate in conversations
+while supplying reusable provider capabilities to other products.
 
 ## Language
 

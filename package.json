@@ -1,7 +1,7 @@
 {
   "name": "pronto-workspace",
   "version": "0.4.2",
-  "description": "A local iMessage bridge for Codex and Claude Code",
+  "description": "An iMessage bridge for local coding agents and optional Conductor Cloud workspaces",
   "type": "module",
   "private": true,
   "license": "MIT",

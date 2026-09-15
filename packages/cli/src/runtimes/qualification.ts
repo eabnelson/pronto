@@ -2,11 +2,11 @@ import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import type { RuntimeKind } from "../config";
+import type { LocalRuntimeKind } from "../config";
 import type { CommandRunner, DoctorCheck } from "../macos/setup";
 import type { RuntimeAdapter } from "./types";
 
-const REQUIRED_HELP: Record<RuntimeKind, readonly string[]> = {
+const REQUIRED_HELP: Record<LocalRuntimeKind, readonly string[]> = {
   claude: [
     "--dangerously-skip-permissions",
     "--mcp-config",
@@ -27,7 +27,7 @@ export interface RuntimeQualification {
 }
 
 export async function qualifyRuntime(input: {
-  adapter: RuntimeAdapter;
+  adapter: RuntimeAdapter & { kind: LocalRuntimeKind };
   bridgeExecutableArgs?: readonly string[];
   bridgeExecutablePath: string;
   commandRunner: CommandRunner;

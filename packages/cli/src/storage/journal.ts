@@ -555,6 +555,8 @@ export class DeliveryJournal {
                UNION SELECT chat_key FROM chat_memory
                UNION SELECT chat_key FROM delivery_events
                UNION SELECT chat_key FROM chat_workspaces
+               UNION SELECT chat_key FROM conductor_bindings
+               UNION SELECT chat_key FROM worktree_bindings
              ) ORDER BY chat_key`,
           )
           .all() as Array<{ chat_key: string }>).map((row) => row.chat_key)

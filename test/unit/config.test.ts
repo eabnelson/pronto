@@ -46,6 +46,49 @@ describe("trigger tag validation", () => {
 });
 
 describe("configuration persistence", () => {
+  test("normalizes and persists an optional Conductor Cloud tag", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pronto-config-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "config.json");
+    const config = createConfig({
+      conductor: {
+        agent: "codex",
+        apiKey: "owner-private-conductor-api-key",
+        model: "gpt-5.5",
+        projectId: "project-1",
+        tag: "Conductor",
+      },
+      imsgPath: "/opt/homebrew/bin/imsg",
+      primaryRuntime: "codex",
+      tags: ["@helper"],
+      unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+      workingDirectory: "/Users/example",
+    });
+
+    expect(config.tags).toEqual(["@helper", "@conductor"]);
+    expect(config.conductor?.tag).toBe("@conductor");
+    await saveConfig(path, config);
+    expect(await loadConfig(path)).toEqual(config);
+  });
+
+  test("rejects malformed Conductor credentials and agent settings", () => {
+    expect(() =>
+      createConfig({
+        conductor: {
+          agent: "codex",
+          apiKey: "line\nbreak",
+          projectId: "project-1",
+          tag: "@conductor",
+        },
+        imsgPath: "/opt/homebrew/bin/imsg",
+        primaryRuntime: "codex",
+        tags: ["@helper"],
+        unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+        workingDirectory: "/Users/example",
+      }),
+    ).toThrow("Invalid Conductor API key");
+  });
+
   test("requires distinct primary and fallback runtimes", () => {
     expect(() =>
       createConfig({
@@ -94,7 +137,7 @@ describe("configuration persistence", () => {
       workingDirectory: "/Users/example",
     }));
 
-    expect(await loadConfig(path)).toMatchObject({ tags: ["@helper"], version: 2 });
+    expect(await loadConfig(path)).toMatchObject({ tags: ["@helper"], version: 3 });
     expect(await loadConfig(path)).not.toHaveProperty("selfChatHandle");
   });
 

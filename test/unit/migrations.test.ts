@@ -60,6 +60,16 @@ test("creates the current owner-private WAL schema", async () => {
         .get(),
     ).toEqual({ name: "chat_workspaces" });
     expect(
+      database
+        .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'conductor_bindings'")
+        .get(),
+    ).toEqual({ name: "conductor_bindings" });
+    expect(
+      database
+        .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'worktree_bindings'")
+        .get(),
+    ).toEqual({ name: "worktree_bindings" });
+    expect(
       database.query("PRAGMA table_info(delivery_events)").all()
         .some((column) => (column as { name: string }).name === "activation_tag"),
     ).toBeTrue();

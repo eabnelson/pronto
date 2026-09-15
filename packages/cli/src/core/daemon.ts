@@ -3,11 +3,14 @@ import { ImsgCurrentChatSource } from "../imessage/current-chat-source";
 import { ImsgTransport } from "../imessage/transport";
 import type { ProntoPaths } from "../macos/paths";
 import { RuntimeChain } from "../runtimes/chain";
+import { ConductorAdapter } from "../runtimes/conductor";
 import { createRuntimeAdapter } from "../runtimes/factory";
 import { openProntoDatabase } from "../storage/database";
+import { ConductorBindingStore } from "../storage/conductor";
 import { DeliveryJournal } from "../storage/journal";
 import { MemoryStore } from "../storage/memory";
 import { WorkspaceStore } from "../storage/workspaces";
+import { WorktreeBindingStore } from "../storage/worktree-bindings";
 import { ConversationBroker } from "../tools/broker";
 import { TurnCoordinator, TurnProcessor } from "./turn";
 import {
@@ -86,6 +89,25 @@ export class ProntoDaemon {
           : createRuntimeAdapter(this.config.fallbackRuntime, runtimePath(this.config, true));
       const memory = new MemoryStore(database);
       const workspaces = new WorkspaceStore(database);
+      const worktreeBindings = new WorktreeBindingStore(database);
+      const worktreeRuntimes = {
+        [primary.kind]: new RuntimeChain(primary),
+        ...(fallback === undefined
+          ? {}
+          : { [fallback.kind]: new RuntimeChain(fallback) }),
+      };
+      const conductor =
+        this.config.conductor === undefined
+          ? undefined
+          : {
+              runtimes: new RuntimeChain(
+                new ConductorAdapter(
+                  this.config.conductor,
+                  new ConductorBindingStore(database),
+                ),
+              ),
+              tag: this.config.conductor.tag,
+            };
       const coordinator = new TurnCoordinator(
         new TurnProcessor({
           bridgeExecutablePath: this.paths.executablePath,
@@ -97,6 +119,9 @@ export class ProntoDaemon {
           transport,
           defaultWorkingDirectory: this.config.workingDirectory,
           workspaces,
+          worktreeBindings,
+          worktreeRuntimes,
+          ...(conductor === undefined ? {} : { conductor }),
         }),
         journal,
         this.config.chatKeySalt,

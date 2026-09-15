@@ -15,6 +15,14 @@ therefore do not constrain the turn. Conversation context may be sent
 to the configured model provider. The Mac owner is responsible for informing
 participants and choosing chats whose members they trust.
 
+When the optional Conductor tag is enabled, Pronto sends the authorized request
+and bounded conversation context to Conductor Cloud, which stores cloud session
+inputs and outputs. The selected Conductor agent can change files in its cloud
+workspace. The Conductor API key is retained in Pronto's owner-only
+configuration and must be rotated if that file or Mac account is compromised.
+Disabling or forgetting a binding does not delete the remote workspace or its
+transcript.
+
 `pronto` limits its own Messages query capability to the originating chat, but
 the runtime may access any command or file available to the macOS user. The
 per-chat working folder is organizational context, not a security boundary.
@@ -22,6 +30,15 @@ Project instructions, hooks, plugins, and MCP servers in a selected repository
 may run with the same unrestricted authority, so an untrusted repository is an
 untrusted code-execution source. Untagged messages and attachments are
 untrusted evidence and may still influence model behavior.
+
+A local worktree binding has the same unrestricted trust model. Only the Mac
+owner can create, list, or remove bindings through the local CLI, and Pronto
+requires a live linked Git worktree rather than accepting an in-chat path
+change. The binding does not connect to or resume a Conductor desktop chat; it
+starts a separate local agent in the shared worktree. Running that agent while
+another agent edits the same worktree can produce conflicting or destructive
+changes. `pronto forget` removes the local binding along with the chat's other
+local state.
 
 The current-chat query token is random, expires, and is scoped to one numeric
 chat row. Claude Code receives it through a private temporary MCP configuration;

@@ -1,8 +1,8 @@
 # Set up pronto for me
 
 You are my setup agent. Help me install and verify **pronto**, the local macOS
-bridge that lets explicit tags in iMessage or RCS chats invoke Codex or Claude
-Code.
+bridge that lets explicit tags in iMessage or RCS chats invoke Codex, Claude,
+or an optional Conductor Cloud workspace agent.
 
 Official repository: <https://github.com/eabnelson/pronto>
 
@@ -131,7 +131,45 @@ macOS setting.
    sent a message. Confirm that exactly one agent reply arrives. SMS does not
    activate Pronto.
 
-7. Run the final self-contained status check:
+7. If I ask to enable the optional Conductor Cloud route, first explain that
+   the tagged request and bounded conversation context will leave the Mac and
+   be stored in a Conductor cloud session. Have me create and privately export
+   an API key, then run:
+
+   ```sh
+   "$PRONTO" conductor projects
+   "$PRONTO" conductor configure \
+     --project <project-id> \
+     --agent codex \
+     --tag @conductor \
+     --accept-cloud-data
+   unset CONDUCTOR_API_KEY
+   "$PRONTO" conductor status
+   ```
+
+   Do not echo, log, or paste the key into a command argument. Explain that
+   ordinary tags still use the local runtime and only the dedicated Conductor
+   tag uses the cloud workspace.
+
+8. If I ask to connect a Messages chat to a local Conductor workspace without
+   using the cloud API, explain that this shares files and Git changes, not the
+   existing Conductor desktop chat. Find the opaque chat key with `status
+   --chats`, obtain the linked worktree path from Conductor, and run:
+
+   ```sh
+   "$PRONTO" worktree bind <opaque-chat-key> \
+     <conductor-worktree-path> \
+     --agent codex
+   "$PRONTO" worktree list
+   ```
+
+   The chosen agent must already be configured in Pronto. Do not run a
+   Conductor agent and the Pronto-launched agent in the same worktree at the
+   same time. Show me `pronto worktree unbind <opaque-chat-key>` as the way to
+   restore normal per-chat folder behavior. This local mode needs no Conductor
+   API key.
+
+9. Run the final self-contained status check:
 
    ```sh
    PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"
