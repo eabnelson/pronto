@@ -5,6 +5,8 @@ import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 
 import { createServer } from "node:net";
 import { join } from "node:path";
 
+const MAX_FIXTURE_DELAY_MS = 10_000;
+
 export interface FakeTimedEvent {
   readonly afterMs: number;
   /** Marks the scenario as authenticated before emitting (link flow). */
@@ -117,7 +119,8 @@ async function runSync(): Promise<void> {
   }
   const runs = current.syncRuns ?? [{}];
   const run = runs[Math.min(runIndex, runs.length - 1)] ?? {};
-  const url = String(flags.get("webhook") ?? "");
+  // Fixture inputs are test-controlled, but stay bounded: loopback webhooks and short delays only.
+  const url = loopbackUrl(String(flags.get("webhook") ?? ""));
   const secret = String(flags.get("webhook-secret") ?? "");
   rmSync(socketPath, { force: true });
   const server = createServer((socket) => socket.end());
@@ -132,12 +135,12 @@ async function runSync(): Promise<void> {
     });
   }
   setInterval(() => undefined, 1_000);
-  setTimeout(() => emit("connected"), run.connectDelayMs ?? 0);
+  setTimeout(() => emit("connected"), boundedDelay(run.connectDelayMs));
   if ((run.socketDelayMs ?? 0) >= 0) {
-    setTimeout(() => server.listen(socketPath), run.socketDelayMs ?? 0);
+    setTimeout(() => server.listen(socketPath), boundedDelay(run.socketDelayMs));
   }
   if (run.exitAfterMs !== undefined) {
-    setTimeout(() => process.exit(run.exitCode ?? 1), run.exitAfterMs);
+    setTimeout(() => process.exit(run.exitCode ?? 1), boundedDelay(run.exitAfterMs));
   }
   for (const timed of run.events ?? []) {
     setTimeout(() => {
@@ -149,11 +152,11 @@ async function runSync(): Promise<void> {
           process.exit(0);
         }, 20);
       }
-    }, timed.afterMs);
+    }, boundedDelay(timed.afterMs));
   }
   const started = Date.now();
   for (const webhook of [...(run.webhooks ?? [])].sort((a, b) => a.afterMs - b.afterMs)) {
-    await sleep(Math.max(0, started + webhook.afterMs - Date.now()));
+    await sleep(boundedDelay(started + webhook.afterMs - Date.now()));
     const body = JSON.stringify(webhook.payload);
     const signature = createHmac("sha256", webhook.badSignature ? "wrong-secret" : secret).update(body).digest("hex");
     let status = 0;
@@ -257,4 +260,17 @@ if (command === "version") {
     default:
       fail(`unknown command: ${command}`);
   }
+}
+
+function boundedDelay(value: number | undefined): number {
+  const delay = Number(value ?? 0);
+  return Number.isFinite(delay) ? Math.min(Math.max(delay, 0), MAX_FIXTURE_DELAY_MS) : 0;
+}
+
+function loopbackUrl(value: string): string {
+  const url = new URL(value);
+  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") {
+    throw new Error("fake wacli only posts webhooks to http://127.0.0.1");
+  }
+  return url.toString();
 }
