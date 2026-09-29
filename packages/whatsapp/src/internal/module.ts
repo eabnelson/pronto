@@ -1,5 +1,6 @@
 import { chmod, mkdir } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { tmpdir, userInfo } from "node:os";
+import { isAbsolute, join } from "node:path";
 import {
   MINIMUM_WACLI_VERSION,
   WHATSAPP_PROVIDER,
@@ -15,7 +16,9 @@ import {
   type WhatsappQualification,
   type WhatsappRecoveryOutcome,
   type WhatsappSubscription,
+  type MaterializedWhatsappAttachment,
 } from "../types.js";
+import { downloadAttachment } from "./attachment.js";
 import { linkSteps } from "./link.js";
 import {
   canonicalJid,
@@ -55,6 +58,7 @@ class WhatsappModule implements ProntoWhatsapp {
   readonly presence?: WhatsappPresence;
   readonly #wacliPath: string;
   readonly #storeDir: string;
+  readonly #attachmentsDir: string;
   readonly #limits: Limits;
   readonly #signer: ReferenceSigner;
   readonly #state: DeliveryState;
@@ -78,6 +82,11 @@ class WhatsappModule implements ProntoWhatsapp {
     }
     this.#wacliPath = options.wacliPath;
     this.#storeDir = options.storeDir;
+    if (options.attachmentsDir !== undefined && !isAbsolute(options.attachmentsDir)) {
+      throw new Error("attachmentsDir must be an absolute path");
+    }
+    this.#attachmentsDir = options.attachmentsDir ??
+      join(tmpdir(), `pronto-whatsapp-attachments-${userInfo().uid}`);
     this.#tuning = tuning;
     this.#limits = {
       maxAgeMs: positive(options.recoveryLimits?.maxAgeMs, DAY_MS, "recoveryLimits.maxAgeMs"),
@@ -184,6 +193,26 @@ class WhatsappModule implements ProntoWhatsapp {
       }).catch(() => undefined);
     }
     return outcome;
+  }
+
+  async materializeAttachment(
+    input: Parameters<ProntoWhatsapp["materializeAttachment"]>[0],
+  ): Promise<MaterializedWhatsappAttachment> {
+    const chatJid = this.#signer.verify(input.conversation);
+    const row = await this.#readMessage(chatJid, input.providerMessageId);
+    if (row === null || row.media === null) {
+      throw new Error("WhatsApp message has no downloadable attachment");
+    }
+    return await downloadAttachment({
+      attachmentsDir: this.#attachmentsDir,
+      chatJid,
+      declaredMimeType: row.media.mimeType,
+      maxBytes: input.maxBytes,
+      messageId: input.providerMessageId,
+      storeDir: this.#storeDir,
+      timeoutMs: this.#tuning.attachmentTimeoutMs,
+      wacliPath: this.#wacliPath,
+    });
   }
 
   async *link(input: Parameters<ProntoWhatsapp["link"]>[0] = {}): AsyncGenerator<WhatsappLinkStep> {
@@ -304,6 +333,18 @@ class WhatsappModule implements ProntoWhatsapp {
     const envelope = parseEnvelope(result);
     if (result.code !== 0 || envelope === null || !envelope.success || !isRecord(envelope.data)) return null;
     return Array.isArray(envelope.data.messages) ? envelope.data.messages : [];
+  }
+
+  async #readMessage(chatJid: string, messageId: string): Promise<RawMessage | null> {
+    const result = await runCommand(
+      this.#wacliPath,
+      ["--store", this.#storeDir, "--read-only", "--json", "messages", "show", `--chat=${chatJid}`, `--id=${messageId}`],
+      { timeoutMs: this.#tuning.commandTimeoutMs },
+    );
+    const envelope = parseEnvelope(result);
+    if (result.code !== 0 || envelope === null || !envelope.success) return null;
+    const message = fromStoredRow(envelope.data);
+    return message !== null && message.chatJid === chatJid && message.id === messageId ? message : null;
   }
 
   async #setTyping(conversation: WhatsappConversationReference, typing: boolean): Promise<void> {

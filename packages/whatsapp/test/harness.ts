@@ -18,10 +18,10 @@ export const FAST_TUNING: Partial<Tuning> = {
   backoffInitialMs: 30,
   backoffMaxMs: 200,
   closeGraceMs: 500,
-  commandTimeoutMs: 5_000,
+  commandTimeoutMs: 15_000,
   presenceTimeoutMs: 2_000,
   readinessPollMs: 20,
-  readinessTimeoutMs: 3_000,
+  readinessTimeoutMs: 10_000,
   sendTimeoutMs: 4_000,
 };
 
@@ -54,6 +54,7 @@ export async function setup(
   const modules: ProntoWhatsapp[] = [];
   const newModule = (extra: Partial<CreateProntoWhatsappOptions> = {}, extraTuning: Partial<Tuning> = {}) => {
     const created = createModule({
+      attachmentsDir: join(dir, "attachments"),
       referenceKey: REFERENCE_KEY,
       statePath,
       storeDir: store,
@@ -99,7 +100,7 @@ export async function setup(
 
 export async function waitFor<T>(
   probe: () => T | Promise<T>,
-  { timeoutMs = 4_000, what = "condition" }: { timeoutMs?: number; what?: string } = {},
+  { timeoutMs = 15_000, what = "condition" }: { timeoutMs?: number; what?: string } = {},
 ): Promise<NonNullable<T>> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {

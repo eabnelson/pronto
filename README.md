@@ -205,6 +205,10 @@ WhatsApp follows the same rules as iMessage:
 - The reply is sent from your account into the same chat, quoting the tagged
   message, with the tag name as a bold first line. WhatsApp shows your account
   typing while the agent works.
+- The agent can open photos, videos, voice notes, and documents from the chat,
+  such as a captioned photo asking `@helper what is in this?`. Each is downloaded
+  on demand into a private temporary copy (up to 20 MB) that is deleted when the
+  listener stops, the same way as iMessage attachments.
 - A send that might have been delivered is never retried.
 
 `pronto` keeps its own WhatsApp session and message index under

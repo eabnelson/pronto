@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type {
+  MaterializedWhatsappAttachment,
   ProntoWhatsapp,
   WhatsappConversationReference,
   WhatsappEvent,
@@ -61,12 +63,26 @@ export function whatsappActivation(
   };
 }
 
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_MATERIALIZED_ATTACHMENTS = 32;
+
+/** Opaque per-chat attachment id: WhatsApp messages carry at most one media item. */
+export function whatsappAttachmentId(chatJid: string, messageId: string): string {
+  return createHash("sha256").update(`${chatJid}\0${messageId}`).digest("base64url").slice(0, 32);
+}
+
 function currentChatMessage(event: WhatsappEvent): CurrentChatMessage {
   const media = event.message.media;
   return {
     attachments: media === null
       ? []
-      : [{ available: false, mimeType: media.mimeType, name: media.filename, sizeBytes: null }],
+      : [{
+        attachmentId: whatsappAttachmentId(event.conversation.chatJid, event.message.providerMessageId),
+        available: true,
+        mimeType: media.mimeType,
+        name: media.filename ?? `${media.type} attachment`,
+        sizeBytes: media.sizeBytes,
+      }],
     fromMe: event.message.fromMe,
     kind: event.message.kind === "poll" ? "poll" : "message",
     messageGuid: event.message.providerMessageId,
@@ -96,6 +112,7 @@ export class WhatsappChannel implements Channel {
   readonly conversationLabel = "WhatsApp";
   readonly currentChat: CurrentChatSource;
   readonly #conversations = new Map<string, ObservedConversation>();
+  readonly #materialized = new Set<MaterializedWhatsappAttachment>();
 
   constructor(
     readonly whatsapp: ProntoWhatsapp,
@@ -104,7 +121,23 @@ export class WhatsappChannel implements Channel {
     } = {},
   ) {
     this.currentChat = {
-      attachment: async () => null,
+      attachment: async (chat, messageGuid, attachmentId) => {
+        const observed = this.#observed(chat);
+        if (attachmentId !== whatsappAttachmentId(chat.id, messageGuid)) return null;
+        const materialized = await this.whatsapp.materializeAttachment({
+          conversation: observed.reference,
+          maxBytes: MAX_ATTACHMENT_BYTES,
+          providerMessageId: messageGuid,
+        });
+        while (this.#materialized.size >= MAX_MATERIALIZED_ATTACHMENTS) {
+          const oldest = this.#materialized.values().next().value;
+          if (oldest === undefined) break;
+          this.#materialized.delete(oldest);
+          await oldest.dispose().catch(() => undefined);
+        }
+        this.#materialized.add(materialized);
+        return { attachmentId, messageGuid, name: materialized.name, path: materialized.path };
+      },
       details: async (chat) => {
         const observed = this.#observed(chat);
         return {
@@ -224,6 +257,10 @@ export class WhatsappChannel implements Channel {
   }
 
   async close(): Promise<void> {
+    await Promise.all([...this.#materialized].map(async (attachment) => {
+      await attachment.dispose().catch(() => undefined);
+    }));
+    this.#materialized.clear();
     await this.whatsapp.close();
   }
 

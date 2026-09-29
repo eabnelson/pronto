@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { setDefaultTimeout, afterEach, expect, test } from "bun:test";
 import { readFile, stat, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createProntoWhatsapp, type WhatsappEvent, type WhatsappHealth, type WhatsappLinkStep, type WhatsappRecoveryOutcome } from "../src/index";
@@ -17,6 +17,9 @@ import {
   waitFor,
   webhook,
 } from "./harness";
+
+// Each wacli call starts a fake Bun process, which is slow on a busy machine.
+setDefaultTimeout(30_000);
 
 afterEach(cleanupAll);
 
@@ -363,6 +366,46 @@ test("history returns oldest first with a clamped limit", async () => {
   const args = (await h.invocations("messages list"))[0]!.args;
   expect(args).toContain("--limit=100");
   expect(args).toContain(`--chat=${ALICE}`);
+});
+
+test("attachments download privately through the lock-free media path", async () => {
+  const h = await setup({
+    auth: LINKED,
+    media: { PHOTO: { content: "fake jpeg bytes", name: "photo.jpg" } },
+    messages: [
+      row({ id: "PHOTO", MediaCaption: "@s4 what is this?", MediaType: "image", MimeType: "image/jpeg", text: "", ts: iso(5_000) }),
+      row({ id: "PLAIN", ts: iso(4_000) }),
+    ],
+  });
+  const attachment = await h.module.materializeAttachment({
+    conversation: h.reference(ALICE),
+    maxBytes: 1_024,
+    providerMessageId: "PHOTO",
+  });
+  expect(attachment).toMatchObject({ mimeType: "image/jpeg", name: "photo.jpg", sizeBytes: 15 });
+  expect(await readFile(attachment.path, "utf8")).toBe("fake jpeg bytes");
+  expect(attachment.sha256).toMatch(/^[0-9a-f]{64}$/);
+  expect((await stat(attachment.path)).mode & 0o777).toBe(0o600);
+  expect((await stat(dirname(attachment.path))).mode & 0o777).toBe(0o700);
+  const args = (await h.invocations("media download"))[0]!.args;
+  expect(args).toContain("--read-only");
+  expect(args).toContain(`--chat=${ALICE}`);
+  expect(args).toContain("--id=PHOTO");
+  await attachment.dispose();
+  await expect(stat(attachment.path)).rejects.toThrow();
+
+  await expect(h.module.materializeAttachment({
+    conversation: h.reference(ALICE), maxBytes: 4, providerMessageId: "PHOTO",
+  })).rejects.toThrow("exceeds the size budget");
+  await expect(h.module.materializeAttachment({
+    conversation: h.reference(ALICE), maxBytes: 1_024, providerMessageId: "PLAIN",
+  })).rejects.toThrow("no downloadable attachment");
+  await expect(h.module.materializeAttachment({
+    conversation: h.reference(BOB), maxBytes: 1_024, providerMessageId: "PHOTO",
+  })).rejects.toThrow("no downloadable attachment");
+  await expect(h.module.materializeAttachment({
+    conversation: { ...h.reference(ALICE), token: "forged" }, maxBytes: 1_024, providerMessageId: "PHOTO",
+  })).rejects.toThrow("scope is unavailable");
 });
 
 test("a crashed sync child is restarted and reconnects", async () => {

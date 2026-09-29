@@ -1,5 +1,6 @@
 /** Timing knobs. Production uses the defaults; tests shorten them. */
 export interface Tuning {
+  readonly attachmentTimeoutMs: number;
   readonly backoffInitialMs: number;
   readonly backoffMaxMs: number;
   readonly closeGraceMs: number;
@@ -15,6 +16,7 @@ export interface Tuning {
 }
 
 export const DEFAULT_TUNING: Tuning = {
+  attachmentTimeoutMs: 120_000,
   backoffInitialMs: 250,
   backoffMaxMs: 30_000,
   closeGraceMs: 5_000,

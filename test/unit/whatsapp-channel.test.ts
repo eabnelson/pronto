@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { MessagesEvent } from "pronto-imessage";
 import type {
   ProntoWhatsapp,
@@ -13,6 +16,7 @@ import type { ChannelActivation, ChannelConnectionHealth } from "../../packages/
 import {
   WhatsappChannel,
   whatsappActivation,
+  whatsappAttachmentId,
 } from "../../packages/cli/src/whatsapp/channel";
 import { formatWhatsappReplyText } from "../../packages/cli/src/whatsapp/reply-format";
 
@@ -165,6 +169,25 @@ class FakeWhatsapp implements ProntoWhatsapp {
     this.replies.push(input);
     return this.outcome;
   }
+  attachmentRequests: Array<Parameters<ProntoWhatsapp["materializeAttachment"]>[0]> = [];
+  disposed = 0;
+  async materializeAttachment(input: Parameters<ProntoWhatsapp["materializeAttachment"]>[0]) {
+    this.attachmentRequests.push(input);
+    const directory = await mkdtemp(join(tmpdir(), "pronto-wa-attachment-"));
+    const path = join(directory, "photo.jpg");
+    await writeFile(path, "jpeg bytes");
+    return {
+      dispose: async () => {
+        this.disposed += 1;
+        await rm(directory, { force: true, recursive: true });
+      },
+      mimeType: "image/jpeg",
+      name: "photo.jpg",
+      path,
+      sha256: "0".repeat(64),
+      sizeBytes: 10,
+    };
+  }
   async *link() {}
   async unlink() {}
   async close() {}
@@ -260,6 +283,46 @@ describe("WhatsApp channel", () => {
     ]);
     expect(await Promise.race([watch.terminated.then(() => "ended"), Bun.sleep(10).then(() => "running")]))
       .toBe("running");
+  });
+
+  test("lets the agent open a tagged photo through the current-chat tool", async () => {
+    const photo: WhatsappEvent = {
+      ...whatsappEvent({ id: "PHOTO", text: "@helper what is in this photo?" }),
+      message: {
+        ...whatsappEvent({ id: "PHOTO", text: "@helper what is in this photo?" }).message,
+        media: { caption: "@helper what is in this photo?", filename: null, mimeType: "image/jpeg", sizeBytes: 10, type: "image" },
+      },
+    };
+    const whatsapp = new FakeWhatsapp();
+    whatsapp.events = [photo];
+    whatsapp.history = async () => [photo];
+    const channel = new WhatsappChannel(whatsapp);
+    const activations: ChannelActivation[] = [];
+    await channel.watch({ onActivation: (activation) => { activations.push(activation); }, tags: ["@helper"] });
+    expect(activations[0]?.request).toBe("what is in this photo");
+
+    const chat = { channel: "whatsapp", id: CHAT } as const;
+    const history = await channel.currentChat.history(chat, 10) as { messages: Array<{ attachments: Array<Record<string, unknown>> }> };
+    const attachmentId = whatsappAttachmentId(CHAT, "PHOTO");
+    expect(history.messages[0]?.attachments).toEqual([{
+      attachmentId,
+      available: true,
+      mimeType: "image/jpeg",
+      name: "image attachment",
+      sizeBytes: 10,
+    }]);
+
+    expect(await channel.currentChat.attachment(chat, "PHOTO", "wrong-id")).toBeNull();
+    const opened = await channel.currentChat.attachment(chat, "PHOTO", attachmentId);
+    expect(opened).toMatchObject({ attachmentId, messageGuid: "PHOTO", name: "photo.jpg" });
+    expect(await readFile(opened!.path, "utf8")).toBe("jpeg bytes");
+    expect(whatsapp.attachmentRequests).toEqual([{
+      conversation: reference,
+      maxBytes: 20 * 1024 * 1024,
+      providerMessageId: "PHOTO",
+    }]);
+    await channel.close();
+    expect(whatsapp.disposed).toBe(1);
   });
 
   test("formats a bold heading like the iMessage reply heading", () => {

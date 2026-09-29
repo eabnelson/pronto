@@ -37,7 +37,19 @@ export interface WhatsappMedia {
   readonly caption: string | null;
   readonly filename: string | null;
   readonly mimeType: string | null;
+  /** Declared size when WhatsApp reported it (live messages); null for recovered rows. */
+  readonly sizeBytes: number | null;
   readonly type: string;
+}
+
+/** A private copy of one message's media. Call `dispose()` when finished with it. */
+export interface MaterializedWhatsappAttachment {
+  dispose(): Promise<void>;
+  readonly mimeType: string;
+  readonly name: string;
+  readonly path: string;
+  readonly sha256: string;
+  readonly sizeBytes: number;
 }
 
 export interface WhatsappMessage {
@@ -125,6 +137,15 @@ export interface ProntoWhatsapp {
     readonly quote?: { readonly providerMessageId: string; readonly sender: string | null };
     readonly text: string;
   }): Promise<WhatsappDeliveryOutcome>;
+  /**
+   * Downloads the media of one message in an observed conversation into a private directory.
+   * Throws when the message has no downloadable media or it exceeds `maxBytes`.
+   */
+  materializeAttachment(input: {
+    readonly conversation: WhatsappConversationReference;
+    readonly maxBytes: number;
+    readonly providerMessageId: string;
+  }): Promise<MaterializedWhatsappAttachment>;
   /** Present only when created with `presence: true`. */
   readonly presence?: WhatsappPresence;
   link(input?: { readonly phone?: string; readonly signal?: AbortSignal }): AsyncIterable<WhatsappLinkStep>;
@@ -153,4 +174,6 @@ export interface CreateProntoWhatsappOptions {
     readonly ttlMs?: number;
   };
   readonly presence?: boolean;
+  /** Private directory for downloaded attachments. Defaults to a per-user temporary directory. */
+  readonly attachmentsDir?: string;
 }

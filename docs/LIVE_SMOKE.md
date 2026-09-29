@@ -77,13 +77,15 @@ README, and chats whose participants know the test is happening.
    "Message yourself", a one-to-one chat, and a group where the owner has spoken.
    Confirm each gets exactly one reply from the owner's account, quoting the tagged
    message, with the bold tag heading, and that the chat shows typing meanwhile.
-4. Have another participant send a tagged message in the group and confirm it runs
+4. Send a photo with the caption `<tag> describe this photo in one sentence` and
+   confirm the reply describes it, then do the same with a PDF document.
+5. Have another participant send a tagged message in the group and confirm it runs
    once. Confirm a WhatsApp-only tag does not activate in iMessage and an
    iMessage-only tag does not activate in WhatsApp.
-5. Stop the listener, send a tagged message, wait over five minutes, and start it
+6. Stop the listener, send a tagged message, wait over five minutes, and start it
    again. Confirm the message is answered once after reconnecting.
-6. Wait one minute after each reply and confirm no echo-loop turn ran.
-7. Log the device out from the phone (Linked devices). Confirm `pronto status`
+7. Wait one minute after each reply and confirm no echo-loop turn ran.
+8. Log the device out from the phone (Linked devices). Confirm `pronto status`
    reports `whatsapp needs_link`, iMessage still answers, and
    `pronto whatsapp link` restores WhatsApp.
 

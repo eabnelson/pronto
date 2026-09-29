@@ -35,6 +35,8 @@ export interface FakeScenario {
   readonly auth?: { readonly authenticated: boolean; readonly linkedJid?: string };
   readonly link?: { readonly events: readonly FakeTimedEvent[]; readonly exitCode: number };
   readonly listFails?: boolean;
+  /** Downloadable media by message id: the file name wacli writes and its contents. */
+  readonly media?: Readonly<Record<string, { readonly content: string; readonly name: string }>>;
   readonly messages?: readonly Record<string, unknown>[];
   readonly send?: {
     readonly error?: string;
@@ -251,6 +253,20 @@ if (command === "version") {
       break;
     case "messages list":
       listMessages();
+    case "messages show": {
+      const row = (scenario().messages ?? []).find((message) => {
+        return message.ChatJID === flags.get("chat") && message.MsgID === flags.get("id");
+      });
+      if (row === undefined) fail("message not found");
+      ok(row);
+    }
+    case "media download": {
+      if (flags.get("read-only") !== true) fail("store is locked (another wacli is running?)");
+      const media = scenario().media?.[String(flags.get("id"))];
+      if (media === undefined) fail("message has no downloadable media");
+      writeFileSync(join(String(flags.get("output")), media.name), media.content);
+      ok({ path: join(String(flags.get("output")), media.name) });
+    }
     case "send text":
       await send();
       break;

@@ -62,6 +62,9 @@ export function fromWebhook(payload: unknown): RawMessage | null {
       caption: string(rawMedia.Caption),
       filename: string(rawMedia.Filename),
       mimeType: string(rawMedia.MimeType),
+      sizeBytes: typeof rawMedia.FileLength === "number" && Number.isSafeInteger(rawMedia.FileLength)
+        ? rawMedia.FileLength
+        : null,
       type: string(rawMedia.Type) ?? "",
     };
   const text = string(payload.Text) ?? media?.caption ?? null;
@@ -108,6 +111,7 @@ export function fromStoredRow(row: unknown): RawMessage | null {
       caption: string(row.MediaCaption),
       filename: string(row.Filename),
       mimeType: string(row.MimeType),
+      sizeBytes: null,
       type: mediaType,
     };
   const text = string(row.Text) ?? media?.caption ?? null;
