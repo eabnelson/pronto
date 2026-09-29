@@ -61,7 +61,7 @@ export class ImessageChannel implements Channel {
   async watch(input: {
     onActivation: (activation: ChannelActivation) => void | Promise<void>;
     onRecovery?: (outcome: ChannelRecoveryOutcome) => void;
-    tags: readonly string[];
+    tags: () => readonly string[];
   }): Promise<ChannelWatch> {
     const onMessageRowId = this.#onMessageRowId;
     return await this.#transport.watch({
@@ -81,7 +81,10 @@ export class ImessageChannel implements Channel {
           ? { reason: outcome.reason, status: "degraded" }
           : { status: "recovered" });
       },
-      tags: input.tags,
+      // The transport reads `tags` for every event, so a getter keeps them current.
+      get tags() {
+        return input.tags();
+      },
     });
   }
 

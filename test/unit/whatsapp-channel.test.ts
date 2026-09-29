@@ -201,7 +201,7 @@ describe("WhatsApp channel", () => {
     const activations: ChannelActivation[] = [];
     const watch = await channel.watch({
       onActivation: (activation) => { activations.push(activation); },
-      tags: ["@helper"],
+      tags: () => ["@helper"],
     });
     await watch.close();
 
@@ -233,7 +233,7 @@ describe("WhatsApp channel", () => {
     const channel = new WhatsappChannel(whatsapp, { matchesOutboundEcho: () => true });
     const watch = await channel.watch({
       onActivation: () => { throw new Error("echo must not activate"); },
-      tags: ["@helper"],
+      tags: () => ["@helper"],
     });
     await watch.close();
   });
@@ -244,7 +244,7 @@ describe("WhatsApp channel", () => {
     const channel = new WhatsappChannel(whatsapp);
     const chat = { channel: "whatsapp", id: CHAT } as const;
     await expect(channel.currentChat.history(chat, 10)).rejects.toThrow("scope is unavailable");
-    await channel.watch({ onActivation: () => undefined, tags: ["@helper"] });
+    await channel.watch({ onActivation: () => undefined, tags: () => ["@helper"] });
 
     expect(await channel.recentMessages(chat, 500)).toEqual([expect.objectContaining({
       fromMe: false,
@@ -272,7 +272,7 @@ describe("WhatsApp channel", () => {
     const watch = await channel.watch({
       onActivation: () => undefined,
       onHealth: (value) => { health.push(value); },
-      tags: ["@helper"],
+      tags: () => ["@helper"],
     });
     whatsapp.unlinkDevice();
     await Bun.sleep(0);
@@ -298,7 +298,7 @@ describe("WhatsApp channel", () => {
     whatsapp.history = async () => [photo];
     const channel = new WhatsappChannel(whatsapp);
     const activations: ChannelActivation[] = [];
-    await channel.watch({ onActivation: (activation) => { activations.push(activation); }, tags: ["@helper"] });
+    await channel.watch({ onActivation: (activation) => { activations.push(activation); }, tags: () => ["@helper"] });
     expect(activations[0]?.request).toBe("what is in this photo");
 
     const chat = { channel: "whatsapp", id: CHAT } as const;

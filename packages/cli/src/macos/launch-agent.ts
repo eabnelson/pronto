@@ -80,7 +80,7 @@ export function renderLaunchAgent(input: {
   <key>ExitTimeOut</key>
   <integer>${LAUNCH_AGENT_DRAIN_SECONDS}</integer>
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Adaptive</string>
   <key>StandardOutPath</key>
   <string>${xml(input.logPath)}</string>
   <key>StandardErrorPath</key>
@@ -194,6 +194,15 @@ export async function stopLaunchAgent(
 ): Promise<ProcessResult> {
   if (uid === undefined) throw new Error("Unable to determine the current user ID");
   return runner(["bootout", `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
+}
+
+/** Asks the running listener to re-read its configuration. A stopped listener reads it on start. */
+export async function reloadLaunchAgent(
+  runner: LaunchctlRunner = runLaunchctl,
+  uid = process.getuid?.(),
+): Promise<ProcessResult> {
+  if (uid === undefined) throw new Error("Unable to determine the current user ID");
+  return runner(["kill", "SIGHUP", `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
 }
 
 export async function restartLaunchAgent(

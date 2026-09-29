@@ -234,22 +234,30 @@ PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"
 "$PRONTO" tags add @plan --app whatsapp
 "$PRONTO" tags remove @plan
 "$PRONTO" whatsapp link
+"$PRONTO" channels
+"$PRONTO" channels disable whatsapp
 "$PRONTO" update --check
 "$PRONTO" update
 "$PRONTO" stop
+"$PRONTO" start
 "$PRONTO" forget <opaque-chat-key>
 "$PRONTO" uninstall
 "$PRONTO" uninstall --purge --confirm-purge
 ```
 
-Tag changes are normalized, deduplicated, saved atomically, and applied by
-restarting the background listener. With more than one app enabled, `tags add`
+Tag changes are normalized, deduplicated, saved atomically, and applied to the
+running listener without restarting it; so are enabling and disabling apps with
+`channels`. With more than one app enabled, `tags add`
 asks which apps the tag applies to (all enabled apps by default) unless you pass
 one or more `--app imessage` or `--app whatsapp` flags; `tags remove` removes the
 tag from every app unless `--app` narrows it. Every enabled app must keep at least
 one tag. If
 one message contains two different configured tags, `pronto` ignores it rather
 than choosing an activation ambiguously.
+
+`stop` keeps the listener stopped until `start`. Every command above accepts
+`--json` for local tools such as the menu bar app; see
+[Machine-readable CLI](docs/CLI_JSON.md).
 
 `status` reports only operational counts, including silently rate-limited events,
 and opaque chat keys. `forget` removes

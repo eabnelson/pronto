@@ -180,11 +180,11 @@ export class WhatsappChannel implements Channel {
     onActivation: (activation: ChannelActivation) => void | Promise<void>;
     onHealth?: (health: ChannelConnectionHealth) => void;
     onRecovery?: (outcome: ChannelRecoveryOutcome) => void;
-    tags: readonly string[];
+    tags: () => readonly string[];
   }): Promise<ChannelWatch> {
     const subscription: WhatsappSubscription = await this.whatsapp.subscribe({
       onEvent: async (event) => {
-        const activation = this.activationFor(event, input.tags);
+        const activation = this.activationFor(event, input.tags());
         if (activation !== null) await input.onActivation(activation);
       },
       onHealth: (health) => {

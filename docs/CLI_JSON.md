@@ -73,6 +73,7 @@ Streams NDJSON to stdout, one object per line, and never prompts:
 ```json
 {"event":"qr","code":"2@..."}
 {"event":"pairing_code","code":"ABCD-EFGH"}
+{"event":"syncing"}
 {"event":"linked"}
 {"event":"error","reason":"consent-required","message":"..."}
 ```
@@ -81,7 +82,8 @@ When WhatsApp is not configured yet, `--accept-risk` records the owner's
 acceptance of the WhatsApp disclosure (the caller must show that disclosure) and
 `--tag` sets its tags (default: every configured tag). Without `--accept-risk`
 the stream ends with `reason: "consent-required"`. QR codes rotate; render each
-new `qr` event. The command exits 0 after `linked` once the listener has picked
+new `qr` event. `syncing` means the phone accepted the link and wacli is finishing
+its first sync of recent messages, which can take a few minutes; `linked` follows. The command exits 0 after `linked` once the listener has picked
 up the change. Terminate the process to cancel.
 
 `pronto whatsapp unlink --json` prints `channels list` output.

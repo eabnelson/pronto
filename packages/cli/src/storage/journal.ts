@@ -6,6 +6,7 @@ import type { RuntimeKind } from "../config";
 import type { RuntimeAttemptResult, ToolActivity } from "../runtimes/types";
 import { isChannelKind, type ChannelKind, type ChatAddress } from "../channels/types";
 import { imessageChatId } from "./chat-key";
+import { migrateDatabase, MULTI_APP_SCHEMA_VERSION } from "./migrations";
 import { promoteMemory } from "./memory";
 import { promoteWorkspace } from "./workspaces";
 import { MAX_RUNTIME_TEXT_CHARACTERS, MAX_WORKSPACE_CANDIDATES } from "../workspace";
@@ -87,7 +88,7 @@ function parseConversationReference(value: string, chat: ChatAddress): unknown {
 
 export class DeliveryJournal {
   /** Whether the schema stores each event's app and chat address (schema 6+). */
-  readonly #multiApp: boolean;
+  #multiApp: boolean;
 
   constructor(
     readonly database: Database,
@@ -95,6 +96,13 @@ export class DeliveryJournal {
   ) {
     const columns = database.query("PRAGMA table_info(delivery_events)").all() as Array<{ name: string }>;
     this.#multiApp = columns.some((column) => column.name === "chat_address");
+  }
+
+  /** Upgrades to the multi-app schema when an app other than iMessage is enabled. */
+  enableMultiApp(): void {
+    if (this.#multiApp) return;
+    migrateDatabase(this.database, MULTI_APP_SCHEMA_VERSION);
+    this.#multiApp = true;
   }
 
   admit(input: AdmissionInput): { status: "accepted" | "duplicate" | "rate-limited" } {
