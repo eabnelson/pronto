@@ -308,9 +308,9 @@ describe("public landing page", () => {
     const html = await read("index.html");
     const button = html.slice(html.indexOf("      .cta {"), html.indexOf(".cta:focus-visible"));
 
-    expect(button).toContain("backdrop-filter: blur(18px) saturate(180%);");
-    expect(button).toContain("-webkit-backdrop-filter: blur(18px) saturate(180%);");
-    expect(button).toContain("rgb(255 255 255 / 72%)");
+    expect(button).toContain("backdrop-filter: blur(28px) saturate(160%) brightness(1.04);");
+    expect(button).toContain("-webkit-backdrop-filter: blur(28px) saturate(160%) brightness(1.04);");
+    expect(button).toContain("feTurbulence");
     expect(button).not.toContain("animation");
     expect(html).not.toContain(".cta:hover");
     expect(html).not.toContain("cta-morph");
