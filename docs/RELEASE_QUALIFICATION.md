@@ -3,14 +3,38 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
+## v0.4.3 scope
+
+v0.4.3 changes only attachment type detection in `packages/messages`
+(`src/internal/attachment-mime.ts`, `src/internal/scoped.ts`, PR #48): iPhone
+HEIC/HEIF/AVIF photos, QuickTime/MP4/M4V/3GP video, M4A audio and CAF voice notes
+are now recognised by their bytes instead of failing with
+`messages_attachment_mime_mismatch`. Genuine mismatches are still rejected. It does
+not change activation, Messages transport, runtime invocation, outbound delivery,
+echo suppression, checkpoints or limits.
+
+Candidate `v0.4.3-candidate.1` (source `36cd416a741c1c6de794afb53d63c46469128fea`)
+passed protected signed CI `36579627582` on 2026-09-29. The local suite passed 282
+tests with one opt-in fixture skipped; typecheck, build, frozen install and release
+validation passed. Real HEIC, MOV, MP4, CAF and M4A fixtures pass through
+`materializeAttachment`, and the Studio Four channel host's real-package test
+(`packages/channel-host/test/pronto-heic-attachment.test.ts`) delivered a rotated,
+GPS-tagged HEIC to its agent as an upright JPEG with the same detection code.
+
+Owner exception, 2026-09-29: the release owner reported the change working in
+their own daily use and approved release without repeating the full live checklist
+on the exact candidate. Because the diff does not touch the message-processing
+surfaces listed in `docs/LIVE_SMOKE.md`, their v0.4.2 live evidence below is carried
+forward. No fresh v0.4.3 self-chat, Automation or remote-participant run is claimed.
+
+## v0.4.2 scope
+
 The qualified candidate is v0.4.2-candidate.3. Candidate.1 failed restart qualification;
 candidate.2 was disqualified during review before installation. Neither may publish.
 It preserves checkpoint rollback compatibility with the released 0.2.0 SDK while
 retaining the reboot-stable generation and witnessed, no-rewind recovery. The
 0.4.1 release below is historical evidence. The release owner's explicit remote
 test exception is recorded below; it is not a fresh 0.4.2 participant test.
-
-## v0.4.2 scope
 
 Candidate.3 source `63fb67d3a8d2b4bb30c46f32c1cfec7d66852f30`, immutable tag
 `v0.4.2-candidate.3`, passed protected signed CI `34860874276` on 2026-09-14.
@@ -251,6 +275,22 @@ Only this qualification record and its review may differ from candidate.4 at
 the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
 ## Current matrix
+
+| Surface | Qualified version | Evidence | Status |
+| --- | --- | --- | --- |
+| macOS | 26.6.2 | Carried forward from v0.4.2 candidate.3 on Omini; v0.4.3 changes no platform surface | Pass |
+| Bun | 1.3.14 | 282 local tests passed, one opt-in fixture skipped; frozen install, typecheck, build and release validation passed | Pass |
+| Node.js | 22.23.1 | Clean packed import and public-interface smoke passed in signed candidate CI 36579627582 | Pass |
+| imsg | 0.15.0 | Carried forward from v0.4.2 candidate.3; imsg protocol use unchanged | Pass |
+| Codex CLI | 0.154.0 | Carried forward from v0.4.2 candidate.3; runtime adapter unchanged | Pass |
+| Claude Code | 2.1.260 | Adapter fixtures pass; reviewed unchanged adapter carries historical evidence | Pass |
+| Codex effective local probe | 0.154.0 | Carried forward from v0.4.2 candidate.3; invocation unchanged | Pass |
+| Claude effective local probe | 2.1.260 | Carried forward historical probe evidence; invocation unchanged | Pass |
+| Messages Automation | v0.4.2-candidate.3 | Carried forward; outbound delivery unchanged in v0.4.3 | Pass |
+| Self-chat mirror handling | v0.4.2-candidate.3 | Carried forward; echo and mirror handling unchanged in v0.4.3 | Pass |
+| Full remote tagged flow | v0.4.3 | Owner-approved exception on 2026-09-29: owner reported attachments working in daily use; diff limited to attachment detection; v0.4.2 remote evidence carried forward | Pass |
+
+## Historical v0.4.2 matrix
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
