@@ -320,7 +320,7 @@ describe("public landing page", () => {
     const html = await read("index.html");
 
     expect(html).toContain('const bubbleStyles = ["blue", "gray", "whatsapp-sent", "whatsapp-received"];');
-    expect(html).toContain("background: #d9fdd3;");
+    expect(html).toContain("background: #e0fbd6;");
     expect(html).toContain("color: #111b21;");
     expect(html).toContain("color: #667781;");
     expect(html).toContain("content: attr(data-time);");
