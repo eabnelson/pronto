@@ -516,6 +516,18 @@ describe("public landing page", () => {
     expect(setup).toContain("SMS messages do not activate Pronto");
   });
 
+  test("guides WhatsApp setup without deciding or linking for the owner", async () => {
+    const setup = await read("setup.md");
+
+    expect(setup).toContain("brew install openclaw/tap/wacli");
+    expect(setup).toContain("WhatsApp risk prompt");
+    expect(setup).toContain("never scan, approve,\n  or link a device for me");
+    expect(setup).toContain("Settings → Linked devices → Link a device");
+    expect(setup).toContain("WhatsApp\n   alone needs no Full Disk Access");
+    expect(setup).toContain('"$PRONTO" tags add @plan --app whatsapp');
+    expect(setup).toContain('"$PRONTO" whatsapp link');
+  });
+
   test("grants setup and installed executables Full Disk Access at the right times", async () => {
     const setup = await read("setup.md");
     const setupCommand = setup.indexOf('"$PRONTO_CANDIDATE" setup');
