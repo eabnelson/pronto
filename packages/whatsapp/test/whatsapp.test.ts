@@ -1,7 +1,7 @@
 import { setDefaultTimeout, afterEach, expect, test } from "bun:test";
 import { readFile, stat, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { createProntoWhatsapp, type WhatsappEvent, type WhatsappHealth, type WhatsappLinkStep, type WhatsappRecoveryOutcome } from "../src/index";
+import { createProntoWhatsapp, WhatsappAttachmentExpiredError, type WhatsappEvent, type WhatsappHealth, type WhatsappLinkStep, type WhatsappRecoveryOutcome } from "../src/index";
 import {
   ALICE,
   BOB,
@@ -459,6 +459,86 @@ test("presence sends typing and paused through the running sync", async () => {
   const presence = await h.invocations("presence");
   expect(presence.map((entry) => entry.command)).toEqual(["presence typing", "presence paused"]);
   expect(presence[0]!.args).toContain(`--to=${ALICE}`);
+});
+
+test("reply with a file sends it captioned and quoted through the running sync", async () => {
+  const h = await setup({ auth: LINKED, send: { id: "3EB0FILE", mode: "ok" }, syncRuns: [{}] });
+  await h.module.subscribe(collector().input);
+  const photo = join(h.dir, "chart.png");
+  const voice = join(h.dir, "memo.m4a");
+  await writeFile(photo, "png bytes");
+  await writeFile(voice, "m4a bytes");
+  const outcome = await h.module.reply({
+    conversation: h.reference(OWNER),
+    filePath: photo,
+    quote: { providerMessageId: "ORIG", sender: OWNER },
+    text: "Here is the chart",
+  });
+  expect(outcome).toEqual({ providerMessageId: "3EB0FILE", status: "confirmed" });
+  await h.module.reply({ conversation: h.reference(ALICE), filePath: voice, text: "Listen" });
+  const [first, second] = await h.invocations("send");
+  expect(first!.command).toBe("send file");
+  expect(first!.args).toEqual(expect.arrayContaining([
+    `--to=${OWNER}`, `--file=${photo}`, "--caption=Here is the chart", "--as=auto",
+    "--reply-to=ORIG", `--reply-to-sender=${OWNER}`,
+  ]));
+  expect(first!.args).not.toContain("--allow-self");
+  expect(first!.args.some((arg) => arg.startsWith("--message"))).toBe(false);
+  expect(second!.args).toContain("--as=document");
+});
+
+test("reply refuses unsendable files without invoking wacli and never retries a file send", async () => {
+  const h = await setup({ auth: LINKED }, {}, { attachmentTimeoutMs: 400 });
+  const file = join(h.dir, "report.pdf");
+  await writeFile(file, "pdf bytes");
+  const reply = async (filePath: string) => {
+    return await h.module.reply({ conversation: h.reference(ALICE), filePath, text: "report" });
+  };
+  expect(await reply("report.pdf")).toMatchObject({ retryable: false, status: "failed" });
+  expect(await reply(join(h.dir, "missing.pdf"))).toMatchObject({ retryable: false, status: "failed" });
+  expect(await reply(h.dir)).toMatchObject({ retryable: false, status: "failed" });
+  expect(await h.invocations("send")).toEqual([]);
+
+  await h.writeScenario({ auth: LINKED, send: { mode: "hang" } });
+  expect(await reply(file)).toEqual({ status: "ambiguous" });
+  await h.writeScenario({ auth: LINKED, send: { error: "invalid recipient", mode: "error" } });
+  expect(await reply(file)).toEqual({ reason: "invalid recipient", retryable: false, status: "failed" });
+  expect((await h.invocations("send file")).length).toBe(2);
+});
+
+test("react goes through the running sync with the message sender", async () => {
+  const h = await setup({ auth: LINKED, send: { id: "3EB0REACT", mode: "ok" }, syncRuns: [{}] });
+  const react = async (chat: string, sender: string | null, id = "ORIG") => {
+    return await h.module.react({ conversation: h.reference(chat), emoji: "👀", providerMessageId: id, sender });
+  };
+  expect(await react(ALICE, ALICE)).toMatchObject({ retryable: true, status: "failed" });
+  await h.module.subscribe(collector().input);
+  await waitFor(async () => (await stat(`${h.store}/.send.sock`).catch(() => null)) !== null);
+  await Bun.sleep(50);
+  expect(await react(GROUP, BOB)).toEqual({ providerMessageId: "3EB0REACT", status: "confirmed" });
+  expect(await react(ALICE, ALICE)).toMatchObject({ status: "confirmed" });
+  expect(await react(GROUP, null)).toMatchObject({ retryable: false, status: "failed" });
+  expect(await react(ALICE, ALICE, "not an id!")).toMatchObject({ retryable: false, status: "failed" });
+  const reactions = await h.invocations("send react");
+  expect(reactions).toHaveLength(2);
+  expect(reactions[0]!.args).toEqual(expect.arrayContaining([
+    `--to=${GROUP}`, "--id=ORIG", "--reaction=👀", `--sender=${BOB}`,
+  ]));
+  expect(reactions[1]!.args).toContain(`--sender=${ALICE}`);
+});
+
+test("expired media fails with a typed attachment-expired error", async () => {
+  const h = await setup({
+    auth: LINKED,
+    media: { OLD: { content: "", expired: true, name: "old.jpg" } },
+    messages: [row({ id: "OLD", MediaType: "image", MimeType: "image/jpeg", text: "", ts: iso(5_000) })],
+  });
+  const failure = await h.module.materializeAttachment({
+    conversation: h.reference(ALICE), maxBytes: 1_024, providerMessageId: "OLD",
+  }).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(WhatsappAttachmentExpiredError);
+  expect((failure as WhatsappAttachmentExpiredError).code).toBe("attachment-expired");
+  expect(await h.invocations("media retry")).toEqual([]);
 });
 
 test("link yields QR codes then the linked account", async () => {
