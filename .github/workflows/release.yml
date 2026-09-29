@@ -157,6 +157,33 @@ jobs:
               --key "$PRONTO_NOTARY_KEY_PATH" > "$RUNNER_TEMP/$asset-notary-log.json"
             test "$(jq -r '.status' "$RUNNER_TEMP/$asset-notary-log.json")" = "Accepted"
           done
+      - name: Build, sign, and notarize the menu bar app
+        env:
+          PRONTO_NOTARY_KEY_ID: ${{ secrets.PRONTO_NOTARY_KEY_ID }}
+          PRONTO_NOTARY_ISSUER_ID: ${{ secrets.PRONTO_NOTARY_ISSUER_ID }}
+          PRONTO_RELEASE_VERSION: ${{ steps.release-version.outputs.package-version }}
+        run: |
+          identity="$(security find-identity -v -p codesigning "$PRONTO_SIGNING_KEYCHAIN" | awk '/Developer ID Application:/ { print $2; exit }')"
+          test -n "$identity" || { echo "Developer ID Application identity unavailable" >&2; exit 1; }
+          menubar="$RUNNER_TEMP/menubar"
+          apps/menubar/scripts/bundle.sh "$menubar" --universal --sign-identity "$identity"
+          app="$menubar/Pronto.app"
+          requirement="identifier \"dev.pronto.menubar\" and anchor apple generic and certificate leaf[subject.OU] = \"$PRONTO_SIGNING_TEAM_IDENTIFIER\""
+          codesign --verify --deep --strict --verbose=4 -R="$requirement" "$app"
+          grep -Eq '^CodeDirectory .*flags=.*runtime' <<< "$(codesign -dv --verbose=4 "$app" 2>&1)"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" = "$PRONTO_RELEASE_VERSION"
+          lipo -archs "$app/Contents/MacOS/Pronto" | grep -q arm64
+          lipo -archs "$app/Contents/MacOS/Pronto" | grep -q x86_64
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/Pronto-menubar-notarize.zip"
+          notarization="$(xcrun notarytool submit "$RUNNER_TEMP/Pronto-menubar-notarize.zip" \
+            --issuer "$PRONTO_NOTARY_ISSUER_ID" \
+            --key-id "$PRONTO_NOTARY_KEY_ID" \
+            --key "$PRONTO_NOTARY_KEY_PATH" \
+            --wait --output-format json)"
+          test "$(jq -r '.status' <<< "$notarization")" = "Accepted"
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          ditto -c -k --keepParent "$app" release/Pronto-menubar.zip
       - name: Smoke test signed release artifacts
         env:
           PRONTO_RELEASE_VERSION: ${{ steps.release-version.outputs.package-version }}
@@ -177,7 +204,8 @@ jobs:
           npm pack ./packages/messages --pack-destination ./release
           npm pack ./packages/whatsapp --pack-destination ./release
           cd release
-          shasum -a 256 pronto-darwin-arm64 pronto-darwin-x64 pronto-update.json > pronto.sha256
+          shasum -a 256 pronto-darwin-arm64 pronto-darwin-x64 pronto-update.json \
+            Pronto-menubar.zip pronto-menubar-update.json > pronto.sha256
           shasum -a 256 -c pronto.sha256
           shasum -a 256 "${{ steps.release-version.outputs.package-file }}" > pronto-imessage.sha256
           shasum -a 256 -c pronto-imessage.sha256
@@ -192,7 +220,7 @@ jobs:
           npm pack ./packages/whatsapp --pack-destination ./release
           bun -e 'console.log(JSON.stringify({version: process.env.PRONTO_CANDIDATE_VERSION, sourceRevision: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, tag: process.env.RELEASE_TAG}))' > release/pronto-candidate.json
           cd release
-          shasum -a 256 pronto-darwin-arm64 pronto-darwin-x64 pronto-candidate.json > pronto.sha256
+          shasum -a 256 pronto-darwin-arm64 pronto-darwin-x64 Pronto-menubar.zip pronto-candidate.json > pronto.sha256
           shasum -a 256 -c pronto.sha256
           shasum -a 256 "${{ steps.release-version.outputs.package-file }}" > pronto-imessage.sha256
           shasum -a 256 -c pronto-imessage.sha256
@@ -204,7 +232,7 @@ jobs:
           keychain="$RUNNER_TEMP/pronto-signing.keychain-db"
           security delete-keychain "$keychain" >/dev/null 2>&1 || true
           find "$RUNNER_TEMP" -maxdepth 1 -type f \
-            \( -name 'pronto-developer-id.p12' -o -name 'pronto-notary-key.p8' -o -name 'pronto-*-notary-log.json' -o -name 'pronto-darwin-*.zip' \) \
+            \( -name 'pronto-developer-id.p12' -o -name 'pronto-notary-key.p8' -o -name 'pronto-*-notary-log.json' -o -name 'pronto-darwin-*.zip' -o -name 'Pronto-menubar-notarize.zip' \) \
             -delete
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -214,6 +242,8 @@ jobs:
             release/pronto-darwin-arm64
             release/pronto-darwin-x64
             release/pronto-update.json
+            release/Pronto-menubar.zip
+            release/pronto-menubar-update.json
             release/pronto-candidate.json
             release/pronto.sha256
             release/pronto-imessage-*.tgz
@@ -277,6 +307,8 @@ jobs:
             release-assets/pronto-darwin-arm64
             release-assets/pronto-darwin-x64
             release-assets/pronto-update.json
+            release-assets/Pronto-menubar.zip
+            release-assets/pronto-menubar-update.json
             release-assets/${{ needs.build.outputs.package-file }}
             release-assets/${{ needs.build.outputs.whatsapp-package-file }}
       - name: Create draft release
@@ -288,6 +320,7 @@ jobs:
           gh release upload "$RELEASE_TAG" \
             release-assets/pronto-darwin-arm64 release-assets/pronto-darwin-x64 \
             release-assets/pronto-update.json release-assets/pronto.sha256 \
+            release-assets/Pronto-menubar.zip release-assets/pronto-menubar-update.json \
             "release-assets/$PACKAGE_FILE" release-assets/pronto-imessage.sha256 \
             "release-assets/$WHATSAPP_PACKAGE_FILE" release-assets/pronto-whatsapp.sha256
           RELEASE_ID="$(
@@ -303,6 +336,8 @@ jobs:
                     "pronto-darwin-x64",
                     "pronto-update.json",
                     "pronto.sha256",
+                    "Pronto-menubar.zip",
+                    "pronto-menubar-update.json",
                     "pronto-imessage.sha256",
                     "pronto-whatsapp.sha256",
                     $package,
