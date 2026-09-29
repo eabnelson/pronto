@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ChannelActivation, ChatAddress } from "../../packages/cli/src/channels/types";
+import type { ChannelActivation, ChatAddress, TurnChannel } from "../../packages/cli/src/channels/types";
 import { ImessageChannel } from "../../packages/cli/src/imessage/channel";
 import { ImsgTransport } from "../../packages/cli/src/imessage/transport";
 import type {
@@ -220,6 +220,19 @@ test("the iMessage channel speaks chat addresses without changing transport beha
     guid: "sent-guid",
   });
   expect(messages.replyInput).toEqual({ conversation: event().conversation, text: "reply" });
+  expect(await channel.sendText(
+    { channel: "imessage", id: "42" },
+    "chart",
+    undefined,
+    { filePath: "/private/staging/reply-1/chart.png" },
+  )).toEqual({ disposition: "confirmed", guid: "sent-guid" });
+  expect(messages.replyInput).toEqual({
+    conversation: event().conversation,
+    filePath: "/private/staging/reply-1/chart.png",
+    text: "chart",
+  });
+  expect(channel.maxAttachmentBytes).toBe(100 * 1024 * 1024);
+  expect((channel as TurnChannel).acknowledge).toBeUndefined();
   expect(channel.formatReply("@helper", "Done.")).toBe("Helper\nDone.");
   expect(await channel.currentChat.details({ channel: "imessage", id: "42" })).toEqual({
     owner_participated: true,

@@ -5,6 +5,7 @@ import type {
   ChannelRecoveryOutcome,
   ChannelWatch,
   ChatAddress,
+  OutboundAttachment,
   SendDisposition,
 } from "../channels/types";
 import { imessageChatId } from "../storage/chat-key";
@@ -21,6 +22,8 @@ export function imessageAddress(chatId: number): ChatAddress {
 export class ImessageChannel implements Channel {
   readonly kind = "imessage" as const;
   readonly conversationLabel = "iMessage or RCS";
+  /** iMessage's attachment limit; the Messages module adds none of its own. */
+  readonly maxAttachmentBytes = 100 * 1024 * 1024;
   readonly currentChat: CurrentChatSource;
   readonly #onMessageRowId: ((rowId: number) => void | Promise<void>) | undefined;
   readonly #source: ImsgCurrentChatSource;
@@ -104,11 +107,17 @@ export class ImessageChannel implements Channel {
     );
   }
 
-  async sendText(chat: ChatAddress, text: string, conversation?: unknown): Promise<SendDisposition> {
+  async sendText(
+    chat: ChatAddress,
+    text: string,
+    conversation?: unknown,
+    attachment?: OutboundAttachment,
+  ): Promise<SendDisposition> {
     return await this.#transport.sendText(
       imessageChatId(chat),
       text,
       conversation as Parameters<ImsgTransport["sendText"]>[2],
+      attachment?.filePath,
     );
   }
 

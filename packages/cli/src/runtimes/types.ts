@@ -1,9 +1,11 @@
 import type { RuntimeKind } from "../config";
-import { MAX_RUNTIME_TEXT_CHARACTERS, MAX_WORKSPACE_CANDIDATES } from "../workspace";
+import { MAX_PATH_CHARACTERS, MAX_RUNTIME_TEXT_CHARACTERS, MAX_WORKSPACE_CANDIDATES } from "../workspace";
 
 export type ToolActivity = "none" | "observed" | "unknown";
 
 export interface RuntimeOutput {
+  /** Absolute path of one local file to send with the reply; validated before staging. */
+  attachmentPath?: string;
   reply: string;
   summary?: string;
   workspaceCandidates?: string[];
@@ -98,7 +100,16 @@ export function validateRuntimeOutput(value: unknown): RuntimeOutput | null {
     workspaceCandidates = output.workspaceCandidates.map((candidate) => candidate.trim());
     if (workspaceCandidates.some((candidate) => candidate.length === 0)) return null;
   }
+  let attachmentPath: string | undefined;
+  if (output.attachmentPath !== undefined && output.attachmentPath !== null) {
+    if (typeof output.attachmentPath !== "string" || output.attachmentPath.length > MAX_PATH_CHARACTERS) {
+      return null;
+    }
+    const trimmed = output.attachmentPath.trim();
+    if (trimmed.length > 0) attachmentPath = trimmed;
+  }
   return {
+    ...(attachmentPath === undefined ? {} : { attachmentPath }),
     reply,
     ...(summary === undefined ? {} : { summary }),
     ...(workspaceCandidates === undefined ? {} : { workspaceCandidates }),
@@ -108,6 +119,11 @@ export function validateRuntimeOutput(value: unknown): RuntimeOutput | null {
 export const RUNTIME_OUTPUT_SCHEMA = {
   additionalProperties: false,
   properties: {
+    attachmentPath: {
+      maxLength: MAX_PATH_CHARACTERS,
+      minLength: 1,
+      type: ["string", "null"],
+    },
     reply: { maxLength: MAX_RUNTIME_TEXT_CHARACTERS, minLength: 1, type: "string" },
     summary: {
       maxLength: MAX_RUNTIME_TEXT_CHARACTERS,
@@ -121,6 +137,6 @@ export const RUNTIME_OUTPUT_SCHEMA = {
       type: ["array", "null"],
     },
   },
-  required: ["reply", "summary", "workspaceCandidates"],
+  required: ["attachmentPath", "reply", "summary", "workspaceCandidates"],
   type: "object",
 } as const;

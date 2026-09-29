@@ -18,6 +18,8 @@ export interface ImessageChannelConfig {
 }
 
 export interface WhatsappChannelConfig {
+  /** React with 👀 to a tagged message when its turn starts. Absent means on. */
+  acknowledge?: boolean;
   enabled: boolean;
   riskConsentVersion: typeof WHATSAPP_RISK_CONSENT_VERSION;
   tags: string[];
@@ -181,6 +183,7 @@ export function createConfig(input: ConfigInput): ProntoConfig {
       throw new Error("WhatsApp risk consent is missing; run pronto setup");
     }
     channels.whatsapp = {
+      ...(whatsapp.acknowledge === undefined ? {} : { acknowledge: whatsapp.acknowledge }),
       enabled: whatsapp.enabled,
       riskConsentVersion: WHATSAPP_RISK_CONSENT_VERSION,
       tags: normalizeTags(whatsapp.tags),
@@ -329,11 +332,13 @@ function parseChannels(raw: unknown): ConfigInput["channels"] {
     } else if (kind === "whatsapp") {
       if (
         typeof channel.enabled !== "boolean" || typeof channel.wacliPath !== "string" ||
-        typeof channel.riskConsentVersion !== "number" || tags === null
+        typeof channel.riskConsentVersion !== "number" || tags === null ||
+        (channel.acknowledge !== undefined && typeof channel.acknowledge !== "boolean")
       ) {
         throw new Error("Invalid WhatsApp configuration");
       }
       channels.whatsapp = {
+        ...(typeof channel.acknowledge === "boolean" ? { acknowledge: channel.acknowledge } : {}),
         enabled: channel.enabled,
         riskConsentVersion: channel.riskConsentVersion,
         tags,

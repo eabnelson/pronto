@@ -185,6 +185,12 @@ exchanges, and one compact summary, all under fixed character budgets. Provider
 sessions are never resumed. Ordinary chat messages, participant rosters,
 attachment metadata, and tool results are not archived by `pronto`.
 
+The agent can send one file it created or chose with its reply, such as a chart
+or a report. `pronto` sends only a readable regular file (not a symbolic link)
+of up to 100 MB on iMessage or 20 MB on WhatsApp, copies it into a private
+staging folder first, and deletes the copy once the send settles. If the file
+does not qualify, the reply text is sent alone.
+
 ## WhatsApp
 
 WhatsApp support uses [`wacli`](https://github.com/openclaw/wacli), which links
@@ -203,12 +209,15 @@ WhatsApp follows the same rules as iMessage:
   after it reconnects if they are less than 24 hours old; live messages older
   than five minutes are ignored.
 - The reply is sent from your account into the same chat, quoting the tagged
-  message, with the tag name as a bold first line. WhatsApp shows your account
-  typing while the agent works.
+  message, with the tag name as a bold first line. When the agent starts, your
+  account reacts to the tagged message with 👀 and shows typing while it works.
+  Set `"acknowledge": false` under `channels.whatsapp` in the configuration to
+  turn the reaction off.
 - The agent can open photos, videos, voice notes, and documents from the chat,
   such as a captioned photo asking `@helper what is in this?`. Each is downloaded
   on demand into a private temporary copy (up to 20 MB) that is deleted when the
-  listener stops, the same way as iMessage attachments.
+  listener stops, the same way as iMessage attachments. Media that WhatsApp no
+  longer keeps on its servers cannot be opened; the agent is told it expired.
 - A send that might have been delivered is never retried.
 
 `pronto` keeps its own WhatsApp session and message index under
