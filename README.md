@@ -28,7 +28,9 @@ Tags are not authentication. Every current or future participant in an eligible 
 your agent. `pronto` deliberately starts Claude Code and Codex with their approval
 and sandbox checks bypassed, so the agent can read or modify files, run commands,
 use configured tools anywhere your macOS user can access, and send conversation
-material to its model provider. Untagged chat history and attachment content are
+material to its model provider. The agent can also send a file from your Mac into
+the chat with its reply, so anyone who can use your tag can ask it for one.
+Untagged chat history and attachment content are
 untrusted evidence, but can still influence the model. Only use `pronto` in chats
 whose participants you trust, and tell them that tagged and nearby conversation
 material may be processed by your model provider.

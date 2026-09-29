@@ -12,4 +12,6 @@ When a turn's runtime starts on a WhatsApp message, Pronto reacts to that messag
 
 ## Consequences
 
+Any participant who can trigger a turn can ask the agent to send a file it can read. This adds no access the unrestricted agent lacked (it could already paste file contents into a text reply), but it makes sending documents easy, so the setup trust disclosure states it explicitly.
+
 WhatsApp media that has expired off WhatsApp's servers fails with a typed `attachment-expired` error that the agent sees. Recovering it needs `wacli media retry`, which asks the phone to upload the media again but requires the store lock that the running `sync --follow` holds, has no delegated form, and cannot target a single message. Pronto therefore does not try it.
