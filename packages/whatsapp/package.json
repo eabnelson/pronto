@@ -1,0 +1,36 @@
+{
+  "name": "pronto-whatsapp",
+  "version": "0.4.3",
+  "description": "Reusable local WhatsApp transport for Pronto consumers, built on wacli",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/eabnelson/pronto#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eabnelson/pronto.git",
+    "directory": "packages/whatsapp"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./dist/index.js",
+      "import": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "whatsapp",
+    "wacli",
+    "macos"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

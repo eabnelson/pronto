@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { ChatAddress } from "../../packages/cli/src/channels/types";
+import { imessageAddress } from "../../packages/cli/src/imessage/channel";
 import {
   ConversationBroker,
   type CurrentChatSource,
@@ -19,18 +21,18 @@ class FakeSource implements CurrentChatSource {
   calls: Array<{ chatId: number; tool: string }> = [];
   attachmentPath: string | null = null;
 
-  async details(chatId: number): Promise<unknown> {
-    this.calls.push({ chatId, tool: "details" });
+  async details(chat: ChatAddress): Promise<unknown> {
+    this.calls.push({ chatId: Number(chat.id), tool: "details" });
     return { participants: ["participant"], service: "iMessage" };
   }
 
-  async history(chatId: number, limit: number): Promise<unknown> {
-    this.calls.push({ chatId, tool: "history" });
+  async history(chat: ChatAddress, limit: number): Promise<unknown> {
+    this.calls.push({ chatId: Number(chat.id), tool: "history" });
     return { messages: [{ text: "x".repeat(limit * 20) }] };
   }
 
-  async attachment(chatId: number, messageGuid: string, attachmentId: string) {
-    this.calls.push({ chatId, tool: "attachment" });
+  async attachment(chat: ChatAddress, messageGuid: string, attachmentId: string) {
+    this.calls.push({ chatId: Number(chat.id), tool: "attachment" });
     return this.attachmentPath === null
       ? null
       : { attachmentId, messageGuid, name: "notes.txt", path: this.attachmentPath };
@@ -40,7 +42,7 @@ class FakeSource implements CurrentChatSource {
 test("binds an opaque capability to exactly one chat", async () => {
   const source = new FakeSource();
   const broker = new ConversationBroker(source);
-  const capability = broker.issue(42);
+  const capability = broker.issue(imessageAddress(42));
 
   expect(await broker.query(capability.token, "current_chat_details", {})).toMatchObject({
     service: "iMessage",
@@ -56,13 +58,13 @@ describe("capability lifecycle", () => {
   test("fails closed after revocation or expiry", async () => {
     let now = 100;
     const broker = new ConversationBroker(new FakeSource(), { now: () => now, ttlMs: 10 });
-    const revoked = broker.issue(1);
+    const revoked = broker.issue(imessageAddress(1));
     broker.revoke(revoked.token);
     await expect(broker.query(revoked.token, "current_chat_details", {})).rejects.toThrow(
       "Invalid or expired",
     );
 
-    const expired = broker.issue(2);
+    const expired = broker.issue(imessageAddress(2));
     now += 11;
     await expect(broker.query(expired.token, "current_chat_details", {})).rejects.toThrow(
       "Invalid or expired",
@@ -74,7 +76,7 @@ describe("capability lifecycle", () => {
       maxCallCharacters: 100,
       maxTurnCharacters: 150,
     });
-    const capability = broker.issue(1);
+    const capability = broker.issue(imessageAddress(1));
     const first = await broker.query(capability.token, "current_chat_history", { limit: 50 });
     expect(JSON.stringify(first).length).toBeLessThanOrEqual(100);
     await expect(
@@ -91,7 +93,7 @@ test("returns only a canonical path selected by the fixed-chat source", async ()
   const source = new FakeSource();
   source.attachmentPath = file;
   const broker = new ConversationBroker(source);
-  const capability = broker.issue(7);
+  const capability = broker.issue(imessageAddress(7));
 
   expect(
     await broker.query(capability.token, "current_chat_attachment", {

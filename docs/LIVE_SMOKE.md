@@ -62,6 +62,31 @@ of those message-processing surfaces.
 5. Send `<tag> who is the synthetic release owner?` and confirm the answer uses
    prior tagged memory.
 
+## WhatsApp
+
+Use a WhatsApp account whose owner accepts the linked-device risk described in the
+README, and chats whose participants know the test is happening.
+
+1. Run setup with `wacli` installed, choose both apps, give one tag both apps and
+   one tag WhatsApp only, accept the WhatsApp disclosure, and link by scanning the
+   terminal QR code. Confirm setup does not ask for Full Disk Access when only
+   WhatsApp is chosen.
+2. Run `pronto status` and confirm `whatsapp` reports `ready` with its tags, and
+   `pronto tags` lists each tag with its apps.
+3. From the phone, send `<tag> reply with exactly: pronto smoke ok` in
+   "Message yourself", a one-to-one chat, and a group where the owner has spoken.
+   Confirm each gets exactly one reply from the owner's account, quoting the tagged
+   message, with the bold tag heading, and that the chat shows typing meanwhile.
+4. Have another participant send a tagged message in the group and confirm it runs
+   once. Confirm a WhatsApp-only tag does not activate in iMessage and an
+   iMessage-only tag does not activate in WhatsApp.
+5. Stop the listener, send a tagged message, wait over five minutes, and start it
+   again. Confirm the message is answered once after reconnecting.
+6. Wait one minute after each reply and confirm no echo-loop turn ran.
+7. Log the device out from the phone (Linked devices). Confirm `pronto status`
+   reports `whatsapp needs_link`, iMessage still answers, and
+   `pronto whatsapp link` restores WhatsApp.
+
 ## Recovery and inspection
 
 1. Run `~/Library/Application\ Support/pronto/bin/pronto status --chats`; confirm it prints only opaque `c_...` keys and
@@ -74,6 +99,6 @@ of those message-processing surfaces.
    text, participant handles, chat identifiers, provider output, or attachment
    paths.
 
-Record the date, macOS version, `imsg --version`, selected runtime versions, and
+Record the date, macOS version, `imsg --version`, `wacli --version`, selected runtime versions, and
 pass/fail result in `docs/RELEASE_QUALIFICATION.md`. Never record real chat
 content or participant identifiers.

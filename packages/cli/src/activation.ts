@@ -26,7 +26,8 @@ export function findTagRanges(text: string, tag: string): readonly [number, numb
   });
 }
 
-function removeOneMatchedTag(
+/** Exactly one distinct configured tag must match; it is removed from the request. Shared by every app. */
+export function removeOneMatchedTag(
   text: string,
   tags: readonly string[],
 ): { activationTag: string; request: string } | null {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import packageJson from "../package.json" with { type: "json" };
 import messagesPackageJson from "../packages/messages/package.json" with { type: "json" };
+import whatsappPackageJson from "../packages/whatsapp/package.json" with { type: "json" };
 import cliPackageJson from "../packages/cli/package.json" with { type: "json" };
 import { providerOwnershipViolations } from "./provider-ownership";
 import { releaseWorkflowViolations } from "./release-workflow-validation";
@@ -29,8 +30,12 @@ async function sourceFiles(directory: string): Promise<string[]> {
 }
 
 const failures: string[] = [];
-if (cliPackageJson.version !== packageJson.version || messagesPackageJson.version !== packageJson.version) {
-  failures.push("workspace, CLI and Messages package versions must agree");
+if (
+  cliPackageJson.version !== packageJson.version ||
+  messagesPackageJson.version !== packageJson.version ||
+  whatsappPackageJson.version !== packageJson.version
+) {
+  failures.push("workspace, CLI, Messages and WhatsApp package versions must agree");
 }
 const workflowPaths = [
   ".github/workflows/ci.yml",
@@ -65,6 +70,19 @@ if (messagesPackageJson.repository?.directory !== "packages/messages") {
 if (Object.keys(messagesPackageJson.exports).join(",") !== ".") {
   failures.push("Messages package root must not export internal RPC subpaths");
 }
+if (whatsappPackageJson.name !== "pronto-whatsapp") {
+  failures.push("WhatsApp package must be named pronto-whatsapp");
+}
+if (whatsappPackageJson.license !== "MIT") failures.push("WhatsApp package license must be MIT");
+if ("private" in whatsappPackageJson && whatsappPackageJson.private === true) {
+  failures.push("WhatsApp package must be publishable");
+}
+if (whatsappPackageJson.repository?.directory !== "packages/whatsapp") {
+  failures.push("WhatsApp package repository directory is missing");
+}
+if (Object.keys(whatsappPackageJson.exports).join(",") !== ".") {
+  failures.push("WhatsApp package root must not export internal subpaths");
+}
 
 const [license, notices, provenance] = await Promise.all([
   read("LICENSE"),
@@ -86,6 +104,9 @@ const requiredFiles = [
   "dist/pronto",
   "packages/messages/dist/index.js",
   "packages/messages/dist/index.d.ts",
+  "packages/whatsapp/README.md",
+  "packages/whatsapp/dist/index.js",
+  "packages/whatsapp/dist/index.d.ts",
 ];
 const requiredFileChecks = await Promise.all(
   requiredFiles.map(async (path) => ({
@@ -119,6 +140,9 @@ if (!license.startsWith("MIT License")) failures.push("MIT license text is missi
 if (!notices.includes("Copyright (c) 2026 Peter Steinberger")) {
   failures.push("imsg copyright notice is missing");
 }
+if (!notices.includes("## wacli") || !notices.includes("Copyright (c) 2023 Anthony Fu")) {
+  failures.push("wacli or uqr third-party notice is missing");
+}
 if (!provenance.includes("implemented clean-room")) {
   failures.push("clean-room provenance declaration is missing");
 }
@@ -128,7 +152,10 @@ for (const file of await sourceFiles("packages")) {
     failures.push(`${file} imports a Studio Four package`);
   }
 }
-for (const file of await sourceFiles("packages/messages/src")) {
+for (const file of [
+  ...await sourceFiles("packages/messages/src"),
+  ...await sourceFiles("packages/whatsapp/src"),
+]) {
   const source = await read(file);
   if (/\bBun\b/.test(source)) failures.push(`${file} uses a Bun global`);
 }
@@ -167,73 +194,89 @@ if (!qualification.includes('"--dangerously-skip-permissions"')) {
   failures.push("Claude Code qualification must require unrestricted no-prompt mode");
 }
 
-const packageConsumer = await mkdtemp(join(tmpdir(), "pronto-package-consumer-"));
-try {
-  const packageBuild = Bun.spawn(
-    ["npm", "pack", "--json", "--pack-destination", packageConsumer],
-    { cwd: join(root, "packages", "messages"), stderr: "pipe", stdout: "pipe" },
-  );
-  const [packageExitCode, packageOutput, packageError] = await Promise.all([
-    packageBuild.exited,
-    new Response(packageBuild.stdout).text(),
-    new Response(packageBuild.stderr).text(),
-  ]);
-  if (packageExitCode !== 0) {
-    failures.push(`pronto-imessage is not packable: ${packageError}`);
-  } else {
+async function validatePackage(input: {
+  readonly directory: string;
+  readonly entryPoint: string;
+  readonly name: string;
+}): Promise<void> {
+  const packageConsumer = await mkdtemp(join(tmpdir(), "pronto-package-consumer-"));
+  try {
+    const packageBuild = Bun.spawn(
+      ["npm", "pack", "--json", "--pack-destination", packageConsumer],
+      { cwd: join(root, input.directory), stderr: "pipe", stdout: "pipe" },
+    );
+    const [packageExitCode, packageOutput, packageError] = await Promise.all([
+      packageBuild.exited,
+      new Response(packageBuild.stdout).text(),
+      new Response(packageBuild.stderr).text(),
+    ]);
+    if (packageExitCode !== 0) {
+      failures.push(`${input.name} is not packable: ${packageError}`);
+      return;
+    }
     const packResult = JSON.parse(packageOutput) as Array<{
       filename: string;
       files: Array<{ path: string }>;
     }>;
     const packed = packResult[0];
     if (packed === undefined) {
-      failures.push("npm pack did not report a pronto-imessage artifact");
-    } else {
-      if (packed.files.some((file) => /(?:^|\/)\.git(?:\/|$)/.test(file.path))) {
-        failures.push("pronto-imessage package contains Git history");
-      }
-      const packageFiles = await sourceFiles("packages/messages");
-      for (const file of packageFiles) {
-        if (/studio[- _]?four|@studio-four\//i.test(await read(file))) {
-          failures.push(`${file} contains a private Studio Four identifier`);
-        }
-      }
-      await writeFile(join(packageConsumer, "package.json"), JSON.stringify({
-        dependencies: { "pronto-imessage": `file:./${packed.filename}` },
-        private: true,
-        type: "module",
-      }));
-      const install = Bun.spawn(
-        ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund", "--offline"],
-        { cwd: packageConsumer, stderr: "pipe", stdout: "pipe" },
-      );
-      if (await install.exited !== 0) {
-        failures.push(
-          `clean consumer could not install pronto-imessage: ${await new Response(install.stderr).text()}`,
-        );
-      } else {
-        for (const runtime of ["node", "bun"]) {
-          const packageImport = Bun.spawn(
-            [
-              runtime,
-              "--input-type=module",
-              "--eval",
-              'import("pronto-imessage").then((module) => { if (typeof module.createProntoMessages !== "function") process.exit(1); })',
-            ],
-            { cwd: packageConsumer, stderr: "pipe", stdout: "pipe" },
-          );
-          if (await packageImport.exited !== 0) {
-            failures.push(
-              `${runtime} could not import packed pronto-imessage: ${await new Response(packageImport.stderr).text()}`,
-            );
-          }
-        }
+      failures.push(`npm pack did not report a ${input.name} artifact`);
+      return;
+    }
+    if (packed.files.some((file) => /(?:^|\/)\.git(?:\/|$)/.test(file.path))) {
+      failures.push(`${input.name} package contains Git history`);
+    }
+    for (const file of await sourceFiles(input.directory)) {
+      if (/studio[- _]?four|@studio-four\//i.test(await read(file))) {
+        failures.push(`${file} contains a private Studio Four identifier`);
       }
     }
+    await writeFile(join(packageConsumer, "package.json"), JSON.stringify({
+      dependencies: { [input.name]: `file:./${packed.filename}` },
+      private: true,
+      type: "module",
+    }));
+    const install = Bun.spawn(
+      ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund", "--offline"],
+      { cwd: packageConsumer, stderr: "pipe", stdout: "pipe" },
+    );
+    if (await install.exited !== 0) {
+      failures.push(
+        `clean consumer could not install ${input.name}: ${await new Response(install.stderr).text()}`,
+      );
+      return;
+    }
+    for (const runtime of ["node", "bun"]) {
+      const packageImport = Bun.spawn(
+        [
+          runtime,
+          "--input-type=module",
+          "--eval",
+          `import("${input.name}").then((module) => { if (typeof module.${input.entryPoint} !== "function") process.exit(1); })`,
+        ],
+        { cwd: packageConsumer, stderr: "pipe", stdout: "pipe" },
+      );
+      if (await packageImport.exited !== 0) {
+        failures.push(
+          `${runtime} could not import packed ${input.name}: ${await new Response(packageImport.stderr).text()}`,
+        );
+      }
+    }
+  } finally {
+    await rm(packageConsumer, { force: true, recursive: true });
   }
-} finally {
-  await rm(packageConsumer, { force: true, recursive: true });
 }
+
+await validatePackage({
+  directory: "packages/messages",
+  entryPoint: "createProntoMessages",
+  name: "pronto-imessage",
+});
+await validatePackage({
+  directory: "packages/whatsapp",
+  entryPoint: "createProntoWhatsapp",
+  name: "pronto-whatsapp",
+});
 
 if (failures.length > 0) {
   for (const failure of failures) console.error(`release validation: ${failure}`);

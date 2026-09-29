@@ -1,4 +1,5 @@
 import { activatedRequest, type ActivatedRequest } from "../activation";
+import type { SendDisposition } from "../channels/types";
 import type {
   ConversationFacts,
   ConversationReference,
@@ -9,10 +10,7 @@ import type {
 } from "pronto-imessage";
 import { currentChatMessageFromEvent } from "./event-adapter";
 
-export type SendDisposition =
-  | { disposition: "confirmed"; guid: string }
-  | { disposition: "ambiguous" }
-  | { disposition: "failed"; retrySafe: boolean };
+export type { SendDisposition } from "../channels/types";
 
 interface ConversationContext {
   readonly facts: ConversationFacts;

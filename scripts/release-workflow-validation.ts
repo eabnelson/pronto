@@ -9,6 +9,12 @@ const REQUIRED_CONTROLS = [
   ["for ATTEMPT in {1..60}; do", "npm registry propagation retry"],
   ["release/pronto-imessage-*.tgz", "package release artifact"],
   ["sha256sum -c pronto-imessage.sha256", "downloaded package checksum verification"],
+  ["release/pronto-whatsapp-*.tgz", "WhatsApp package release artifact"],
+  ["sha256sum -c pronto-whatsapp.sha256", "downloaded WhatsApp package checksum verification"],
+  [
+    'npm publish "./release-assets/$WHATSAPP_PACKAGE_FILE" --provenance --access public',
+    "WhatsApp npm publication with provenance",
+  ],
   ["environment: release", "protected release environment"],
   ["codesign --force --options runtime --timestamp", "Developer ID hardened-runtime signing"],
   ["grep -Eq '^CodeDirectory .*flags=.*runtime'", "hardened-runtime signature assertion"],
@@ -32,6 +38,8 @@ const REQUIRED_CONTROLS = [
   ],
 ] as const;
 
+const PUBLISHED_PACKAGES = 2;
+
 const ORDERED_STEPS = [
   "- name: Verify owner qualification is complete",
   "- name: Create signed update manifest and checksums",
@@ -40,6 +48,7 @@ const ORDERED_STEPS = [
   "- name: Create draft release",
   "- name: Upload and verify draft assets",
   "- name: Publish and verify pronto-imessage",
+  "- name: Publish and verify pronto-whatsapp",
   "- name: Publish verified release",
 ] as const;
 
@@ -47,6 +56,10 @@ export function releaseWorkflowViolations(workflow: string): string[] {
   const violations: string[] = [];
   for (const [control, label] of REQUIRED_CONTROLS) {
     if (!workflow.includes(control)) violations.push(`release workflow is missing ${label}`);
+  }
+  // Each published package waits for its own registry propagation.
+  if (workflow.split("for ATTEMPT in {1..60}; do").length - 1 < PUBLISHED_PACKAGES) {
+    violations.push("release workflow is missing a registry propagation retry for each package");
   }
 
   let previous = -1;

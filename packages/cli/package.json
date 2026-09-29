@@ -7,6 +7,8 @@
     "pronto": "./src/cli.ts"
   },
   "dependencies": {
-    "pronto-imessage": "workspace:*"
+    "pronto-imessage": "workspace:*",
+    "pronto-whatsapp": "workspace:*",
+    "uqr": "0.1.3"
   }
 }

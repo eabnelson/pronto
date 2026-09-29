@@ -7,6 +7,9 @@ Pronto has two independent release surfaces:
 - The public `pronto-imessage` package is an in-process library. Consumers such
   as Studio Four exact-pin it and ship it inside their own signed host. Pronto
   never mutates a consumer's embedded copy.
+- The public `pronto-whatsapp` package is the equivalent in-process library for
+  WhatsApp. It is released at the same version as `pronto-imessage`, with the
+  same checksum, attestation, and npm provenance steps.
 
 ## User lifecycle
 
@@ -64,6 +67,16 @@ time spent in status probes, so bounded checkpoint recovery can finish. Degraded
 or starting status never counts as ready; failure still restores the previous
 binary and configuration. An older updater retains its older startup budget and
 may need an idle retry if a large recovery backlog prevents timely qualification.
+
+Before replacing the executable, the updater also copies the state database to
+`updates/last-known-good-state.sqlite` without migrating it. If the candidate
+fails and has migrated the database past the schema the previous executable
+supports, rollback restores that copy; otherwise the candidate's state is kept.
+Updaters without this step restore only the executable and configuration, so a
+release that raises the schema of every installation must set
+`minimumUpdaterVersion` to a release that includes it. The schema that stores
+WhatsApp chats avoids this: it is applied only when WhatsApp is enabled, which
+always happens after an update has committed.
 
 The listener's LaunchAgent requests a finite 120-second exit window; launchd may
 apply a shorter effective limit (60 seconds was reported on macOS 26.5.1 during

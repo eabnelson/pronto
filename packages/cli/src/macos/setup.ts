@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   atomicWritePrivate,
+  type ConfigInput,
   createConfig,
   ensurePrivateDirectory,
   loadConfig,
@@ -33,9 +34,10 @@ import {
   type ProntoPaths,
 } from "./paths";
 import { renderCompatibilityLauncher } from "../compatibility";
+import { CHANNEL_LABELS, type ChannelKind } from "../channels/types";
 import { inspectProntoExecutableIdentity } from "./release-identity";
 
-export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage or RCS conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider. You are responsible for informing participants.`;
+export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage, RCS, or WhatsApp conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider. You are responsible for informing participants.`;
 
 export interface WorkspaceSelection {
   exists: boolean;
@@ -54,17 +56,30 @@ function shellQuote(value: string): string {
 
 export function setupCompletionMessage(
   paths: Pick<ProntoPaths, "executablePath">,
-  tags: readonly string[],
+  tagsByApp: Partial<Record<ChannelKind, readonly string[]>>,
 ): string {
   const executable = shellQuote(paths.executablePath);
+  const tries = [
+    ...(tagsByApp.imessage?.[0] === undefined
+      ? []
+      : [`Send ${tagsByApp.imessage[0]} ping in an iMessage or RCS chat where this Mac owner has already sent a message.`]),
+    ...(tagsByApp.whatsapp?.[0] === undefined
+      ? []
+      : [`Send ${tagsByApp.whatsapp[0]} ping in a WhatsApp chat where you have already sent a message.`]),
+  ];
+  const configured = Object.entries(tagsByApp).length > 1
+    ? Object.entries(tagsByApp)
+      .map(([app, tags]) => `${CHANNEL_LABELS[app as ChannelKind]}: ${tags.join(", ")}`)
+      .join("; ")
+    : Object.values(tagsByApp)[0]?.join(", ") ?? "";
   return `Pronto installed and qualified.
 
 Next steps:
 1. Confirm the background listener is ready:
    ${executable} status
-2. Send ${tags[0]} ping in an iMessage or RCS chat where this Mac owner has already sent a message.
+${tries.map((line, index) => `${index + 2}. ${line}`).join("\n")}
 
-Configured tags: ${tags.join(", ")}
+Configured tags: ${configured}
 Add or remove tags later with ${executable} tags add <tag> and ${executable} tags remove <tag>.`;
 }
 
@@ -91,6 +106,12 @@ export async function loadExistingSetupDefaults(
     } else if (value.version === 2) {
       tags = Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string")
         ? normalizeTags(value.tags)
+        : null;
+    } else if (value.version === 3) {
+      const channels = value.channels as { imessage?: { tags?: unknown } } | undefined;
+      const imessageTags = channels?.imessage?.tags;
+      tags = Array.isArray(imessageTags) && imessageTags.every((tag) => typeof tag === "string")
+        ? normalizeTags(imessageTags)
         : null;
     } else {
       throw new Error(`Unsupported configuration version ${String(value.version)}`);
@@ -548,16 +569,24 @@ export async function createWorkspaceDirectory(path: string): Promise<string> {
 }
 
 export interface CommandDiscovery {
-  imsgPath: string;
+  imsgPath?: string;
   runtimes: Partial<Record<RuntimeKind, string>>;
+  wacliPath?: string;
 }
 
 export type CommandLookup = (command: string) => string | null;
 
 export function discoverCommands(lookup: CommandLookup = (command) => Bun.which(command)): CommandDiscovery {
-  const imsgPath = lookup("imsg");
-  if (imsgPath === null || !isAbsolute(imsgPath)) {
-    throw new Error("imsg was not found on PATH; install it before running setup");
+  const found = (command: string) => {
+    const path = lookup(command);
+    return path !== null && isAbsolute(path) ? path : undefined;
+  };
+  const imsgPath = found("imsg");
+  const wacliPath = found("wacli");
+  if (imsgPath === undefined && wacliPath === undefined) {
+    throw new Error(
+      "Neither imsg (iMessage) nor wacli (WhatsApp) was found on PATH; install one before running setup",
+    );
   }
 
   const codex = lookup("codex");
@@ -566,15 +595,24 @@ export function discoverCommands(lookup: CommandLookup = (command) => Bun.which(
   if (codex !== null && isAbsolute(codex)) runtimes.codex = codex;
   if (claude !== null && isAbsolute(claude)) runtimes.claude = claude;
 
-  return { imsgPath, runtimes };
+  return {
+    ...(imsgPath === undefined ? {} : { imsgPath }),
+    runtimes,
+    ...(wacliPath === undefined ? {} : { wacliPath }),
+  };
 }
 
 export function prepareSetupConfig(input: {
+  /** Messaging apps to enable. Defaults to iMessage. */
+  apps?: readonly ChannelKind[];
   chatKeySalt?: string;
   discovery: CommandDiscovery;
   fallbackRuntime?: RuntimeKind;
   primaryRuntime: RuntimeKind;
+  /** Apps each tag applies to; a tag without an entry applies to every enabled app. */
+  tagApps?: Readonly<Record<string, readonly ChannelKind[]>>;
   tags: readonly string[];
+  whatsappRiskConsentVersion?: number;
   workingDirectory: string;
 }): ProntoConfig {
   const primaryRuntimePath = input.discovery.runtimes[input.primaryRuntime];
@@ -596,14 +634,40 @@ export function prepareSetupConfig(input: {
     ...(input.fallbackRuntime === undefined
       ? {}
       : { fallbackRuntime: input.fallbackRuntime, fallbackRuntimePath: fallbackRuntimePath! }),
-    imsgPath: input.discovery.imsgPath,
+    channels: setupChannels(input),
     ...(input.chatKeySalt === undefined ? {} : { chatKeySalt: input.chatKeySalt }),
     primaryRuntime: input.primaryRuntime,
     primaryRuntimePath,
-    tags: input.tags,
     unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
     workingDirectory: input.workingDirectory,
   });
+}
+
+function setupChannels(input: Parameters<typeof prepareSetupConfig>[0]): ConfigInput["channels"] {
+  const apps = input.apps ?? ["imessage"];
+  const tags = normalizeTags(input.tags);
+  const tagsFor = (app: ChannelKind) => tags.filter((tag) => {
+    return (input.tagApps?.[tag] ?? apps).includes(app);
+  });
+  const channels: ConfigInput["channels"] = {};
+  if (apps.includes("imessage")) {
+    if (input.discovery.imsgPath === undefined) {
+      throw new Error("imsg was not found on PATH; install it to use iMessage");
+    }
+    channels.imessage = { enabled: true, imsgPath: input.discovery.imsgPath, tags: tagsFor("imessage") };
+  }
+  if (apps.includes("whatsapp")) {
+    if (input.discovery.wacliPath === undefined) {
+      throw new Error("wacli was not found on PATH; install it to use WhatsApp");
+    }
+    channels.whatsapp = {
+      enabled: true,
+      riskConsentVersion: input.whatsappRiskConsentVersion ?? 0,
+      tags: tagsFor("whatsapp"),
+      wacliPath: input.discovery.wacliPath,
+    };
+  }
+  return channels;
 }
 
 export interface DoctorCheck {
@@ -858,7 +922,8 @@ export async function inspectInstallation(
   }
 
   for (const [id, executable] of [
-    ["imsg-command", config.imsgPath],
+    ["imsg-command", config.channels.imessage?.enabled === true ? config.channels.imessage.imsgPath : undefined],
+    ["wacli-command", config.channels.whatsapp?.enabled === true ? config.channels.whatsapp.wacliPath : undefined],
     ["primary-runtime", config.primaryRuntimePath],
     ["fallback-runtime", config.fallbackRuntimePath],
   ] as const) {

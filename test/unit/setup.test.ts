@@ -36,7 +36,7 @@ describe("setup discovery", () => {
       {
         executablePath: "/Users/example/Library/Application Support/pronto/bin/pronto",
       },
-      ["@helper", "@plan"],
+      { imessage: ["@helper", "@plan"] },
     );
 
     expect(message).toContain("Pronto installed and qualified");
@@ -53,7 +53,7 @@ describe("setup discovery", () => {
   test("shell-quotes an installed status command containing an apostrophe", () => {
     const message = setupCompletionMessage(
       { executablePath: "/Users/O'Neil/Library/Application Support/pronto/bin/pronto" },
-      ["@helper"],
+      { imessage: ["@helper"] },
     );
 
     expect(message).toContain(
@@ -93,15 +93,68 @@ describe("setup discovery", () => {
         workingDirectory: "/Users/example",
       }),
     ).toMatchObject({
-      imsgPath: "/opt/homebrew/bin/imsg",
+      channels: {
+        imessage: {
+          enabled: true,
+          imsgPath: "/opt/homebrew/bin/imsg",
+          tags: ["@helper", "@plan"],
+        },
+      },
       primaryRuntime: "claude",
       primaryRuntimePath: "/Users/example/.local/bin/claude",
-      tags: ["@helper", "@plan"],
     });
   });
 
+  test("enables WhatsApp with its own tags and recorded consent", () => {
+    const discovery = discoverCommands((command) => new Map([
+      ["wacli", "/opt/homebrew/bin/wacli"],
+      ["imsg", "/opt/homebrew/bin/imsg"],
+      ["codex", "/opt/homebrew/bin/codex"],
+    ]).get(command) ?? null);
+    expect(discovery.wacliPath).toBe("/opt/homebrew/bin/wacli");
+
+    const config = prepareSetupConfig({
+      apps: ["imessage", "whatsapp"],
+      discovery,
+      primaryRuntime: "codex",
+      tagApps: { "@work": ["whatsapp"] },
+      tags: ["@s4", "@work"],
+      whatsappRiskConsentVersion: 1,
+      workingDirectory: "/Users/example",
+    });
+    expect(config.channels).toEqual({
+      imessage: { enabled: true, imsgPath: "/opt/homebrew/bin/imsg", tags: ["@s4"] },
+      whatsapp: {
+        enabled: true,
+        riskConsentVersion: 1,
+        tags: ["@s4", "@work"],
+        wacliPath: "/opt/homebrew/bin/wacli",
+      },
+    });
+    expect(setupCompletionMessage(
+      { executablePath: "/Users/example/pronto" },
+      { imessage: ["@s4"], whatsapp: ["@s4", "@work"] },
+    )).toContain("3. Send @s4 ping in a WhatsApp chat");
+
+    expect(() => prepareSetupConfig({
+      apps: ["whatsapp"],
+      discovery,
+      primaryRuntime: "codex",
+      tags: ["@s4"],
+      workingDirectory: "/Users/example",
+    })).toThrow("WhatsApp risk consent is missing");
+    expect(() => prepareSetupConfig({
+      apps: ["whatsapp"],
+      discovery: { runtimes: { codex: "/opt/homebrew/bin/codex" } },
+      primaryRuntime: "codex",
+      tags: ["@s4"],
+      whatsappRiskConsentVersion: 1,
+      workingDirectory: "/Users/example",
+    })).toThrow("wacli was not found");
+  });
+
   test("refuses setup without imsg or an installed primary runtime", () => {
-    expect(() => discoverCommands(() => null)).toThrow("imsg was not found");
+    expect(() => discoverCommands(() => null)).toThrow("Neither imsg (iMessage) nor wacli (WhatsApp) was found");
     expect(() =>
       prepareSetupConfig({
         discovery: {
@@ -123,7 +176,7 @@ describe("setup discovery", () => {
     expect(TRUST_DISCLOSURE).toContain("bypass");
     expect(TRUST_DISCLOSURE).toContain("current or future");
     expect(TRUST_DISCLOSURE).toContain("hooks");
-    expect(TRUST_DISCLOSURE).toContain("iMessage or RCS");
+    expect(TRUST_DISCLOSURE).toContain("iMessage, RCS, or WhatsApp");
   });
 
   test("resolves and creates a home-relative workspace without changing an existing folder", async () => {
@@ -256,13 +309,12 @@ test("doctor detects a replaced executable without exposing private data", async
   await mkdir(join(paths.appSupportDirectory, "bin"), { recursive: true, mode: 0o700 });
   await writeFile(paths.executablePath, "original", { mode: 0o700 });
   await saveConfig(paths.configPath, {
-    version: 2,
+    version: 3,
     chatKeySalt: "x".repeat(32),
-    imsgPath: "/usr/bin/true",
+    channels: { imessage: { enabled: true, imsgPath: "/usr/bin/true", tags: ["@helper"] } },
     installedExecutableHash: "not-the-current-hash",
     primaryRuntime: "codex",
     primaryRuntimePath: "/usr/bin/true",
-    tags: ["@helper"],
     workingDirectory: home,
     unrestrictedTrustVersion: 1,
   });

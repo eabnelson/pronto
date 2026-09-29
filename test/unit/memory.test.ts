@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openProntoDatabase } from "../../packages/cli/src/storage/database";
 import { MemoryStore } from "../../packages/cli/src/storage/memory";
-import { chatKeyForId } from "../../packages/cli/src/storage/chat-key";
+import { chatKeyForAddress, chatKeyForId } from "../../packages/cli/src/storage/chat-key";
 import { DeliveryJournal } from "../../packages/cli/src/storage/journal";
 
 const temporaryDirectories: string[] = [];
@@ -20,6 +20,16 @@ test("derives stable opaque chat keys from the private installation salt", () =>
   expect(key).toBe(chatKeyForId(42, "private-salt"));
   expect(key).not.toBe(chatKeyForId(43, "private-salt"));
   expect(key).not.toContain("42");
+});
+
+test("keeps existing iMessage chat keys and separates other apps' chats", () => {
+  const imessage = chatKeyForAddress({ channel: "imessage", id: "42" }, "private-salt");
+  expect(imessage).toBe(chatKeyForId(42, "private-salt"));
+  const whatsapp = chatKeyForAddress({ channel: "whatsapp", id: "42" }, "private-salt");
+  expect(whatsapp).not.toBe(imessage);
+  expect(whatsapp).toBe(chatKeyForAddress({ channel: "whatsapp", id: "42" }, "private-salt"));
+  expect(() => chatKeyForAddress({ channel: "imessage", id: "042" }, "private-salt"))
+    .toThrow("Invalid chat ID");
 });
 
 test("retains eight exact exchanges, one valid summary, and supports forget", async () => {
@@ -54,7 +64,7 @@ test("retains eight exact exchanges, one valid summary, and supports forget", as
     expect(memory.get("chat-a").summary).toBe("summary");
 
     const journal = new DeliveryJournal(database);
-    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "pending", request: "private" });
+    journal.admit({ chat: { channel: "imessage", id: "42" }, chatKey: "chat-a", providerGuid: "pending", request: "private" });
     const lease = journal.lease("pending")!;
     journal.accept("pending", lease, { reply: "private reply" });
     journal.beginSend("pending", lease);

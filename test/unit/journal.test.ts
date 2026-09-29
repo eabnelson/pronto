@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openProntoDatabase } from "../../packages/cli/src/storage/database";
 import { DeliveryJournal } from "../../packages/cli/src/storage/journal";
+import { MULTI_APP_SCHEMA_VERSION } from "../../packages/cli/src/storage/migrations";
 import { MemoryStore } from "../../packages/cli/src/storage/memory";
 import { WorkspaceStore } from "../../packages/cli/src/storage/workspaces";
 
+const IMESSAGE_CHAT = { channel: "imessage", id: "42" } as const;
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -31,15 +33,15 @@ test("admits a provider GUID once and bounds pending work per chat", async () =>
   const { close, journal } = await stores();
   try {
     expect(
-      journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "event-1", request: "one" }),
+      journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid: "event-1", request: "one" }),
     ).toEqual({ status: "accepted" });
     expect(
-      journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "event-1", request: "one" }),
+      journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid: "event-1", request: "one" }),
     ).toEqual({ status: "duplicate" });
     for (let index = 2; index <= 4; index++) {
       expect(
         journal.admit({
-          chatId: 42,
+          chat: IMESSAGE_CHAT,
           chatKey: "chat-a",
           providerGuid: `event-${index}`,
           request: `${index}`,
@@ -47,7 +49,7 @@ test("admits a provider GUID once and bounds pending work per chat", async () =>
       ).toEqual({ status: "accepted" });
     }
     expect(
-      journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "event-5", request: "five" }),
+      journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid: "event-5", request: "five" }),
     ).toEqual({ status: "rate-limited" });
     expect(
       journal.database
@@ -63,7 +65,7 @@ test("admits a provider GUID once and bounds pending work per chat", async () =>
 test("promotes workspace transitions and candidates only after confirmed delivery", async () => {
   const { close, journal, workspaces } = await stores();
   try {
-    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "switch", request: "switch" });
+    journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid: "switch", request: "switch" });
     const switchLease = journal.lease("switch")!;
     journal.accept("switch", switchLease, { reply: "switched", workingDirectory: "/project-a" });
     expect(workspaces.get("chat-a").activeDirectory).toBeNull();
@@ -71,7 +73,7 @@ test("promotes workspace transitions and candidates only after confirmed deliver
     journal.confirmDelivery("switch", switchLease, "OUT-SWITCH");
     expect(workspaces.get("chat-a").activeDirectory).toBe("/project-a");
 
-    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "discover", request: "find" });
+    journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid: "discover", request: "find" });
     const discoveryLease = journal.lease("discover")!;
     journal.accept("discover", discoveryLease, {
       reply: "choose",
@@ -84,7 +86,7 @@ test("promotes workspace transitions and candidates only after confirmed deliver
       pendingCandidates: ["/one", "/two"],
     });
 
-    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "both", request: "both" });
+    journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid: "both", request: "both" });
     const bothLease = journal.lease("both")!;
     journal.accept("both", bothLease, {
       reply: "switched and found more",
@@ -98,7 +100,7 @@ test("promotes workspace transitions and candidates only after confirmed deliver
       pendingCandidates: ["/three"],
     });
 
-    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "consume", request: "none" });
+    journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid: "consume", request: "none" });
     const consumeLease = journal.lease("consume")!;
     journal.accept("consume", consumeLease, { reply: "done", workspaceCandidates: [] });
     journal.beginSend("consume", consumeLease);
@@ -112,7 +114,7 @@ test("promotes workspace transitions and candidates only after confirmed deliver
 test("forget cancels in-flight delivery before it can recreate workspace state", async () => {
   const { close, journal, memory, workspaces } = await stores();
   try {
-    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "running", request: "switch" });
+    journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid: "running", request: "switch" });
     const lease = journal.lease("running")!;
     journal.beginRuntimeAttempt("running", lease);
     memory.forget("chat-a");
@@ -130,7 +132,7 @@ test("forget cancels in-flight delivery before it can recreate workspace state",
 test("promotes accepted output only after confirmed delivery", async () => {
   const { close, journal, memory } = await stores();
   try {
-    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "event-1", request: "question" });
+    journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid: "event-1", request: "question" });
     const lease = journal.lease("event-1");
     expect(lease).not.toBeNull();
     journal.accept("event-1", lease!, { reply: "answer", summary: "older work" });
@@ -158,17 +160,17 @@ test("promotes accepted output only after confirmed delivery", async () => {
 test("keeps failure notices out of memory and durably suppresses their echoes", async () => {
   const { close, journal, memory } = await stores();
   try {
-    journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid: "event-1", request: "question" });
+    journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid: "event-1", request: "question" });
     const lease = journal.lease("event-1")!;
     journal.accept("event-1", lease, { reply: "Unable to complete that request." }, {
       memoryEligible: false,
     });
-    journal.beginSend("event-1", lease, 42, "Unable to complete that request.");
+    journal.beginSend("event-1", lease, IMESSAGE_CHAT, "Unable to complete that request.");
     journal.confirmDelivery("event-1", lease, "OUT-1");
 
     expect(memory.get("chat-a").exchanges).toEqual([]);
-    expect(journal.matchesOutboundEcho(42, "Unable to complete that request.")).toBeTrue();
-    expect(journal.matchesOutboundEcho(42, "Unable to complete that request.")).toBeFalse();
+    expect(journal.matchesOutboundEcho(IMESSAGE_CHAT, "Unable to complete that request.")).toBeTrue();
+    expect(journal.matchesOutboundEcho(IMESSAGE_CHAT, "Unable to complete that request.")).toBeFalse();
   } finally {
     close();
   }
@@ -189,7 +191,7 @@ test("advances the durable message cursor monotonically without storing messages
 test("reports content-free operational status and optional opaque chat keys", async () => {
   const { close, journal } = await stores();
   try {
-    journal.admit({ chatId: 42, chatKey: "c_opaque", providerGuid: "event-1", request: "secret" });
+    journal.admit({ chat: IMESSAGE_CHAT, chatKey: "c_opaque", providerGuid: "event-1", request: "secret" });
     expect(journal.operationalStatus(true)).toMatchObject({
       active: 1,
       ambiguous: 0,
@@ -224,7 +226,7 @@ describe("restart recovery", () => {
     const { close, journal } = await stores();
     try {
       journal.admit({
-        chatId: 42,
+        chat: IMESSAGE_CHAT,
         chatKey: "chat-a",
         providerGuid: "unknown-attempt",
         request: "question",
@@ -245,7 +247,7 @@ describe("restart recovery", () => {
     const { close, journal } = await stores();
     try {
       journal.admit({
-        chatId: 42,
+        chat: IMESSAGE_CHAT,
         chatKey: "chat-a",
         providerGuid: "tool-free-attempt",
         request: "question",
@@ -267,7 +269,7 @@ describe("restart recovery", () => {
     const { close, journal } = await stores();
     try {
       for (const providerGuid of ["safe", "side-effect", "ready", "sending"]) {
-        journal.admit({ chatId: 42, chatKey: "chat-a", providerGuid, request: providerGuid });
+        journal.admit({ chat: IMESSAGE_CHAT, chatKey: "chat-a", providerGuid, request: providerGuid });
       }
       const safeLease = journal.lease("safe")!;
       journal.recordToolActivity("safe", safeLease, false);
@@ -289,3 +291,85 @@ describe("restart recovery", () => {
     }
   });
 });
+
+describe("per-app state", () => {
+  test("records content-free health for each messaging app", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pronto-journal-"));
+    temporaryDirectories.push(directory);
+    const database = openProntoDatabase(join(directory, "state.sqlite"));
+    try {
+      let now = 1_000;
+      const journal = new DeliveryJournal(database, () => now);
+      expect(journal.channelHealth()).toEqual({});
+      journal.recordChannelHealth("imessage", "starting");
+      now = 2_000;
+      journal.recordChannelHealth("imessage", "degraded", "row-limit");
+      expect(journal.channelHealth()).toEqual({
+        imessage: { reason: "row-limit", state: "degraded", updatedAt: 2_000 },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  test("stores only iMessage chats until the multi-app schema is enabled", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pronto-journal-"));
+    temporaryDirectories.push(directory);
+    const database = openProntoDatabase(join(directory, "state.sqlite"));
+    try {
+      const journal = new DeliveryJournal(database);
+      expect(() => journal.admit({
+        chat: { channel: "whatsapp", id: "15555550100@s.whatsapp.net" },
+        chatKey: "chat-w",
+        providerGuid: "wa-1",
+        request: "one",
+      })).toThrow("stores only iMessage chats");
+      expect(journal.state("wa-1")).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  test("round-trips another app's chat and reply scope after the multi-app upgrade", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pronto-journal-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "state.sqlite");
+    const legacy = openProntoDatabase(path);
+    new DeliveryJournal(legacy).admit({
+      chat: { channel: "imessage", id: "42" },
+      chatKey: "chat-i",
+      providerGuid: "imessage-1",
+      request: "older",
+    });
+    legacy.close();
+
+    const database = openProntoDatabase(path, { schemaVersion: MULTI_APP_SCHEMA_VERSION });
+    try {
+      const journal = new DeliveryJournal(database);
+      const chat = { channel: "whatsapp", id: "15555550100@s.whatsapp.net" } as const;
+      const conversation = {
+        chatJid: chat.id,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        provider: "whatsapp",
+        token: "signed",
+        version: 1,
+      };
+      journal.admit({ chat, chatKey: "chat-w", conversation, providerGuid: "wa-1", request: "one" });
+      expect(journal.nextRunnable()).toMatchObject({
+        chat: { channel: "imessage", id: "42" },
+        providerGuid: "imessage-1",
+      });
+      journal.lease("imessage-1");
+      expect(journal.nextRunnable()).toMatchObject({ chat, conversation, providerGuid: "wa-1" });
+
+      const lease = journal.lease("wa-1")!;
+      journal.accept("wa-1", lease, { reply: "done" });
+      journal.beginSend("wa-1", lease, chat, "Done");
+      expect(journal.matchesOutboundEcho({ channel: "imessage", id: chat.id }, "Done")).toBeFalse();
+      expect(journal.matchesOutboundEcho(chat, "Done")).toBeTrue();
+    } finally {
+      database.close();
+    }
+  });
+});
+

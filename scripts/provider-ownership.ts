@@ -53,6 +53,16 @@ export async function providerOwnershipViolations(root: string): Promise<string[
     if (source.includes("messages/src/internal") || source.includes("pronto-imessage/")) {
       violations.push(`${displayPath} imports a pronto-imessage implementation detail`);
     }
+    if (source.includes("whatsapp/src/internal") || source.includes("pronto-whatsapp/")) {
+      violations.push(`${displayPath} imports a pronto-whatsapp implementation detail`);
+    }
+    if (displayPath.startsWith("packages/cli/src/whatsapp/")) {
+      for (const token of ["Bun.spawn", "node:child_process", "--webhook"]) {
+        if (source.includes(token)) {
+          violations.push(`${displayPath} contains WhatsApp mechanics owned by pronto-whatsapp: ${token}`);
+        }
+      }
+    }
     for (const method of PROVIDER_PROTOCOL_LITERALS) {
       if (source.includes(`"${method}"`) || source.includes(`'${method}'`)) {
         violations.push(`${displayPath} contains provider RPC method ${method}`);

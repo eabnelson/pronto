@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { validSummary } from "../context/compact";
 import type { RuntimeKind } from "../config";
 import type { RuntimeAttemptResult, ToolActivity } from "../runtimes/types";
-import type { ConversationReference } from "pronto-imessage";
+import { isChannelKind, type ChannelKind, type ChatAddress } from "../channels/types";
+import { imessageChatId } from "./chat-key";
 import { promoteMemory } from "./memory";
 import { promoteWorkspace } from "./workspaces";
 import { MAX_RUNTIME_TEXT_CHARACTERS, MAX_WORKSPACE_CANDIDATES } from "../workspace";
@@ -22,9 +23,10 @@ export type DeliveryState =
 
 export interface AdmissionInput {
   activationTag?: string;
-  chatId: number;
+  chat: ChatAddress;
   chatKey: string;
-  conversation?: ConversationReference;
+  /** Channel-owned reply scope; stored as JSON until the event settles. */
+  conversation?: unknown;
   providerGuid: string;
   request: string;
 }
@@ -49,9 +51,18 @@ export interface DaemonHealth {
   updatedAt: number;
 }
 
+export interface ChannelHealth {
+  reason?: string;
+  state: "starting" | "degraded" | "failed" | "needs_link" | "ready" | "stopped";
+  updatedAt: number;
+}
+
+const CHANNEL_HEALTH_STATES: readonly ChannelHealth["state"][] =
+  ["starting", "degraded", "failed", "needs_link", "ready", "stopped"];
+
 const ACTIVE_STATES = ["admitted", "running", "ready_to_send", "sending"] as const;
 
-function parseConversationReference(value: string, chatId: number): ConversationReference {
+function parseConversationReference(value: string, chat: ChatAddress): unknown {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
@@ -62,23 +73,36 @@ function parseConversationReference(value: string, chatId: number): Conversation
     throw new Error("Stored conversation reference is invalid");
   }
   const reference = parsed as Record<string, unknown>;
+  const addressed = chat.channel === "imessage"
+    ? reference.chatId === imessageChatId(chat) && reference.provider === "apple-messages"
+    : reference.chatJid === chat.id && reference.provider === chat.channel;
   if (
-    reference.chatId !== chatId || reference.provider !== "apple-messages" ||
-    reference.version !== 1 || typeof reference.expiresAt !== "string" ||
+    !addressed || reference.version !== 1 || typeof reference.expiresAt !== "string" ||
     typeof reference.token !== "string" || reference.token.length === 0
   ) {
     throw new Error("Stored conversation reference is invalid");
   }
-  return reference as unknown as ConversationReference;
+  return reference;
 }
 
 export class DeliveryJournal {
+  /** Whether the schema stores each event's app and chat address (schema 6+). */
+  readonly #multiApp: boolean;
+
   constructor(
     readonly database: Database,
     readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    const columns = database.query("PRAGMA table_info(delivery_events)").all() as Array<{ name: string }>;
+    this.#multiApp = columns.some((column) => column.name === "chat_address");
+  }
 
   admit(input: AdmissionInput): { status: "accepted" | "duplicate" | "rate-limited" } {
+    if (input.chat.channel !== "imessage" && !this.#multiApp) {
+      throw new Error("This state database stores only iMessage chats; enable the app to upgrade it");
+    }
+    if (input.chat.id.length === 0 || input.chat.id.length > 256) throw new Error("Invalid chat ID");
+    const chatId = input.chat.channel === "imessage" ? imessageChatId(input.chat) : 0;
     return this.database.transaction(() => {
       const existing = this.database
         .query("SELECT 1 AS present FROM delivery_events WHERE provider_guid = ?")
@@ -97,17 +121,19 @@ export class DeliveryJournal {
         .get(input.chatKey, ...ACTIVE_STATES) as { count: number };
       const rateLimited = global.count >= 32 || perChat.count >= 4;
       const now = this.now();
+      const addressColumns = this.#multiApp ? ", channel, chat_address" : "";
+      const addressValues = this.#multiApp ? ", ?, ?" : "";
       this.database
         .query(
           `INSERT INTO delivery_events
            (provider_guid, chat_key, chat_id, conversation_reference, activation_tag,
-            tagged_request, state, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            tagged_request, state, created_at, updated_at${addressColumns})
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${addressValues})`,
         )
         .run(
           input.providerGuid,
           input.chatKey,
-          input.chatId,
+          chatId,
           rateLimited || input.conversation === undefined
             ? null
             : JSON.stringify(input.conversation),
@@ -116,6 +142,7 @@ export class DeliveryJournal {
           rateLimited ? "rate_limited" : "admitted",
           now,
           now,
+          ...(this.#multiApp ? [input.chat.channel, input.chat.id] : []),
         );
       return { status: rateLimited ? ("rate-limited" as const) : ("accepted" as const) };
     })();
@@ -137,7 +164,8 @@ export class DeliveryJournal {
     const row = this.database
       .query(
         `SELECT provider_guid, chat_key, chat_id, conversation_reference, activation_tag,
-                tagged_request, state, accepted_reply, lease_token
+                tagged_request, state, accepted_reply, lease_token${
+                  this.#multiApp ? ", channel, chat_address" : ""}
          FROM delivery_events
          WHERE state IN ('admitted', 'ready_to_send') AND tagged_request IS NOT NULL
          ORDER BY created_at ASC, rowid ASC
@@ -145,6 +173,8 @@ export class DeliveryJournal {
       )
       .get() as
       | {
+          channel?: string;
+          chat_address?: string | null;
           chat_id: number;
           chat_key: string;
           conversation_reference: string | null;
@@ -157,12 +187,13 @@ export class DeliveryJournal {
         }
       | null;
     if (row === null) return null;
+    const chat = this.#storedChat(row);
     const event = {
-      chatId: row.chat_id,
+      chat,
       chatKey: row.chat_key,
       ...(row.conversation_reference === null
         ? {}
-        : { conversation: parseConversationReference(row.conversation_reference, row.chat_id) }),
+        : { conversation: parseConversationReference(row.conversation_reference, chat) }),
       providerGuid: row.provider_guid,
       request: row.tagged_request,
       ...(row.activation_tag === null ? {} : { activationTag: row.activation_tag }),
@@ -232,6 +263,44 @@ export class DeliveryJournal {
       return null;
     }
     return { state, updatedAt };
+  }
+
+  recordChannelHealth(channel: ChannelKind, state: ChannelHealth["state"], reason?: string): void {
+    const health: ChannelHealth = {
+      ...(reason === undefined ? {} : { reason: reason.slice(0, 64) }),
+      state,
+      updatedAt: this.now(),
+    };
+    this.database
+      .query(
+        `INSERT INTO service_state (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(`channel_health:${channel}`, JSON.stringify(health));
+  }
+
+  channelHealth(): Partial<Record<ChannelKind, ChannelHealth>> {
+    const rows = this.database
+      .query("SELECT key, value FROM service_state WHERE key LIKE 'channel_health:%'")
+      .all() as Array<{ key: string; value: string }>;
+    const health: Partial<Record<ChannelKind, ChannelHealth>> = {};
+    for (const row of rows) {
+      const channel = row.key.slice("channel_health:".length);
+      if (!isChannelKind(channel)) continue;
+      try {
+        const value = JSON.parse(row.value) as Partial<ChannelHealth>;
+        if (
+          CHANNEL_HEALTH_STATES.includes(value.state as ChannelHealth["state"]) &&
+          Number.isSafeInteger(value.updatedAt) &&
+          (value.reason === undefined || typeof value.reason === "string")
+        ) {
+          health[channel] = value as ChannelHealth;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return health;
   }
 
   recordDegradedCapabilities(capabilities: readonly string[]): void {
@@ -364,9 +433,9 @@ export class DeliveryJournal {
     );
   }
 
-  beginSend(providerGuid: string, lease: string, chatId?: number, text?: string): void {
+  beginSend(providerGuid: string, lease: string, chat?: ChatAddress, text?: string): void {
     const fingerprint =
-      chatId === undefined || text === undefined ? null : this.#fingerprint(chatId, text);
+      chat === undefined || text === undefined ? null : this.#fingerprint(chat, text);
     this.#requireChange(
       this.database
         .query(
@@ -492,8 +561,8 @@ export class DeliveryJournal {
     );
   }
 
-  matchesOutboundEcho(chatId: number, text: string): boolean {
-    const fingerprint = this.#fingerprint(chatId, text);
+  matchesOutboundEcho(chat: ChatAddress, text: string): boolean {
+    const fingerprint = this.#fingerprint(chat, text);
     return this.database.transaction(() => {
       this.database
         .query(
@@ -601,11 +670,23 @@ export class DeliveryJournal {
     })();
   }
 
+  #storedChat(row: { channel?: string; chat_address?: string | null; chat_id: number }): ChatAddress {
+    if (row.channel === undefined || row.channel === "imessage") {
+      return { channel: "imessage", id: String(row.chat_id) };
+    }
+    if (!isChannelKind(row.channel) || typeof row.chat_address !== "string") {
+      throw new Error("Stored chat address is invalid");
+    }
+    return { channel: row.channel, id: row.chat_address };
+  }
+
   #requireChange(changes: number, action: string): void {
     if (changes !== 1) throw new Error(`Unable to ${action} from the current journal state`);
   }
 
-  #fingerprint(chatId: number, text: string): string {
-    return createHash("sha256").update(`${chatId}\0${text}`).digest("base64url");
+  #fingerprint(chat: ChatAddress, text: string): string {
+    // iMessage keeps the original input so fingerprints recorded before an upgrade still match.
+    const scope = chat.channel === "imessage" ? chat.id : `${chat.channel}:${chat.id}`;
+    return createHash("sha256").update(`${scope}\0${text}`).digest("base64url");
   }
 }

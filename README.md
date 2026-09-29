@@ -3,11 +3,12 @@
 [![CI](https://github.com/eabnelson/pronto/actions/workflows/ci.yml/badge.svg)](https://github.com/eabnelson/pronto/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`pronto` is a small, local macOS bridge between Apple Messages and the Codex or
-Claude Code CLI. Create as many tags as you want, such as `@helper`, `@plan`, or
-`@research`. When anyone uses one in an iMessage or RCS chat you have already
-participated in, the bridge gives one bounded, one-shot turn to your chosen
-local agent and sends one plain-text reply.
+`pronto` is a small, local macOS bridge between Apple Messages or WhatsApp and
+the Codex or Claude Code CLI. Create as many tags as you want, such as `@helper`,
+`@plan`, or `@research`, and choose which apps each tag works in. When anyone uses
+one in an iMessage, RCS, or WhatsApp chat you have already participated in, the
+bridge gives one bounded, one-shot turn to your chosen local agent and sends one
+plain-text reply from your own account in the same chat.
 
 Each reply starts with the triggering tag name on its own line, so conversations
 using several tags make it clear which agent identity answered.
@@ -16,9 +17,9 @@ It is an independent MIT-licensed project. It does not require Studio Four,
 create project folders per chat, select a model, or keep provider sessions alive.
 
 The repository is a small workspace. [`pronto-imessage`](packages/messages) is
-the reusable Apple Messages module, and the standalone [`pronto`](packages/cli)
-CLI consumes that package through the same public interface available to other
-products. Pronto owns provider mechanics; consumers own activation,
+the reusable Apple Messages module, [`pronto-whatsapp`](packages/whatsapp) is the
+reusable WhatsApp module, and the standalone [`pronto`](packages/cli) CLI consumes
+both packages through the same public interfaces available to other products. Pronto owns provider mechanics; consumers own activation,
 authorization, and product-specific state.
 
 ## Before installing
@@ -42,17 +43,20 @@ switch a chat into a repository you do not trust.
 - For RCS, an iPhone and carrier configuration that makes the RCS conversation
   available in Messages on the Mac
 - [Bun 1.3.14](https://bun.sh/) only for development from source
-- [`imsg`](https://github.com/openclaw/imsg) 0.15.0
+- For iMessage and RCS, [`imsg`](https://github.com/openclaw/imsg) 0.15.0
+- For WhatsApp, [`wacli`](https://github.com/openclaw/wacli) 0.19.0 or newer and
+  the WhatsApp app on your phone (see [WhatsApp](#whatsapp) before enabling it)
 - At least one authenticated [Codex CLI](https://github.com/openai/codex) or
   [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/getting-started)
 
 ## Quick start
 
-Install `imsg`, download the signed binary for your Mac, verify its permanent
-Apple identity, and run setup:
+Install `imsg` for iMessage, `wacli` for WhatsApp, or both, then download the
+signed binary for your Mac, verify its permanent Apple identity, and run setup:
 
 ```sh
-brew install steipete/tap/imsg
+brew install steipete/tap/imsg     # iMessage and RCS
+brew install openclaw/tap/wacli    # WhatsApp
 PRONTO_INSTALL_DIR="$(mktemp -d)" || exit 1
 case "$(uname -m)" in
   arm64) PRONTO_TARGET="darwin-arm64" ;;
@@ -83,14 +87,19 @@ IMCore bridge.
 
 Setup asks for:
 
-1. One or more comma-separated tags, with or without the leading `@`; the
+1. Which messaging apps to answer in, when both `imsg` and `wacli` are installed.
+   Both is the default.
+2. One or more comma-separated tags, with or without the leading `@`; the
    default is `@s4`. Each name must contain 1-32 letters, numbers, underscores,
-   or hyphens.
-2. A primary runtime when both Codex and Claude Code are installed.
-3. Whether to use the other runtime as a fallback.
-4. A default working folder (`~/pronto` by default). Existing folders are never
+   or hyphens. With both apps enabled, setup asks which apps each tag applies
+   to; both is the default.
+3. A primary runtime when both Codex and Claude Code are installed.
+4. Whether to use the other runtime as a fallback.
+5. A default working folder (`~/pronto` by default). Existing folders are never
    cleared or chmodded and must be confirmed before reuse.
-5. Explicit typed acceptance of the unrestricted trust model above.
+6. Explicit typed acceptance of the unrestricted trust model above, and for
+   WhatsApp, of the [WhatsApp account risk](#whatsapp). Setup then links
+   WhatsApp by showing a QR code in the terminal.
 
 Setup then performs one temporary noninteractive file-tool probe per selected
 runtime. This uses the runtime's existing account, default model, user
@@ -107,9 +116,10 @@ a number in the next tagged message to confirm one.
 
 After qualification, setup compiles a stable executable under
 `~/Library/Application Support/pronto/`, writes an owner-only configuration, and
-installs the `dev.pronto.agent` user LaunchAgent. It asks the owner to grant Full
-Disk Access to that exact installed executable, verifies the installed identity,
-and reports success only after the new listener is healthy.
+installs the `dev.pronto.agent` user LaunchAgent. When iMessage is enabled it asks
+the owner to grant Full Disk Access to that exact installed executable. It verifies
+the installed identity and reports success only after the new listener is healthy.
+WhatsApp alone needs no macOS privacy permission.
 
 Source setup replaces Bun's embedded macOS signature with an ad-hoc signature so
 the compiled executable can launch on supported macOS versions. If you have a
@@ -175,6 +185,39 @@ exchanges, and one compact summary, all under fixed character budgets. Provider
 sessions are never resumed. Ordinary chat messages, participant rosters,
 attachment metadata, and tool results are not archived by `pronto`.
 
+## WhatsApp
+
+WhatsApp support uses [`wacli`](https://github.com/openclaw/wacli), which links
+this Mac as a WhatsApp device through the unofficial WhatsApp Web protocol
+(`whatsmeow`). It is not affiliated with WhatsApp or Meta. Automated use of a
+linked device may violate WhatsApp's terms and can lead to your account being
+restricted. Setup records your explicit acceptance of this risk before linking.
+
+WhatsApp follows the same rules as iMessage:
+
+- The owner must previously have sent a message in the chat, and then any
+  participant can use a tag, including in groups and "Message yourself".
+- Exactly one configured tag must appear; reactions, edits, deletions, polls,
+  and media without a caption do not activate the agent. A caption can.
+- Tagged messages that arrive while the Mac is asleep or offline are answered
+  after it reconnects if they are less than 24 hours old; live messages older
+  than five minutes are ignored.
+- The reply is sent from your account into the same chat, quoting the tagged
+  message, with the tag name as a bold first line. WhatsApp shows your account
+  typing while the agent works.
+- A send that might have been delivered is never retried.
+
+`pronto` keeps its own WhatsApp session and message index under
+`~/Library/Application Support/pronto/whatsapp/` and never uses a personal
+`~/.wacli` store. To enable WhatsApp on an existing installation, relink after
+WhatsApp removes the device, or stop using it:
+
+```sh
+"$PRONTO" whatsapp link
+"$PRONTO" whatsapp link --phone +15555550100   # pair with a code instead of a QR
+"$PRONTO" whatsapp unlink
+```
+
 ## Operations
 
 ```sh
@@ -184,7 +227,9 @@ PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"
 "$PRONTO" doctor
 "$PRONTO" tags
 "$PRONTO" tags add @plan
+"$PRONTO" tags add @plan --app whatsapp
 "$PRONTO" tags remove @plan
+"$PRONTO" whatsapp link
 "$PRONTO" update --check
 "$PRONTO" update
 "$PRONTO" stop
@@ -194,7 +239,11 @@ PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"
 ```
 
 Tag changes are normalized, deduplicated, saved atomically, and applied by
-restarting the background listener. At least one tag must remain configured. If
+restarting the background listener. With more than one app enabled, `tags add`
+asks which apps the tag applies to (all enabled apps by default) unless you pass
+one or more `--app imessage` or `--app whatsapp` flags; `tags remove` removes the
+tag from every app unless `--app` narrows it. Every enabled app must keep at least
+one tag. If
 one message contains two different configured tags, `pronto` ignores it rather
 than choosing an activation ambiguously.
 
@@ -202,7 +251,9 @@ than choosing an activation ambiguously.
 and opaque chat keys. `forget` removes
 tagged memory for one opaque key. Normal uninstall removes the service and
 executable but retains private configuration and conversation state; the explicit
-purge form removes all `pronto` state.
+purge form removes all `pronto` state, including the WhatsApp session. Run
+`pronto whatsapp unlink` first so the device also disappears from your phone's
+linked devices.
 
 The first release processes one turn at a time, admits at most 32 active events
 globally and 4 per chat, limits each runtime attempt to 10 minutes, and allows at
@@ -254,9 +305,15 @@ sleep 3
 "$HOME/Library/Application Support/pronto/bin/pronto" status
 ```
 
+### WhatsApp shows `needs_link`
+
+WhatsApp removes linked devices after the phone has been offline for a long time
+or when you log the device out from the phone. Run `pronto whatsapp link` and scan
+the new QR code; iMessage keeps working meanwhile.
+
 ### No reply arrives
 
-- Confirm the message is iMessage or RCS, not SMS.
+- Confirm the message is iMessage, RCS, or WhatsApp, not SMS.
 - Confirm this Mac owner previously sent a message in that chat.
 - Run `doctor` and resolve every failed check; degraded
   `messages-send-automation` is expected until the first real send.

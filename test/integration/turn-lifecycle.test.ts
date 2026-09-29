@@ -2,9 +2,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ActivatedRequest } from "../../packages/cli/src/activation";
+import type {
+  ChannelActivation,
+  ChatAddress,
+  SendDisposition,
+  TurnChannel,
+} from "../../packages/cli/src/channels/types";
 import { FAILURE_NOTICE, TurnCoordinator, TurnProcessor } from "../../packages/cli/src/core/turn";
-import type { SendDisposition } from "../../packages/cli/src/imessage/transport";
+import {
+  formatImessageReplyText,
+  imessageReplyBodyCharacterLimit,
+} from "../../packages/cli/src/imessage/reply-format";
 import { RuntimeChain } from "../../packages/cli/src/runtimes/chain";
 import type {
   RuntimeAdapter,
@@ -61,8 +69,15 @@ class OrderedAdapter implements RuntimeAdapter {
   }
 }
 
-class FakeTransport {
+class FakeTransport implements TurnChannel {
+  readonly conversationLabel = "iMessage or RCS";
   readonly sends: Array<{ chatId: number; text: string }> = [];
+  formatReply(activationTag: string, text: string): string {
+    return formatImessageReplyText(activationTag, text);
+  }
+  replyBodyCharacterLimit(activationTag: string, maxCharacters: number): number {
+    return imessageReplyBodyCharacterLimit(activationTag, maxCharacters);
+  }
   disposition: SendDisposition = { disposition: "confirmed", guid: "OUT-1" };
   async recentMessages(): Promise<unknown[]> {
     return [
@@ -85,8 +100,8 @@ class FakeTransport {
       },
     ];
   }
-  async sendText(chatId: number, text: string): Promise<SendDisposition> {
-    this.sends.push({ chatId, text });
+  async sendText(chat: ChatAddress, text: string): Promise<SendDisposition> {
+    this.sends.push({ chatId: Number(chat.id), text });
     return this.disposition;
   }
 }
@@ -97,20 +112,21 @@ const source: CurrentChatSource = {
   history: async () => ({ messages: [] }),
 };
 
-const activation: ActivatedRequest = {
-  activationTag: "@helper",
+const conversation = {
   chatId: 42,
-  conversation: {
-    chatId: 42,
-    expiresAt: "2099-01-01T00:00:00.000Z",
-    provider: "apple-messages",
-    token: "persisted-conversation-reference",
-    version: 1,
-  },
+  expiresAt: "2099-01-01T00:00:00.000Z",
+  provider: "apple-messages",
+  token: "persisted-conversation-reference",
+  version: 1,
+};
+
+const activation: ChannelActivation = {
+  activationTag: "@helper",
+  chat: { channel: "imessage", id: "42" },
+  conversation,
   isFromMe: false,
   providerGuid: "IN-1",
   request: "Draft the launch note.",
-  rowId: 1,
 };
 
 async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
@@ -129,7 +145,7 @@ async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
     journal,
     memory,
     runtimes: new RuntimeChain(primary, fallback),
-    transport,
+    channels: new Map([["imessage", transport]]),
     defaultWorkingDirectory: directory,
     workspaces,
   });
@@ -344,8 +360,8 @@ describe("turn lifecycle", () => {
       };
       h.coordinator.admit({
         ...activation,
-        chatId: 99,
-        conversation: { ...activation.conversation, chatId: 99 },
+        chat: { channel: "imessage", id: "99" },
+        conversation: { ...conversation, chatId: 99 },
         providerGuid: "IN-OTHER-CHAT",
         request: "1",
       });
@@ -453,7 +469,7 @@ describe("turn lifecycle", () => {
     promoteWorkspace(h.database, { candidates: [await realpath(candidate)], chatKey });
     try {
       h.journal.admit({
-        chatId: 42,
+        chat: activation.chat,
         chatKey,
         providerGuid: "IN-PENDING-RESTART",
         request: "1",
@@ -695,7 +711,7 @@ describe("turn lifecycle", () => {
     try {
       h.journal.admit({
         activationTag: "@plan",
-        chatId: 42,
+        chat: activation.chat,
         chatKey: chatKeyForId(42, h.salt),
         conversation: activation.conversation,
         providerGuid: "IN-RECOVER",
@@ -725,7 +741,7 @@ describe("turn lifecycle", () => {
     try {
       h.journal.admit({
         activationTag: "@plan",
-        chatId: 42,
+        chat: activation.chat,
         chatKey: chatKeyForId(42, h.salt),
         providerGuid: "IN-LEGACY-RECOVER",
         request: "recover me",

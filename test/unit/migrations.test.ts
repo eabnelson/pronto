@@ -3,7 +3,11 @@ import { access, lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openProntoDatabase } from "../../packages/cli/src/storage/database";
-import { CURRENT_SCHEMA_VERSION } from "../../packages/cli/src/storage/migrations";
+import {
+  CURRENT_SCHEMA_VERSION,
+  DEFAULT_SCHEMA_VERSION,
+  MULTI_APP_SCHEMA_VERSION,
+} from "../../packages/cli/src/storage/migrations";
 import { Database } from "bun:sqlite";
 
 const temporaryDirectories: string[] = [];
@@ -51,7 +55,7 @@ test("creates the current owner-private WAL schema", async () => {
   const database = openProntoDatabase(path);
   try {
     expect(database.query("PRAGMA user_version").get()).toEqual({
-      user_version: CURRENT_SCHEMA_VERSION,
+      user_version: DEFAULT_SCHEMA_VERSION,
     });
     expect(database.query("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
     expect(
@@ -113,7 +117,7 @@ test("upgrades a version-two database without changing existing delivery rows", 
   const database = openProntoDatabase(path);
   try {
     expect(database.query("PRAGMA user_version").get()).toEqual({
-      user_version: CURRENT_SCHEMA_VERSION,
+      user_version: DEFAULT_SCHEMA_VERSION,
     });
     expect(
       database
@@ -175,4 +179,37 @@ test("refuses symlinked database directories and files", async () => {
   expect(() => openProntoDatabase(join(actual, "state.sqlite"))).toThrow(
     "symbolic link database",
   );
+});
+
+test("adds per-app chat addresses only when asked and never lowers the schema", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pronto-migration-"));
+  temporaryDirectories.push(directory);
+  const path = join(directory, "state.sqlite");
+  const initial = openProntoDatabase(path);
+  initial.exec(`INSERT INTO delivery_events
+    (provider_guid, chat_key, chat_id, state, created_at, updated_at)
+    VALUES ('existing', 'c_key', 42, 'delivered', 1, 1)`);
+  initial.close();
+
+  const upgraded = openProntoDatabase(path, { schemaVersion: MULTI_APP_SCHEMA_VERSION });
+  try {
+    expect(upgraded.query("PRAGMA user_version").get()).toEqual({
+      user_version: MULTI_APP_SCHEMA_VERSION,
+    });
+    expect(upgraded.query(
+      "SELECT channel, chat_address FROM delivery_events WHERE provider_guid = 'existing'",
+    ).get()).toEqual({ channel: "imessage", chat_address: "42" });
+  } finally {
+    upgraded.close();
+  }
+
+  const reopened = openProntoDatabase(path);
+  try {
+    expect(reopened.query("PRAGMA user_version").get()).toEqual({
+      user_version: MULTI_APP_SCHEMA_VERSION,
+    });
+  } finally {
+    reopened.close();
+  }
+  expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(MULTI_APP_SCHEMA_VERSION);
 });

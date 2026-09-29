@@ -14,10 +14,13 @@ export interface ProntoPaths {
   logPath: string;
   providerStatePath: string;
   updateBackupPath: string;
+  updateDatabaseBackupPath: string;
   updateDirectory: string;
   updateLockPath: string;
   updateStatePath: string;
   updaterLaunchAgentPath: string;
+  whatsappStatePath: string;
+  whatsappStoreDirectory: string;
 }
 
 function productPathsForHome(input: {
@@ -49,6 +52,7 @@ function productPathsForHome(input: {
     logPath: join(logDirectory, "daemon.log"),
     providerStatePath: join(appSupportDirectory, "provider-state.json"),
     updateBackupPath: join(updateDirectory, "last-known-good"),
+    updateDatabaseBackupPath: join(updateDirectory, "last-known-good-state.sqlite"),
     updateDirectory,
     updateLockPath: join(updateDirectory, "update.lock"),
     updateStatePath: join(updateDirectory, "state.json"),
@@ -60,6 +64,8 @@ function productPathsForHome(input: {
         ? `${UPDATER_LAUNCH_AGENT_LABEL}.plist`
         : `${input.label}.updater.plist`,
     ),
+    whatsappStatePath: join(appSupportDirectory, "whatsapp-state.json"),
+    whatsappStoreDirectory: join(appSupportDirectory, "whatsapp"),
   };
 }
 
