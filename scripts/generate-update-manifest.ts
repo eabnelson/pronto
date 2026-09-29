@@ -11,6 +11,12 @@ import {
   type ProntoUpdateTarget,
   type SignedProntoUpdateEnvelope,
 } from "../packages/cli/src/update";
+import {
+  MENUBAR_ARCHIVE_NAME,
+  MENUBAR_BUNDLE_IDENTIFIER,
+  MENUBAR_MANIFEST_NAME,
+  type MenubarManifest,
+} from "../packages/cli/src/menubar";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -69,3 +75,35 @@ await writeFile(join(directory, "pronto-update.json"), `${JSON.stringify(envelop
   encoding: "utf8",
   mode: 0o600,
 });
+
+// The menu bar app has its own manifest because older updaters reject unknown fields.
+const menubarPath = join(directory, MENUBAR_ARCHIVE_NAME);
+const [menubarBytes, menubarDetails] = await Promise.all([readFile(menubarPath), stat(menubarPath)]);
+if (!menubarDetails.isFile() || menubarDetails.size <= 0) throw new Error("menu bar archive is invalid");
+const menubarPayload: MenubarManifest = {
+  artifact: {
+    macosSigning: { identifier: MENUBAR_BUNDLE_IDENTIFIER, teamIdentifier: PRONTO_SIGNING_TEAM_IDENTIFIER },
+    sha256: createHash("sha256").update(menubarBytes).digest("hex"),
+    size: menubarDetails.size,
+    url: `https://github.com/eabnelson/pronto/releases/download/v${version}/${MENUBAR_ARCHIVE_NAME}`,
+  },
+  channel: "stable",
+  expiresAt: expiresAt.toISOString(),
+  product: "pronto-menubar",
+  publishedAt: publishedAt.toISOString(),
+  releaseSequence: releaseSequenceForVersion(version),
+  schemaVersion: 1,
+  sourceRevision: revision,
+  version,
+};
+const menubarPayloadBytes = Buffer.from(JSON.stringify(menubarPayload));
+const menubarEnvelope: SignedProntoUpdateEnvelope = {
+  keyId: PRONTO_UPDATE_KEY_ID,
+  payload: menubarPayloadBytes.toString("base64url"),
+  signature: sign(null, menubarPayloadBytes, createPrivateKey(privateKeyPem)).toString("base64url"),
+};
+await writeFile(join(directory, MENUBAR_MANIFEST_NAME), `${JSON.stringify(menubarEnvelope)}\n`, {
+  encoding: "utf8",
+  mode: 0o600,
+});
+
