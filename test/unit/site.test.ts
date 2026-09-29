@@ -381,7 +381,7 @@ describe("public landing page", () => {
     expect(html).toContain("bubble.animate(keyframes");
     expect(html).toContain("iterations: Number.POSITIVE_INFINITY");
     expect(html).toContain("transform: `translate3d(");
-    expect(html).toContain('copyButton.getBoundingClientRect().bottom');
+    expect(html).toContain('copyButton.getBoundingClientRect().top - mobileFadeOvershoot');
     expect(html).toContain("if (window.innerWidth === layoutWidth) return");
     expect(html).not.toContain("68% {\n          opacity: 0;");
     expect(html).not.toContain("setInterval");
@@ -469,7 +469,7 @@ describe("public landing page", () => {
     expect(bubbleBody.textContent).not.toBe(initialText);
   });
 
-  test("anchors the mobile fade endpoint to the setup button position", async () => {
+  test("lets mobile bubbles rise past the setup button before fading", async () => {
     const harness = await createLandingPageHarness({ innerWidth: 390 });
     const bubble = harness.stream.children[0];
     if (!bubble) throw new Error("expected an animated bubble");
@@ -480,7 +480,7 @@ describe("public landing page", () => {
         frame.opacity === 0 && Number(frame.offset) > 0.05 && Number(frame.offset) < 1,
     );
     const expectedFadeEnd =
-      (bubble.offsetTop - harness.copyButton.getBoundingClientRect().bottom) /
+      (bubble.offsetTop - (harness.copyButton.getBoundingClientRect().top - 60)) /
       (harness.window.innerHeight * 0.85);
 
     expect(Number(fadeFrame?.offset)).toBeCloseTo(expectedFadeEnd);

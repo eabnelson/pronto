@@ -359,7 +359,9 @@
       const bubbleCount = 12;
       const streamDuration = 16.8;
       const mobileBreakpoint = 620;
-      const mobileFadeDistance = 100;
+      const mobileFadeDistance = 140;
+      // On phones, bubbles rise behind the glass button and finish fading this far above it.
+      const mobileFadeOvershoot = 60;
       const entranceEnd = 0.04;
       let reducedMotion = motionPreference.matches;
       let promptIndex = 0;
@@ -399,7 +401,7 @@
         let fadeEnd = 1;
 
         if (mobile) {
-          const buttonBottom = copyButton.getBoundingClientRect().bottom;
+          const fadeLine = copyButton.getBoundingClientRect().top - mobileFadeOvershoot;
           const riseDistance = window.innerHeight * 0.85;
           const bubbleTop =
             bubble.getBoundingClientRect().top ||
@@ -408,14 +410,14 @@
             0.98,
             Math.max(
               entranceEnd + 0.02,
-              (bubbleTop - buttonBottom) / riseDistance,
+              (bubbleTop - fadeLine) / riseDistance,
             ),
           );
           fadeStart = Math.max(
             entranceEnd,
             Math.min(
               fadeEnd - 0.02,
-              (bubbleTop - buttonBottom - mobileFadeDistance) / riseDistance,
+              (bubbleTop - fadeLine - mobileFadeDistance) / riseDistance,
             ),
           );
         }
