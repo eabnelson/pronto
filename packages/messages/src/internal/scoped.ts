@@ -17,6 +17,7 @@ import {
 } from "node:crypto";
 import { normalizeEvent, record } from "./normalize.js";
 import { markHistoryMirrors } from "./mirrors.js";
+import { resolveAttachmentMime } from "./attachment-mime.js";
 import type { ResilientRpcClient } from "./rpc.js";
 import type {
   AttachmentReference,
@@ -192,40 +193,6 @@ function parseAttachment(value: unknown): ParsedAttachment | undefined {
     providerAttachmentId: safeString(raw.attachment_id ?? raw.guid, 1_024) ?? null,
     size,
   };
-}
-
-function detectedMime(data: Buffer): string | undefined {
-  if (data.length >= 8 && data.subarray(0, 8).equals(
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  )) return "image/png";
-  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) {
-    return "image/jpeg";
-  }
-  if (data.length >= 6) {
-    const header = data.subarray(0, 6).toString("ascii");
-    if (header === "GIF87a" || header === "GIF89a") return "image/gif";
-  }
-  if (data.length >= 5 && data.subarray(0, 5).toString("ascii") === "%PDF-") {
-    return "application/pdf";
-  }
-  if (data.length >= 4 && data.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
-    return "application/zip";
-  }
-  try {
-    if (data.length > 0 && !data.includes(0)) {
-      new TextDecoder("utf-8", { fatal: true }).decode(data);
-      return "text/plain";
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
-}
-
-function mimeCompatible(advertised: string, detected: string | undefined): boolean {
-  if (detected === undefined) return false;
-  if (advertised === "application/octet-stream" || advertised === detected) return true;
-  return detected === "text/plain" && advertised.startsWith("text/");
 }
 
 function validCapabilityScope(value: unknown): value is CapabilityScope {
@@ -693,17 +660,15 @@ export class ScopedMessagesAccess {
         after.dev !== opened.dev || after.ino !== opened.ino || after.mtimeMs !== opened.mtimeMs ||
         after.size !== opened.size
       ) throw new Error("messages_attachment_file_changed");
-      const mimeType = detectedMime(Buffer.concat(sniff));
-      if (!mimeCompatible(payload.mimeType, mimeType)) {
-        throw new Error("messages_attachment_mime_mismatch");
-      }
+      const mimeType = resolveAttachmentMime(payload.mimeType, Buffer.concat(sniff));
+      if (mimeType === undefined) throw new Error("messages_attachment_mime_mismatch");
       await target.close();
       target = undefined;
       await source.close();
       source = undefined;
       return {
         dispose: async () => await rm(directory, { force: true, recursive: true }),
-        mimeType: mimeType ?? payload.mimeType,
+        mimeType,
         name: payload.name,
         path: targetPath,
         sha256: digest.digest("hex"),

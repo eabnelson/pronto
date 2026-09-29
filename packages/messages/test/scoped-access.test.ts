@@ -493,3 +493,59 @@ test("attachment references enforce containment, symlinks, file evidence, size, 
   })).rejects.toThrow("reference_invalid");
   await messages.close();
 });
+
+test("iPhone photos, videos, and voice notes materialize with their declared types", async () => {
+  const directory = await fixtureDirectory();
+  const attachmentsRoot = join(directory, "Attachments");
+  const scratchRoot = join(directory, "scratch");
+  await mkdir(attachmentsRoot, { mode: 0o700 });
+  const fixtures = join(import.meta.dir, "fixtures", "attachments");
+  const cases = [
+    { file: "photo.heic", mime: "image/heic" },
+    { file: "clip.mov", mime: "video/quicktime" },
+    { file: "clip.mp4", mime: "video/mp4" },
+    { file: "voice.caf", mime: "audio/x-caf" },
+    { file: "voice.m4a", mime: "audio/x-m4a" },
+    { file: "photo.heic", mime: "image/jpeg" },
+  ] as const;
+  const bytes = await Promise.all(cases.map(async ({ file }) => await readFile(join(fixtures, file))));
+  const entries = await Promise.all(cases.map(async ({ file, mime }, index) => {
+    const path = join(attachmentsRoot, `${index}-${file}`);
+    await writeFile(path, bytes[index]!);
+    return {
+      attachment_id: `media-${index}`,
+      mime_type: mime,
+      original_path: path,
+      total_bytes: bytes[index]!.length,
+      transfer_name: `${index}-${file}`,
+    };
+  }));
+  const databasePath = join(directory, "chat.db");
+  await writeFile(databasePath, "database evidence");
+  const messages = await scopedClient({
+    attachmentsRoot,
+    databasePath,
+    event: { ...observedEvent, attachments: entries },
+    scratchRoot,
+  });
+  const observed = await nextEvent(messages);
+  const attachments = observed.message.attachments;
+  expect(attachments.every(({ available }) => available)).toBe(true);
+
+  for (const [index, { mime }] of cases.entries()) {
+    const read = messages.materializeAttachment({
+      attachment: attachments[index]!.reference!,
+      conversation: observed.conversation,
+      maxBytes: bytes[index]!.length,
+    });
+    if (mime === "image/jpeg") {
+      await expect(read).rejects.toThrow("mime_mismatch");
+      continue;
+    }
+    const materialized = await read;
+    expect(materialized.mimeType).toBe(mime);
+    expect(await readFile(materialized.path)).toEqual(bytes[index]!);
+    await materialized.dispose();
+  }
+  await messages.close();
+});
