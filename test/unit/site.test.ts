@@ -316,6 +316,18 @@ describe("public landing page", () => {
     expect(reducedMotion).toMatch(/\.cta \{[^}]*animation: none;/);
   });
 
+  test("styles WhatsApp bubbles in WhatsApp's light theme", async () => {
+    const html = await read("index.html");
+
+    expect(html).toContain('const bubbleStyles = ["blue", "gray", "whatsapp-sent", "whatsapp-received"];');
+    expect(html).toContain("background: #d9fdd3;");
+    expect(html).toContain("color: #111b21;");
+    expect(html).toContain("color: #667781;");
+    expect(html).toContain("content: attr(data-time);");
+    expect(html).toContain("%2353bdeb");
+    expect(html).toContain("bubbleBody.dataset.time = clockTime();");
+  });
+
   test("publishes a bubble-only social preview", async () => {
     const html = await read("index.html");
     const source = await read("og-image.svg");
