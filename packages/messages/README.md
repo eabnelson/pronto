@@ -79,6 +79,8 @@ chat-level routing hint and must not be presented as message-level proof.
 
 Attachment metadata never exposes the Messages source path. Available attachments carry an expiring sealed reference. `materializeAttachment` revalidates the conversation, database generation, provider metadata, containment under the Messages attachments root, regular-file identity, size, and MIME evidence before copying bytes into owner-private scratch. The returned scratch file has an explicit `dispose()` lifecycle.
 
+MIME evidence comes from the copied bytes, not the file name. Recognised content is PNG, JPEG, GIF, PDF, ZIP, UTF-8 text, CAF audio, and ISO base media files by `ftyp` brand (HEIC/HEIF/AVIF images, QuickTime/MP4/M4V/3GP video, M4A audio). A declaration from the same container family is accepted and returned as declared (for example `image/heic` over a HEIF brand, or `audio/x-m4a` over a generic MP4 brand); unrecognised bytes or a contradicting declaration fail with `messages_attachment_mime_mismatch`.
+
 `reply` optionally accepts one absolute, consumer-staged `filePath`. Routing,
 submission ambiguity, and retry classification remain owned by this module;
 the consumer remains responsible for authorizing and cleaning its staged file.
