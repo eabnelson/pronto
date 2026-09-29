@@ -1,0 +1,13 @@
+{
+  "version": "0.5.0",
+  "listener": "running",
+  "daemon": "ready",
+  "database": "ready",
+  "channels": {
+    "imessage": { "state": "ready", "tags": ["@s4"] },
+    "whatsapp": { "state": "needs_link", "tags": ["@s4", "@wa"] }
+  },
+  "degradedCapabilities": [],
+  "active": 0, "ambiguous": 0, "parked": 0, "rateLimited": 0,
+  "lastSettledAt": 1790719000000
+}

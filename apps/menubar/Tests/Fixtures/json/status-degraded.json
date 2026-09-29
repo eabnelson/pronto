@@ -1,0 +1,12 @@
+{
+  "version": "0.5.0",
+  "listener": "running",
+  "daemon": "degraded",
+  "database": "ready",
+  "channels": {
+    "imessage": { "state": "degraded", "reason": "Full Disk Access is missing" }
+  },
+  "degradedCapabilities": ["attachments"],
+  "active": 1, "ambiguous": 0, "parked": 0, "rateLimited": 0,
+  "lastSettledAt": 1790719000000
+}

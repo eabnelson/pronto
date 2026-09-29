@@ -1,0 +1,12 @@
+{
+  "version": "0.5.0",
+  "listener": "stopped",
+  "daemon": "stopped",
+  "database": "ready",
+  "channels": {
+    "imessage": { "state": "stopped", "tags": ["@s4"] }
+  },
+  "degradedCapabilities": [],
+  "active": 0, "ambiguous": 0, "parked": 0, "rateLimited": 0,
+  "lastSettledAt": 1790719000000
+}
