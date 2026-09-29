@@ -306,12 +306,14 @@ describe("public landing page", () => {
 
   test("morphs the setup button between iMessage and WhatsApp colors", async () => {
     const html = await read("index.html");
-    const morph = html.slice(html.indexOf("@keyframes cta-morph"), html.indexOf(".cta:hover"));
+    const morph = html.slice(html.indexOf("@keyframes cta-morph"), html.indexOf(".cta:focus-visible"));
     const reducedMotion = html.slice(html.indexOf("@media (prefers-reduced-motion: reduce)"));
 
-    expect(html).toContain("animation: cta-morph 8s ease-in-out infinite;");
-    expect(morph).toContain("background: #0a84ff;");
-    expect(morph).toContain("background: #0e9a5a;");
+    expect(html).toContain("animation: cta-morph 9s infinite;");
+    expect(html).toContain("linear-gradient(115deg, #0a84ff 0% 42%, #0e9a5a 58% 100%)");
+    expect(morph).toContain("background-position: 0% 50%;");
+    expect(morph).toContain("background-position: 100% 50%;");
+    expect(html).not.toContain(".cta:hover");
     expect(html).toMatch(/\.cta\[data-copied="true"\] \{\s+animation: none;/);
     expect(reducedMotion).toMatch(/\.cta \{[^}]*animation: none;/);
   });

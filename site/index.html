@@ -94,7 +94,7 @@
         justify-content: center;
         border: 0;
         border-radius: 999px;
-        background: #0a84ff;
+        background: linear-gradient(115deg, #0a84ff 0% 42%, #0e9a5a 58% 100%) 0% 50% / 300% 100%;
         box-shadow: 0 0.9rem 2.6rem rgb(10 132 255 / 24%);
         color: white;
         cursor: pointer;
@@ -103,37 +103,29 @@
         font-weight: 660;
         letter-spacing: -0.015em;
         text-decoration: none;
-        transition: transform 160ms ease, filter 160ms ease;
-        animation: cta-morph 8s ease-in-out infinite;
+        animation: cta-morph 9s infinite;
       }
 
-      /* Holds iMessage blue, fades to WhatsApp green, holds, and fades back. */
+      /* A soft diagonal wipe sweeps WhatsApp green in over iMessage blue, holds, then sweeps back. */
       @keyframes cta-morph {
         0%,
-        35% {
-          background: #0a84ff;
+        38% {
+          background-position: 0% 50%;
           box-shadow: 0 0.9rem 2.6rem rgb(10 132 255 / 24%);
+          animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
         }
 
         50%,
-        85% {
-          background: #0e9a5a;
+        88% {
+          background-position: 100% 50%;
           box-shadow: 0 0.9rem 2.6rem rgb(14 154 90 / 24%);
+          animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
         }
 
         100% {
-          background: #0a84ff;
+          background-position: 0% 50%;
           box-shadow: 0 0.9rem 2.6rem rgb(10 132 255 / 24%);
         }
-      }
-
-      .cta:hover {
-        filter: brightness(0.93);
-        transform: translateY(-2px);
-      }
-
-      .cta:active {
-        transform: translateY(0);
       }
 
       .cta:focus-visible {
