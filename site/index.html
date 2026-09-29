@@ -103,12 +103,32 @@
         font-weight: 660;
         letter-spacing: -0.015em;
         text-decoration: none;
-        transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
+        transition: transform 160ms ease, filter 160ms ease;
+        animation: cta-morph 8s ease-in-out infinite;
+      }
+
+      /* Holds iMessage blue, fades to WhatsApp green, holds, and fades back. */
+      @keyframes cta-morph {
+        0%,
+        35% {
+          background: #0a84ff;
+          box-shadow: 0 0.9rem 2.6rem rgb(10 132 255 / 24%);
+        }
+
+        50%,
+        85% {
+          background: #0e9a5a;
+          box-shadow: 0 0.9rem 2.6rem rgb(14 154 90 / 24%);
+        }
+
+        100% {
+          background: #0a84ff;
+          box-shadow: 0 0.9rem 2.6rem rgb(10 132 255 / 24%);
+        }
       }
 
       .cta:hover {
-        background: #0077ed;
-        box-shadow: 0 1rem 3rem rgb(10 132 255 / 30%);
+        filter: brightness(0.93);
         transform: translateY(-2px);
       }
 
@@ -122,6 +142,7 @@
       }
 
       .cta[data-copied="true"] {
+        animation: none;
         background: #20a957;
         box-shadow: 0 0.9rem 2.6rem rgb(32 169 87 / 22%);
       }
@@ -257,6 +278,7 @@
       @media (prefers-reduced-motion: reduce) {
         .cta {
           transition: none;
+          animation: none;
         }
 
         .stream-bubble,
