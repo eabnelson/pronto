@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 const repoRoot = new URL("../../", import.meta.url);
 const siteRoot = new URL("site/", repoRoot);
 const setupPrompt =
-  "Help me set up iMessage Tags on this Mac. Follow https://studiofour.io/imessage-setup.md and stay with me until one tagged iMessage or RCS message gets exactly one agent reply.";
+  "Help me set up Pronto on this Mac. Follow https://studiofour.io/imessage-setup.md and stay with me until, in each messaging app I choose, one tagged message gets exactly one agent reply.";
 
 async function read(name: string): Promise<string> {
   return Bun.file(new URL(name, siteRoot)).text();
@@ -352,12 +352,13 @@ describe("public landing page", () => {
     expect(source).toContain("@plan");
     expect(source).toContain("#0a84ff");
     expect(source).toContain("#e5e5ea");
+    expect(source).toContain("#e0fbd6");
     expect(source).not.toContain(">pronto<");
     expect(createHash("sha256").update(sourceBytes).digest("hex")).toBe(
-      "7d3642d252cbf645f065dc39ef896d3329086548056fe7f2009b31fc4b05945b",
+      "45c66b76430c5f044841c66b858bc41666c1afbeb7f2f7bab6e570b853b44629",
     );
     expect(createHash("sha256").update(png).digest("hex")).toBe(
-      "35c89432a4d86da90db84ba2600d3724e35f58f41dc7fae26456421e4fc7daaa",
+      "56e39e4d43ae8f2f1fd0f7dd11f38579d4a5ce1a45559db16c8e072079d121c4",
     );
     expect([...png.slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(view.getUint32(16)).toBe(1200);
