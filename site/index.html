@@ -174,6 +174,26 @@
         color: #1d1d1f;
       }
 
+      /* WhatsApp bubbles: squarer corners with a flat corner on the sender's side. */
+      .bubble-body.whatsapp-sent,
+      .bubble-body.whatsapp-received {
+        border-radius: 0.6rem;
+        color: #111b21;
+        box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 8%), 0 1px 0.5px rgb(11 20 26 / 13%);
+      }
+
+      .bubble-body.whatsapp-sent {
+        transform-origin: right bottom;
+        border-top-right-radius: 0.15rem;
+        background: #d9fdd3;
+      }
+
+      .bubble-body.whatsapp-received {
+        transform-origin: left bottom;
+        border-top-left-radius: 0.15rem;
+        background: #ffffff;
+      }
+
       @keyframes send-bubble-cycle {
         0% {
           opacity: 0;
@@ -260,7 +280,7 @@
     <main>
       <section class="hero" aria-labelledby="headline">
         <h1 id="headline">Pick any tag</h1>
-        <p class="subhead">iMessage your agent from any conversation</p>
+        <p class="subhead">iMessage or WhatsApp your agent from any conversation</p>
         <a class="cta" id="copy-prompt" href="https://studiofour.io/imessage-setup.md" aria-live="polite">Help me get set up</a>
       </section>
     </main>
@@ -319,6 +339,8 @@
         "@surprise give me an idea I wouldn't expect",
       ];
 
+      // iMessage sent/received, then WhatsApp sent/received.
+      const bubbleStyles = ["blue", "gray", "whatsapp-sent", "whatsapp-received"];
       const stream = document.querySelector("[data-bubble-stream]");
       const copyButton = document.querySelector("#copy-prompt");
       const defaultCopyLabel = "Help me get set up";
@@ -413,7 +435,7 @@
         const bubble = document.createElement("span");
         const bubbleBody = document.createElement("span");
         const rotation = -16 + Math.random() * 32;
-        const color = Math.random() > 0.48 ? "blue" : "gray";
+        const color = bubbleStyles[Math.floor(Math.random() * bubbleStyles.length)];
 
         bubble.className = "stream-bubble";
         bubbleBody.className = `bubble-body ${color}`;
