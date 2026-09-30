@@ -108,10 +108,13 @@ export async function loadExistingSetupDefaults(
         ? normalizeTags(value.tags)
         : null;
     } else if (value.version === 3) {
-      const channels = value.channels as { imessage?: { tags?: unknown } } | undefined;
-      const imessageTags = channels?.imessage?.tags;
-      tags = Array.isArray(imessageTags) && imessageTags.every((tag) => typeof tag === "string")
-        ? normalizeTags(imessageTags)
+      // Every app's tags, in first-seen order, so WhatsApp-only installs keep theirs too.
+      const channels = value.channels !== null && typeof value.channels === "object"
+        ? Object.values(value.channels as Record<string, { tags?: unknown }>)
+        : [];
+      const all = channels.flatMap((channel) => Array.isArray(channel?.tags) ? channel.tags : [null]);
+      tags = all.length > 0 && all.every((tag) => typeof tag === "string")
+        ? normalizeTags(all as string[])
         : null;
     } else {
       throw new Error(`Unsupported configuration version ${String(value.version)}`);
