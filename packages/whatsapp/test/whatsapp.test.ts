@@ -180,6 +180,47 @@ test("stale live messages are suppressed and delivered by the post-backlog recov
   expect(sweep.some((arg) => arg.startsWith("--after="))).toBe(true);
 });
 
+test("a message filed under another address after a restart is not delivered again", async () => {
+  // wacli can move a chat between its phone-number JID and its LID, e.g. when it restarts.
+  const aliceLid = "84444000000001@lid";
+  const h = await setup({
+    auth: LINKED,
+    syncRuns: [{ webhooks: [{ afterMs: 30, payload: webhook({ chat: aliceLid, id: "MOVED", sender: aliceLid, ts: iso(2_000) }) }] }],
+  });
+  const first = collector();
+  const subscription = await h.module.subscribe(first.input);
+  await waitFor(() => first.events.length === 1);
+  await waitFor(() => first.recovery.length === 1);
+  await subscription.close();
+
+  // Place the re-filed row inside the next sweep's window, as a restart's recovery sweep sees it.
+  const state = JSON.parse(await readFile(h.statePath, "utf8")) as { watermark: string };
+  await h.writeScenario({
+    auth: LINKED,
+    messages: [row({ chat: ALICE, id: "MOVED", ts: new Date(Date.parse(state.watermark) + 1_500).toISOString() })],
+    syncRuns: [{}],
+  });
+  const second = collector();
+  await h.newModule().subscribe(second.input);
+  await waitFor(() => second.recovery.length === 1);
+  expect(second.events).toEqual([]);
+});
+
+test("delivered keys saved with a chat address still suppress the message", async () => {
+  const h = await setup({ auth: LINKED, syncRuns: [{}] });
+  const watermark = new Date(Date.now() - 60_000).toISOString();
+  await seedState(h.statePath, watermark, [`${ALICE}|OLDKEY`, `${ALICE}|OLDEDIT|edit|abc`, "sent|MINE"]);
+  await h.writeScenario({
+    auth: LINKED,
+    messages: [row({ chat: "84444000000001@lid", id: "OLDKEY", ts: new Date(Date.parse(watermark) + 1_500).toISOString() })],
+    syncRuns: [{}],
+  });
+  const c = collector();
+  await h.newModule().subscribe(c.input);
+  await waitFor(() => c.recovery.length === 1);
+  expect(c.events).toEqual([]);
+});
+
 test("first subscribe does not replay history; watermark survives a new instance", async () => {
   const h = await setup({
     auth: LINKED,
@@ -194,7 +235,7 @@ test("first subscribe does not replay history; watermark survives a new instance
   await subscription.close();
 
   const state = JSON.parse(await readFile(h.statePath, "utf8")) as { delivered: string[]; watermark: string };
-  expect(state.delivered).toContain(`${ALICE}|LIVE1`);
+  expect(state.delivered).toContain("id|LIVE1");
   expect(Date.parse(state.watermark)).toBeGreaterThan(Date.now() - 10_000);
   expect((await stat(h.statePath)).mode & 0o777).toBe(0o600);
 

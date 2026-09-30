@@ -209,7 +209,7 @@ class WhatsappModule implements ProntoWhatsapp {
     const outcome = sendOutcome(result);
     if (outcome.status === "confirmed") {
       await this.#state.load().then(async () => {
-        await this.#state.markDelivered(`${chatJid}|${outcome.providerMessageId}`, null);
+        await this.#state.markDelivered(deliveryKey({ id: outcome.providerMessageId, kind: "message", text: null }), null);
         await this.#state.markDelivered(`sent|${outcome.providerMessageId}`, null);
       }).catch(() => undefined);
     }

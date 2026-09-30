@@ -46,12 +46,14 @@ export class DeliveryState {
     const watermark = typeof value.watermark === "string" ? Date.parse(value.watermark) : NaN;
     this.#watermarkMs = Number.isFinite(watermark) ? watermark : null;
     this.#delivered = new Set(
-      Array.isArray(value.delivered) ? value.delivered.filter((key) => typeof key === "string") : [],
+      Array.isArray(value.delivered)
+        ? value.delivered.filter((key) => typeof key === "string").map(addressFreeKey)
+        : [],
     );
     this.#undelivered = new Map();
     for (const entry of Array.isArray(value.undelivered) ? value.undelivered : []) {
       if (typeof entry?.key === "string" && Number.isFinite(entry.occurredAtMs)) {
-        this.#undelivered.set(entry.key, entry.occurredAtMs);
+        this.#undelivered.set(addressFreeKey(entry.key), entry.occurredAtMs);
       }
     }
     this.#loaded = true;
@@ -140,4 +142,10 @@ export class DeliveryState {
       throw error;
     }
   }
+}
+
+/** Keys written before 0.5.0 began with the chat JID (`<jid>|<id>…`); they now use `id|<id>…`. */
+function addressFreeKey(key: string): string {
+  const match = /^[^|@]+@[^|]+\|(.+)$/.exec(key);
+  return match === null ? key : `id|${match[1]}`;
 }
