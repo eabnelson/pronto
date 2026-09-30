@@ -1,6 +1,6 @@
 {
   "name": "pronto-whatsapp",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "description": "Reusable local WhatsApp transport for Pronto consumers, built on wacli",
   "type": "module",
   "license": "MIT",

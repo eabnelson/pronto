@@ -10,6 +10,9 @@ const expectedSurfaces = new Set([
   "Messages Automation",
   "Self-chat mirror handling",
   "Full remote tagged flow",
+  "wacli",
+  "WhatsApp tagged flow",
+  "Menu bar app",
 ]);
 const semverTag = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
