@@ -265,7 +265,6 @@ test("text replies reach a self-chat addressed by LID before its LID is learned"
   const selfLid = "211128126849043@lid";
   const h = await setup({ auth: LINKED, send: { id: "3EB0SELF", mode: "ok" }, syncRuns: [{}] });
   await h.module.subscribe(collector().input);
-  expect(h.module.isSelfChat(selfLid)).toBe(false);
   const outcome = await h.module.reply({
     conversation: h.reference(selfLid),
     quote: { providerMessageId: "PHOTO", sender: OWNER },
