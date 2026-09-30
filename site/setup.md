@@ -32,8 +32,11 @@ macOS setting.
 
 ## Walk me through this
 
-1. Ask whether I want iMessage and RCS, WhatsApp, or both. Then check the
-   prerequisites without changing anything:
+1. Ask whether I want iMessage and RCS, WhatsApp, or both. If Pronto is already
+   installed (`~/Library/Application Support/pronto/bin/pronto` exists), I am
+   probably adding an app: setup keeps my existing tags, working folder, and
+   WhatsApp link, so choose every app I want to keep, not just the new one.
+   Then check the prerequisites without changing anything:
 
    ```sh
    sw_vers
@@ -44,9 +47,11 @@ macOS setting.
    ```
 
    For iMessage and RCS I need `imsg` 0.15.0. For WhatsApp I need `wacli` 0.19.0
-   or newer and the WhatsApp app on my phone. I also need at least one
-   authenticated Codex CLI or Claude Code CLI. A missing optional runtime is fine.
-   If a tool I need is missing and Homebrew is installed, offer:
+   or newer and the WhatsApp app on my phone. Setup only offers apps whose tool
+   is installed, so every app I chose needs its tool before setup runs; if one
+   is missing, setup quietly sets up only the others. I also need at least one
+   authenticated Codex CLI or Claude Code CLI. A missing optional runtime is
+   fine. If a tool I need is missing and Homebrew is installed, offer:
 
    ```sh
    brew install steipete/tap/imsg     # iMessage and RCS
@@ -82,26 +87,33 @@ macOS setting.
    Never fall back to building from source for an ordinary installation.
 
 3. If I chose iMessage, before running setup, guide me to **System Settings →
-   Privacy & Security → Full Disk Access** and have me enable the terminal or parent app that will run setup.
-   This lets setup perform its temporary Messages database preflight. WhatsApp
-   alone needs no Full Disk Access. Then run the signed candidate:
+   Privacy & Security → Full Disk Access** and have me enable the terminal or
+   parent app that will run setup. This lets setup perform its temporary
+   Messages database preflight. WhatsApp alone needs no Full Disk Access. Then
+   run the signed candidate:
 
    ```sh
    "$PRONTO_CANDIDATE" setup
    ```
 
-   When both `imsg` and `wacli` are installed, setup first asks which apps to
-   answer in; both is the default. Help me choose one or more trigger tags and,
-   with both apps enabled, which apps each tag applies to (both by default). Then
-   help me choose a primary runtime, an optional fallback, and a default working
-   folder. Explain that the working folder is context, not a security boundary.
-   At the trust-model prompt, and at the WhatsApp risk prompt if I chose
-   WhatsApp, stop and let me personally decide whether to type `yes`.
+   Setup asks, in order:
 
-   For WhatsApp, setup then shows a QR code in the terminal. Tell me to open
-   WhatsApp on my phone, go to **Settings → Linked devices → Link a device**, and
-   scan it. The code refreshes on its own until I scan it. Setup continues after
-   the first sync finishes.
+   - **Which apps to answer in**, only when both `imsg` and `wacli` are
+     installed. Both is the default.
+   - **Trigger tags**, separated by commas, then, with both apps chosen, **which
+     apps each tag applies to** (both by default). Each app needs at least one
+     tag. When re-running setup, pressing Enter keeps the existing tags.
+   - **A primary runtime, an optional fallback, and a default working folder.**
+     Explain that the working folder is context, not a security boundary.
+   - **The trust model**, and **the WhatsApp risk** if I chose WhatsApp. Stop at
+     each one and let me personally decide whether to type `yes`.
+
+   For WhatsApp, if this Mac is not linked yet, setup then shows a QR code in
+   the terminal. Tell me to open WhatsApp on my phone, go to **Settings → Linked
+   devices → Link a device**, and scan it. The code refreshes on its own until I
+   scan it. The Mac appears as **Pronto** in my linked devices. Setup continues
+   after the first sync of recent messages, which can take a few minutes. A Mac
+   that is already linked skips this step.
 
 4. If I chose iMessage, when setup asks, guide me to **System Settings →
    Privacy & Security → Full Disk Access**. I must add and enable this exact installed executable:
@@ -132,7 +144,9 @@ macOS setting.
    ready`, and each chosen app (`imessage`, `whatsapp`) reports `ready`. Resolve
    failed checks before continuing. A send-automation check may stay degraded
    until the first real reply. If `whatsapp` reports `needs_link`, run
-   `"$PRONTO" whatsapp link` and have me scan the new QR code.
+   `"$PRONTO" whatsapp link` and have me scan the new QR code, or run
+   `"$PRONTO" whatsapp link --phone <my number>` to get a code to type into
+   WhatsApp instead.
 
 6. Show me how to manage tags:
 
