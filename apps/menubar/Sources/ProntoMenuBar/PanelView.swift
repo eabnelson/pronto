@@ -34,6 +34,7 @@ struct PanelView: View {
         .frame(width: PanelMetrics.width)
         .fixedSize(horizontal: false, vertical: true)
         .background(WindowVisibilityReader { visible in model.setPanelOpen(visible) })
+        .background(PanelChrome())
     }
 
     private var isUnverified: Bool {

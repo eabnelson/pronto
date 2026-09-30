@@ -275,19 +275,62 @@ struct InlineError: View {
     }
 }
 
-/// Rounds the MenuBarExtra window to match the system menus, whose corners
-/// are rounder than the SwiftUI default.
-enum PanelShape {
+/// Shapes the MenuBarExtra window like the system menus. Place it as a
+/// background of the panel content so its frame is the content's size.
+///
+/// SwiftUI's window has squarer corners than the system menus and can stay
+/// taller than its content after the content shrinks, which leaves the
+/// content floating in a square box. This rounds the window and keeps it
+/// exactly the content's size, anchored at the top under the menu bar.
+struct PanelChrome: NSViewRepresentable {
     static let cornerRadius: CGFloat = 15
 
-    @MainActor static func apply(to window: NSWindow) {
-        guard let frame = window.contentView?.superview else { return }
-        frame.wantsLayer = true
-        guard let layer = frame.layer, layer.cornerRadius != cornerRadius else { return }
-        layer.cornerRadius = cornerRadius
-        layer.cornerCurve = .continuous
-        layer.masksToBounds = true
-        window.invalidateShadow()
+    func makeNSView(context: Context) -> ChromeView { ChromeView() }
+    func updateNSView(_ nsView: ChromeView, context: Context) {}
+
+    final class ChromeView: NSView {
+        private var resizeObserver: NSObjectProtocol?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            resizeObserver.map(NotificationCenter.default.removeObserver)
+            resizeObserver = window.map {
+                NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: $0, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.scheduleFit() }
+                }
+            }
+            fit()
+        }
+
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            scheduleFit()
+        }
+
+        /// Fits after the current layout pass finishes.
+        private func scheduleFit() {
+            DispatchQueue.main.async { [weak self] in self?.fit() }
+        }
+
+        private func fit() {
+            guard let window, let content = window.contentView else { return }
+            let size = bounds.size
+            if size.width > 0, size.height > 0,
+               abs(content.frame.width - size.width) > 0.5 || abs(content.frame.height - size.height) > 0.5 {
+                let frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
+                let top = window.frame.maxY
+                window.setFrame(NSRect(x: window.frame.minX, y: top - frame.height,
+                                       width: frame.width, height: frame.height), display: true)
+            }
+            for view in [content.superview, content].compactMap({ $0 }) {
+                view.wantsLayer = true
+                guard let layer = view.layer, layer.cornerRadius != PanelChrome.cornerRadius else { continue }
+                layer.cornerRadius = PanelChrome.cornerRadius
+                layer.cornerCurve = .continuous
+                layer.masksToBounds = true
+            }
+            window.invalidateShadow()
+        }
     }
 }
 
@@ -330,7 +373,6 @@ struct WindowVisibilityReader: NSViewRepresentable {
                 })
             }
             report(window.isVisible)
-            PanelShape.apply(to: window)
         }
 
         private func report(_ visible: Bool) {
