@@ -31,9 +31,17 @@ export interface FakeSyncRun {
   readonly webhooks?: readonly FakeWebhook[];
 }
 
+export interface FakeLinkRun {
+  readonly events: readonly FakeTimedEvent[];
+  readonly exitCode: number;
+}
+
 export interface FakeScenario {
   readonly auth?: { readonly authenticated: boolean; readonly linkedJid?: string };
-  readonly link?: { readonly events: readonly FakeTimedEvent[]; readonly exitCode: number };
+  /** One run of `wacli auth`, or one per run in order (the last repeats). */
+  readonly link?: FakeLinkRun | readonly FakeLinkRun[];
+  /** `clear-then-hang` clears the session, then never confirms, like a slow WhatsApp server. */
+  readonly logout?: "clear-then-hang" | "hang";
   readonly listFails?: boolean;
   /** Downloadable media by message id: the file name wacli writes and its contents. */
   readonly media?: Readonly<Record<string, { readonly content: string; readonly name: string }>>;
@@ -217,7 +225,15 @@ async function send(): Promise<void> {
 }
 
 async function runLink(): Promise<void> {
-  const link = scenario().link ?? { events: [], exitCode: 1 };
+  const configured = scenario().link;
+  let link: FakeLinkRun = { events: [], exitCode: 1 };
+  if (Array.isArray(configured)) {
+    const runs = configured as readonly FakeLinkRun[];
+    link = runs[0] ?? link;
+    if (runs.length > 1) writeFileSync(scenarioPath, JSON.stringify({ ...scenario(), link: runs.slice(1) }));
+  } else if (configured !== undefined) {
+    link = configured as FakeLinkRun;
+  }
   process.on("SIGINT", () => process.exit(130));
   const started = Date.now();
   for (const timed of link.events) {
@@ -246,9 +262,12 @@ if (command === "version") {
         ? { authenticated: true, linked_jid: auth.linkedJid, phone: auth.linkedJid.split("@")[0] }
         : { authenticated: false });
     }
-    case "auth logout":
-      writeFileSync(scenarioPath, JSON.stringify({ ...scenario(), auth: { authenticated: false } }));
+    case "auth logout": {
+      const mode = scenario().logout;
+      if (mode !== "hang") writeFileSync(scenarioPath, JSON.stringify({ ...scenario(), auth: { authenticated: false } }));
+      if (mode !== undefined) await sleep(60_000);
       process.exit(0);
+    }
     case "auth":
       await runLink();
       break;
