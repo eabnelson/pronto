@@ -1,0 +1,12 @@
+{
+  "version": "0.5.0",
+  "listener": "loaded",
+  "daemon": "failed",
+  "database": "ready",
+  "channels": {
+    "imessage": { "state": "failed", "tags": ["@s4"], "reason": "imsg exited" }
+  },
+  "degradedCapabilities": [],
+  "active": 0, "ambiguous": 0, "parked": 0, "rateLimited": 0,
+  "lastSettledAt": null
+}

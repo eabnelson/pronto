@@ -1,0 +1,103 @@
+#!/bin/bash
+# Fake `pronto` CLI for developing and smoke-testing the menu bar app.
+# Prints the fixture JSON in ./json per subcommand, following docs/CLI_JSON.md.
+#
+#   PRONTO_MENUBAR_CLI="$PWD/Tests/Fixtures/fake-pronto" swift run ProntoMenuBar
+#
+# Environment:
+#   FAKE_PRONTO_SCENARIO   docs (default: the documented examples), healthy,
+#                          degraded, failed
+#   FAKE_PRONTO_STATE_DIR  where pause/link state is kept (default: $TMPDIR/fake-pronto)
+#   FAKE_PRONTO_DELAY      seconds to wait before QR/doctor/update output (default: 2)
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fixtures="$here/json"
+scenario="${FAKE_PRONTO_SCENARIO:-docs}"
+state="${FAKE_PRONTO_STATE_DIR:-${TMPDIR:-/tmp}/fake-pronto}"
+delay="${FAKE_PRONTO_DELAY:-2}"
+mkdir -p "$state"
+
+emit() { cat "$fixtures/$1"; }
+fail() { printf '{"error": "%s"}\n' "$1"; exit 1; }
+
+has_flag() {
+  local flag="$1"; shift
+  for arg in "$@"; do [[ "$arg" == "$flag" ]] && return 0; done
+  return 1
+}
+
+flag_value() {
+  local flag="$1"; shift
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "$flag" && $# -gt 1 ]]; then printf '%s' "$2"; return 0; fi
+    shift
+  done
+  return 1
+}
+
+status_file() {
+  if [[ -f "$state/paused" ]]; then echo status-paused.json; return; fi
+  if [[ -f "$state/linked" ]]; then echo status-healthy.json; return; fi
+  case "$scenario" in
+    healthy) echo status-healthy.json ;;
+    degraded) echo status-degraded.json ;;
+    failed) echo status-failed.json ;;
+    *) echo status.json ;;
+  esac
+}
+
+channels_file() {
+  if [[ -f "$state/linked" || "$scenario" == healthy ]]; then echo channels-both.json; return; fi
+  echo channels-wacli-installed.json
+}
+
+command="${1:-}"; sub="${2:-}"
+has_flag --json "$@" || has_flag --events "$@" || fail "fake-pronto only supports --json and --events"
+
+case "$command" in
+  status)
+    emit "$(status_file)"
+    [[ "$(status_file)" == status-healthy.json ]] || exit 1
+    ;;
+  channels)
+    case "$sub" in
+      list|enable|disable) emit "$(channels_file)" ;;
+      *) fail "unknown channels command" ;;
+    esac
+    ;;
+  tags)
+    case "$sub" in
+      list) emit tags-list-both.json ;;
+      add|remove)
+        tag="${3:-}"
+        [[ "$tag" =~ ^@?[A-Za-z0-9_-]{1,32}$ ]] || fail "Invalid tag."
+        if [[ "$sub" == remove && "$tag" == "@s4" ]]; then fail "Every enabled app must keep at least one tag."; fi
+        emit tags-list-both.json
+        ;;
+      *) fail "unknown tags command" ;;
+    esac
+    ;;
+  start) rm -f "$state/paused"; emit listener-running.json ;;
+  stop) touch "$state/paused"; emit listener-stopped.json ;;
+  doctor) sleep "$delay"; emit doctor-mixed.json; exit 1 ;;
+  update)
+    if has_flag --check "$@"; then emit update-check-available.json
+    else sleep "$delay"; emit update-installed.json
+    fi
+    ;;
+  whatsapp)
+    [[ "$sub" == link ]] || fail "unknown whatsapp command"
+    if ! has_flag --accept-risk "$@"; then emit link-consent-required.ndjson; exit 1; fi
+    if phone="$(flag_value --phone "$@")"; then
+      sleep "$delay"; echo '{"event":"pairing_code","code":"ABCD-EFGH"}'
+    else
+      for n in 1 2 3; do
+        sleep "$delay"; echo "{\"event\":\"qr\",\"code\":\"2@fake-qr-code-rotation-$n,ZmFrZS1wcm9udG8=\"}"
+      done
+    fi
+    sleep "$delay"; echo '{"event":"syncing"}'
+    sleep "$delay"; touch "$state/linked"; echo '{"event":"linked"}'
+    ;;
+  *) fail "unknown command" ;;
+esac

@@ -108,6 +108,19 @@ Runtime probes can take about a minute.
 { "status": "available", "installedVersion": "0.5.0", "version": "0.5.1" }
 ```
 
-`status` is `current` or `available`. `pronto update --json` installs a verified
-update and prints `{"status": "installed", "version": "0.5.1"}`; other statuses
-are `current`, `migration_required`, and `migration_installed`.
+`status` is `current` or `available`. When the menu bar app is installed, a
+`menubar` field reports it: `{"status": "current", "installedVersion": "0.5.0"}` or
+`{"status": "available", "installedVersion": "0.5.0", "version": "0.5.1"}`.
+
+`pronto update --json` installs a verified update and prints
+`{"status": "installed", "version": "0.5.1"}`; other statuses are `current`,
+`migration_required`, and `migration_installed`. An installed menu bar app is
+updated in the same run and reported as `menubar: {"status": "installed" | "current", "version": ...}`.
+The updater quits and reopens the app when it replaces it.
+
+## Menu bar app
+
+`pronto menubar status --json` prints the `menubar` shape above, or
+`{"status": "not_installed", "version": "0.5.1"}`. `pronto menubar install --json`
+installs or updates `~/Applications/Pronto.app` from the signed release and opens
+it; `pronto menubar uninstall --json` removes it.

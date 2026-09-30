@@ -1,0 +1,5 @@
+{"healthy": false, "checks": [
+  {"id": "listener-running", "status": "ok"},
+  {"id": "imessage-full-disk-access", "status": "failed", "remediation": "Grant Full Disk Access to Pronto in System Settings > Privacy & Security."},
+  {"id": "whatsapp-linked", "status": "degraded", "remediation": "Run pronto whatsapp link."}
+]}

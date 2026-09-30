@@ -1,0 +1,8 @@
+{
+  "channels": [
+    { "app": "imessage", "label": "iMessage", "configured": true, "enabled": true,
+      "tags": ["@s4"], "tool": { "name": "imsg", "path": "/opt/homebrew/bin/imsg", "installed": true } },
+    { "app": "whatsapp", "label": "WhatsApp", "configured": false, "enabled": false,
+      "tags": [], "tool": { "name": "wacli", "path": null, "installed": false } }
+  ]
+}

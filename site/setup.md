@@ -107,6 +107,9 @@ macOS setting.
      Explain that the working folder is context, not a security boundary.
    - **The trust model**, and **the WhatsApp risk** if I chose WhatsApp. Stop at
      each one and let me personally decide whether to type `yes`.
+   - At the end, **whether to install the Pronto menu bar app** (yes by
+     default). It shows an **@** in the menu bar where I can pause Pronto, see
+     each app's status, and add or remove tags. Let me answer.
 
    For WhatsApp, if this Mac is not linked yet, setup then shows a QR code in
    the terminal. Tell me to open WhatsApp on my phone, go to
@@ -160,7 +163,8 @@ macOS setting.
 
    Explain that tags are case-insensitive, duplicate tags are ignored, and every
    enabled app must keep at least one tag. With both apps enabled, `tags add`
-   asks which apps a new tag applies to unless I pass `--app`. If a message
+   asks which apps a new tag applies to unless I pass `--app`. If I installed
+   the menu bar app, I can do the same from its **@** menu. If a message
    contains two configured tags, Pronto ignores it instead of choosing
    ambiguously. Then, for each app I chose, ask me to send `<my-tag> ping` in a
    conversation where I have already sent a message: an iMessage or RCS chat, a
@@ -180,8 +184,8 @@ macOS setting.
    ```
 
    Finish with a short summary of my messaging apps, the tags for each app,
-   runtimes, working folder, installed executable, update status, and listener
-   health. Do not include conversation
+   runtimes, working folder, installed executable, menu bar app, update
+   status, and listener health. Do not include conversation
    or participant data. Explain that the signed updater checks automatically
    every six hours and future updates do not rerun setup or require another FDA
    grant as long as the stable signing identity is unchanged.

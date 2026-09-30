@@ -75,6 +75,7 @@ import {
   PRONTO_BROKER_URL_ENV,
 } from "./tools/contract";
 import { ProntoUpdater } from "./update";
+import { MenubarInstaller } from "./menubar";
 
 const HELP = `pronto ${packageJson.version}
 
@@ -88,6 +89,7 @@ Commands:
   tags        List, add, or remove trigger tags and the apps they apply to
   channels    List, enable, or disable messaging apps
   whatsapp    Link or unlink WhatsApp
+  menubar     Install, check, or remove the menu bar app
   update      Check for or install a verified Pronto update
   start       Start the installed listener
   stop        Stop the installed listener
@@ -341,6 +343,21 @@ async function runSetup(): Promise<number> {
     console.log(setupCompletionMessage(paths, Object.fromEntries(
       enabledChannels(config).map((app) => [app, channelTags(config, app)]),
     )));
+    const menubar = new MenubarInstaller(paths);
+    if (await menubar.installedVersion() === null) {
+      const answer = (await prompt.question(
+        "\nInstall the Pronto menu bar app to see status and manage tags from the menu bar? [Y/n]: ",
+      )).trim().toLowerCase();
+      if (answer !== "n" && answer !== "no") {
+        try {
+          const installed = await menubar.install();
+          if (installed.status !== "not_installed") await menubar.open();
+          console.log("The Pronto menu bar app is installed in ~/Applications.");
+        } catch (error) {
+          console.error(`The menu bar app could not be installed now (${(error as Error).message}). Try later with pronto menubar install.`);
+        }
+      }
+    }
     return 0;
   } finally {
     prompt.close();
@@ -377,11 +394,16 @@ async function runUpdate(args: readonly string[]): Promise<number> {
         : `Pronto ${result.version} already has the permanent release identity.`);
       return 0;
     }
+    const menubar = new MenubarInstaller(pathsForHome(homedir()));
     if (checkOnly) {
       const result = await updater.check();
       if (json) {
+        const menubarStatus = await menubar.check().catch(() => undefined);
         console.log(JSON.stringify({
           installedVersion: packageJson.version,
+          ...(menubarStatus === undefined || menubarStatus.status === "not_installed"
+            ? {}
+            : { menubar: menubarStatus }),
           status: result.status === "current" ? "current" : "available",
           version: result.status === "current" ? result.version : result.manifest.version,
         }));
@@ -393,8 +415,16 @@ async function runUpdate(args: readonly string[]): Promise<number> {
       return 0;
     }
     const result = await updater.install({ allowIdentityMigration });
+    // The menu bar app follows the same release; its failure never fails the Pronto update.
+    const menubarResult = result.status === "current" || result.status === "installed"
+      ? await menubar.install({ onlyIfInstalled: true }).catch(() => undefined)
+      : undefined;
     if (json) {
-      console.log(JSON.stringify({ status: result.status, version: result.version }));
+      console.log(JSON.stringify({
+        ...(menubarResult === undefined || menubarResult.status === "not_installed" ? {} : { menubar: menubarResult }),
+        status: result.status,
+        version: result.version,
+      }));
       return result.status === "migration_required" || result.status === "migration_installed" ? 2 : 0;
     }
     if (result.status === "current") {
@@ -548,6 +578,40 @@ async function runChannels(args: readonly string[]): Promise<number> {
   if (json) printChannels(next);
   else console.log(`${CHANNEL_LABELS[app]} is ${action === "enable" ? "enabled" : "disabled"}.`);
   return 0;
+}
+
+const MENUBAR_USAGE = "Usage: pronto menubar [status | install | uninstall] [--json]";
+
+async function runMenubar(args: readonly string[]): Promise<number> {
+  const json = args.includes("--json");
+  const [action = "status", extra] = args.filter((arg) => arg !== "--json");
+  if (extra !== undefined || !["install", "status", "uninstall"].includes(action)) {
+    return fail(json, MENUBAR_USAGE, 2);
+  }
+  const installer = new MenubarInstaller(pathsForHome(homedir()));
+  try {
+    if (action === "uninstall") {
+      await installer.uninstall();
+      if (json) console.log(JSON.stringify({ status: "not_installed" }));
+      else console.log("The Pronto menu bar app was removed.");
+      return 0;
+    }
+    if (action === "status") {
+      const status = await installer.check();
+      if (json) console.log(JSON.stringify(status));
+      else if (status.status === "not_installed") console.log("The menu bar app is not installed. Run pronto menubar install.");
+      else if (status.status === "current") console.log(`The menu bar app ${status.installedVersion} is current.`);
+      else console.log(`Menu bar app ${status.version} is available.`);
+      return 0;
+    }
+    const result = await installer.install();
+    if (result.status === "installed" || result.status === "current") await installer.open();
+    if (json) console.log(JSON.stringify(result));
+    else if (result.status !== "not_installed") console.log(`The Pronto menu bar app ${result.version} is installed.`);
+    return 0;
+  } catch (error) {
+    return fail(json, `Menu bar app ${action} failed: ${(error as Error).message}`);
+  }
 }
 
 async function runListener(action: "start" | "stop", json: boolean): Promise<number> {
@@ -1072,6 +1136,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
   if (command === "update") return runUpdate(args.slice(1));
   if (command === "stop" || command === "start") return runListener(command, args.includes("--json"));
   if (command === "channels") return runChannels(args.slice(1));
+  if (command === "menubar") return runMenubar(args.slice(1));
   if (command === "forget") {
     const chatKey = args[1];
     if (chatKey === undefined || !/^[A-Za-z0-9_-]{8,128}$/.test(chatKey)) {

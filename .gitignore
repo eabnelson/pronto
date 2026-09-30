@@ -4,3 +4,6 @@ dist/
 *.log
 coverage/
 
+# Swift packages under apps/
+apps/**/.build/
+apps/**/.swiftpm/
