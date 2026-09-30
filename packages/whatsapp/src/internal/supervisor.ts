@@ -20,6 +20,7 @@ export interface SupervisorOptions {
   readonly storeDir: string;
   readonly tuning: Tuning;
   readonly wacliPath: string;
+  readonly env?: NodeJS.ProcessEnv;
   readonly webhookSecret: string;
   readonly webhookUrl: string;
 }
@@ -109,7 +110,7 @@ export class SyncSupervisor {
     ];
     let child: ChildProcess;
     try {
-      child = spawnWacli(wacliPath, args);
+      child = spawnWacli(wacliPath, args, this.options.env);
     } catch (error) {
       this.#onExit(null, error instanceof Error ? error.message : String(error));
       return;

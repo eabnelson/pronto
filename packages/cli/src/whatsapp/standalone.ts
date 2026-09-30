@@ -16,6 +16,8 @@ export function standaloneWhatsapp(input: {
   readonly wacliPath: string;
 }): ProntoWhatsapp {
   return createProntoWhatsapp({
+    // Shown under WhatsApp → Linked devices instead of wacli's default name.
+    deviceLabel: "Pronto",
     presence: true,
     referenceKey: input.chatKeySalt,
     scopeLimits: { ttlMs: input.scopeTtlMs },
