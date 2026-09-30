@@ -275,6 +275,22 @@ struct InlineError: View {
     }
 }
 
+/// Rounds the MenuBarExtra window to match the system menus, whose corners
+/// are rounder than the SwiftUI default.
+enum PanelShape {
+    static let cornerRadius: CGFloat = 15
+
+    @MainActor static func apply(to window: NSWindow) {
+        guard let frame = window.contentView?.superview else { return }
+        frame.wantsLayer = true
+        guard let layer = frame.layer, layer.cornerRadius != cornerRadius else { return }
+        layer.cornerRadius = cornerRadius
+        layer.cornerCurve = .continuous
+        layer.masksToBounds = true
+        window.invalidateShadow()
+    }
+}
+
 /// Reports whether the hosting window is on screen (used to detect the
 /// MenuBarExtra panel opening and closing).
 struct WindowVisibilityReader: NSViewRepresentable {
@@ -314,6 +330,7 @@ struct WindowVisibilityReader: NSViewRepresentable {
                 })
             }
             report(window.isVisible)
+            PanelShape.apply(to: window)
         }
 
         private func report(_ visible: Bool) {
