@@ -489,6 +489,18 @@ test("link yields QR codes then the linked account", async () => {
     .some((entry) => entry.command === "auth" && entry.args.includes("--phone=15550001111"))).toBe(true);
 });
 
+test("the device label names this Mac in WhatsApp's linked devices", async () => {
+  const h = await setup({
+    auth: { authenticated: false },
+    link: { events: [{ afterMs: 10, authenticate: true, event: "connected" }], exitCode: 0 },
+  }, { deviceLabel: "Pronto" });
+  for await (const _ of h.module.link()) void _;
+  await h.module.qualify();
+  const invocations = await h.invocations() as Array<{ command: string; deviceLabel?: string | null }>;
+  expect(invocations.length).toBeGreaterThan(1);
+  expect(invocations.every((entry) => entry.deviceLabel === "Pronto")).toBe(true);
+});
+
 test("link can be aborted", async () => {
   const h = await setup({
     auth: { authenticated: false },
