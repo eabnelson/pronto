@@ -3,6 +3,61 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
+## v0.5.0 scope
+
+v0.5.0 adds WhatsApp alongside iMessage through `pronto-whatsapp` and `wacli`, with
+per-app tags (PR #49); a channel layer that routes iMessage through the same turn
+path; live tag and app changes and JSON controls (PR #50); agent file replies and
+a 👀 turn acknowledgment on WhatsApp (PR #51); and the signed, notarized Pronto menu
+bar app shipped with the updater (PR #52). Qualification on the owner's Mac found
+two WhatsApp defects, each fixed with a regression test before the final candidate:
+replies to a self-chat addressed by the account's LID failed after a restart
+(PR #53), and a message re-filed by wacli under another chat address could be
+processed again after a restart (PR #54).
+
+Candidate `v0.5.0-candidate.4` (source `9622e7d6c215cfd66ada2d86d514811534a69984`)
+passed protected signed CI `36746029798` on 2026-09-30, including notarization of
+both CLI architectures and the menu bar app. Locally 391 tests passed; typecheck,
+build, frozen install and release validation passed. The downloaded artifact's
+checksums, the CLI's Developer ID requirement (`dev.pronto.cli`, `9YCNUWK84C`) and
+the menu bar app's (`dev.pronto.menubar`) verified; the app passed Gatekeeper
+assessment with a stapled ticket. The installed executable's SHA-256 matched the
+candidate artifact. Earlier candidates `.2` and `.3` differ only by PRs #53 and #54.
+
+Owner smoke on 2026-09-30, macOS 26.5.1 (arm64), with the exact candidate.4
+executable installed by its own setup over the prior install:
+
+- Setup qualified Codex CLI 0.159.2 (primary) and Claude Code 2.1.285 (fallback)
+  with their effective no-prompt probes and kept the existing WhatsApp link.
+- `doctor` passed every check it can run from a shell without Full Disk Access.
+- WhatsApp (`wacli` 0.19.0): in the owner's Message yourself chat, a tagged text, a
+  captioned photo, and a request for a file each produced exactly one quoted reply
+  from the owner's account (the file arrived as a document) and a 👀 reaction. The
+  test messages were sent from the owner's account through `wacli` on the linked
+  Mac, so they arrived through the recovery sweep rather than as live events; the
+  owner separately used phone-originated live messages, including a photo and a
+  file reply, on pre-release builds of the same code. With the listener stopped
+  for six minutes, a tagged message was answered exactly once after restart.
+  Several listener restarts and two reinstalls answered nothing twice.
+- iMessage (`imsg` 0.15.9): after Full Disk Access was granted to the installed
+  executable, the launchd listener read Messages, finished catch-up, and reported
+  `imessage ready`. A tagged self-chat message sent from the owner's iPhone got
+  exactly one reply, confirmed by the provider, the owner confirmed its content,
+  and no further turn ran in the following minute.
+- Menu bar app: the notarized candidate app verified the signed CLI without an
+  override and showed both apps and each tag's apps. On candidate.2, whose menu bar
+  and CLI control code is unchanged since, a tag added through its commands applied
+  to the running listener without a restart and was removed, and the listener
+  stopped and started.
+
+Owner exception, 2026-09-30: no second participant was available. The release
+owner approved release without a fresh remote-participant run in iMessage or a
+WhatsApp group, carrying forward the v0.4.2 remote-participant evidence below.
+This is broader than the checklist's carry-forward exception, because v0.5.0
+changes how iMessage activations are routed; the owner accepted that after the
+fresh exact-candidate self-chat evidence above. Echo suppression and the iMessage
+transport package are unchanged since v0.4.3.
+
 ## v0.4.3 scope
 
 v0.4.3 changes only attachment type detection in `packages/messages`
@@ -275,6 +330,25 @@ Only this qualification record and its review may differ from candidate.4 at
 the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
 ## Current matrix
+
+| Surface | Qualified version | Evidence | Status |
+| --- | --- | --- | --- |
+| macOS | 26.5.1 | Owner smoke of v0.5.0-candidate.4 on the owner's Mac (arm64) on 2026-09-30 | Pass |
+| Bun | 1.3.14 | 391 local tests passed; frozen install, typecheck, build and release validation passed; signed candidate CI 36746029798 | Pass |
+| Node.js | 22.23.1 | Clean packed import and public-interface smoke passed in signed candidate CI 36746029798 | Pass |
+| imsg | 0.15.9 | Candidate.4 launchd listener read Messages, completed catch-up and answered a tagged self-chat message once | Pass |
+| Codex CLI | 0.159.2 | Candidate.4 setup qualification passed; WhatsApp and iMessage turns ran with Codex as primary | Pass |
+| Claude Code | 2.1.285 | Candidate.4 setup qualification passed as fallback runtime | Pass |
+| Codex effective local probe | 0.159.2 | Candidate.4 setup noninteractive file-tool probe passed without an approval prompt | Pass |
+| Claude effective local probe | 2.1.285 | Candidate.4 setup noninteractive file-tool probe passed without an approval prompt | Pass |
+| Messages Automation | v0.5.0-candidate.4 | iMessage reply sent from the launchd listener and confirmed by the provider | Pass |
+| Self-chat mirror handling | v0.5.0-candidate.4 | Tagged self-chat iMessage produced exactly one reply and no turn in the following minute | Pass |
+| Full remote tagged flow | v0.5.0 | Owner-approved exception on 2026-09-30: no second participant; fresh candidate.4 self-chat evidence in iMessage and WhatsApp; v0.4.2 remote evidence carried forward | Pass |
+| wacli | 0.19.0 | Candidate.4 kept its link through setup, reported ready, recovered after restarts and an offline period | Pass |
+| WhatsApp tagged flow | v0.5.0-candidate.4 | Self-chat text, photo and file request each got exactly one quoted reply; offline catch-up answered once; restarts answered nothing twice | Pass |
+| Menu bar app | v0.5.0-candidate.4 | Notarized, stapled Developer ID app verified the signed CLI and showed apps and tags; tag and listener controls exercised on candidate.2 | Pass |
+
+## Historical v0.4.3 matrix
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
