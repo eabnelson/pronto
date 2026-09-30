@@ -12,6 +12,8 @@ export interface ProntoPaths {
   launchAgentPath: string;
   logDirectory: string;
   logPath: string;
+  /** Private copies of files agents send with replies, deleted once each send settles. */
+  outboundStagingDirectory: string;
   providerStatePath: string;
   updateBackupPath: string;
   updateDatabaseBackupPath: string;
@@ -50,6 +52,7 @@ function productPathsForHome(input: {
     ),
     logDirectory,
     logPath: join(logDirectory, "daemon.log"),
+    outboundStagingDirectory: join(appSupportDirectory, "outbound"),
     providerStatePath: join(appSupportDirectory, "provider-state.json"),
     updateBackupPath: join(updateDirectory, "last-known-good"),
     updateDatabaseBackupPath: join(updateDirectory, "last-known-good-state.sqlite"),

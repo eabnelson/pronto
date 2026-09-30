@@ -218,6 +218,42 @@ describe("configuration persistence", () => {
     await expect(loadConfig(path)).rejects.toThrow("Unsupported messaging app in configuration: telegram");
   });
 
+  test("treats a missing WhatsApp acknowledge setting as on and keeps an explicit choice", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pronto-config-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "config.json");
+    const whatsapp = {
+      enabled: true,
+      riskConsentVersion: 1 as const,
+      tags: ["@helper"],
+      wacliPath: "/opt/homebrew/bin/wacli",
+    };
+    const write = async (entry: Record<string, unknown>) => {
+      await Bun.write(path, JSON.stringify({
+        version: 3,
+        chatKeySalt: "x".repeat(32),
+        channels: { whatsapp: entry },
+        primaryRuntime: "codex",
+        unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+        workingDirectory: "/Users/example",
+      }));
+    };
+
+    await write(whatsapp);
+    const existing = await loadConfig(path);
+    expect(existing.channels.whatsapp).toEqual(whatsapp);
+    expect(existing.channels.whatsapp?.acknowledge !== false).toBeTrue();
+
+    await write({ ...whatsapp, acknowledge: false });
+    const quiet = await loadConfig(path);
+    expect(quiet.channels.whatsapp?.acknowledge).toBe(false);
+    await saveConfig(path, quiet);
+    expect((await loadConfig(path)).channels.whatsapp?.acknowledge).toBe(false);
+
+    await write({ ...whatsapp, acknowledge: "yes" });
+    await expect(loadConfig(path)).rejects.toThrow("Invalid WhatsApp configuration");
+  });
+
   test("requires at least one enabled messaging app", () => {
     expect(() => createConfig({
       channels: { imessage: { enabled: false, imsgPath: "/usr/local/bin/imsg", tags: ["@helper"] } },

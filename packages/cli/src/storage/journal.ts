@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
+import { isAbsolute } from "node:path";
 import { validSummary } from "../context/compact";
 import type { RuntimeKind } from "../config";
 import type { RuntimeAttemptResult, ToolActivity } from "../runtimes/types";
@@ -35,7 +36,7 @@ export interface AdmissionInput {
 export type QueuedEvent = AdmissionInput &
   (
     | { state: "admitted" }
-    | { acceptedReply: string; lease: string; state: "ready_to_send" }
+    | { acceptedAttachmentPath?: string; acceptedReply: string; lease: string; state: "ready_to_send" }
   );
 
 export interface OperationalStatus {
@@ -62,6 +63,13 @@ const CHANNEL_HEALTH_STATES: readonly ChannelHealth["state"][] =
   ["starting", "degraded", "failed", "needs_link", "ready", "stopped"];
 
 const ACTIVE_STATES = ["admitted", "running", "ready_to_send", "sending"] as const;
+
+/**
+ * An accepted reply's staged attachment lives in `service_state` under this prefix plus the
+ * event's provider guid, so both the iMessage-only and multi-app schemas can hold it without a
+ * migration. It is removed when the delivery outcome settles.
+ */
+const ATTACHMENT_KEY_PREFIX = "outbound_attachment:";
 
 function parseConversationReference(value: string, chat: ChatAddress): unknown {
   let parsed: unknown;
@@ -210,8 +218,12 @@ export class DeliveryJournal {
     if (row.accepted_reply === null || row.lease_token === null) {
       throw new Error("Ready delivery is missing its accepted output or lease");
     }
+    const attachment = this.database
+      .query("SELECT value FROM service_state WHERE key = ?")
+      .get(`${ATTACHMENT_KEY_PREFIX}${row.provider_guid}`) as { value: string } | null;
     return {
       ...event,
+      ...(attachment === null ? {} : { acceptedAttachmentPath: attachment.value }),
       acceptedReply: row.accepted_reply,
       lease: row.lease_token,
       state: "ready_to_send",
@@ -403,6 +415,8 @@ export class DeliveryJournal {
     providerGuid: string,
     lease: string,
     output: {
+      /** Absolute path of the staged file to send with the reply. */
+      attachmentPath?: string;
       reply: string;
       summary?: string;
       workingDirectory?: string;
@@ -414,31 +428,58 @@ export class DeliveryJournal {
     if (reply.length === 0 || reply.length > MAX_RUNTIME_TEXT_CHARACTERS) {
       throw new Error("Invalid runtime reply");
     }
+    if (output.attachmentPath !== undefined && !isAbsolute(output.attachmentPath)) {
+      throw new Error("Invalid staged attachment path");
+    }
     const summary = validSummary(output.summary);
-    this.#requireChange(
-      this.database
-        .query(
-          `UPDATE delivery_events
-           SET state = 'ready_to_send', accepted_reply = ?, proposed_summary = ?,
-               proposed_working_directory = ?, proposed_workspace_candidates = ?,
-               compaction_due = ?, memory_eligible = ?, updated_at = ?
-           WHERE provider_guid = ? AND lease_token = ? AND state = 'running'`,
-        )
-        .run(
-          reply,
-          summary,
-          output.workingDirectory ?? null,
-          output.workspaceCandidates === undefined
-            ? null
-            : JSON.stringify(output.workspaceCandidates.slice(0, MAX_WORKSPACE_CANDIDATES)),
-          output.summary !== undefined && summary === null ? 1 : 0,
-          options.memoryEligible === false ? 0 : 1,
-          this.now(),
-          providerGuid,
-          lease,
-        ).changes,
-      "accept runtime output",
-    );
+    this.database.transaction(() => {
+      this.#requireChange(
+        this.database
+          .query(
+            `UPDATE delivery_events
+             SET state = 'ready_to_send', accepted_reply = ?, proposed_summary = ?,
+                 proposed_working_directory = ?, proposed_workspace_candidates = ?,
+                 compaction_due = ?, memory_eligible = ?, updated_at = ?
+             WHERE provider_guid = ? AND lease_token = ? AND state = 'running'`,
+          )
+          .run(
+            reply,
+            summary,
+            output.workingDirectory ?? null,
+            output.workspaceCandidates === undefined
+              ? null
+              : JSON.stringify(output.workspaceCandidates.slice(0, MAX_WORKSPACE_CANDIDATES)),
+            output.summary !== undefined && summary === null ? 1 : 0,
+            options.memoryEligible === false ? 0 : 1,
+            this.now(),
+            providerGuid,
+            lease,
+          ).changes,
+        "accept runtime output",
+      );
+      if (output.attachmentPath === undefined) this.#forgetAttachment(providerGuid);
+      else {
+        this.database
+          .query(
+            `INSERT INTO service_state (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          )
+          .run(`${ATTACHMENT_KEY_PREFIX}${providerGuid}`, output.attachmentPath);
+      }
+    })();
+  }
+
+  /** Staged attachments still waiting to be sent; every other staged file may be deleted. */
+  pendingAttachmentPaths(): string[] {
+    const rows = this.database
+      .query(
+        `SELECT service_state.value FROM service_state
+         JOIN delivery_events
+           ON service_state.key = ? || delivery_events.provider_guid
+         WHERE service_state.key LIKE ? AND delivery_events.state = 'ready_to_send'`,
+      )
+      .all(ATTACHMENT_KEY_PREFIX, `${ATTACHMENT_KEY_PREFIX}%`) as Array<{ value: string }>;
+    return rows.map((row) => row.value);
   }
 
   beginSend(providerGuid: string, lease: string, chat?: ChatAddress, text?: string): void {
@@ -522,6 +563,7 @@ export class DeliveryJournal {
            WHERE provider_guid = ? AND lease_token = ?`,
         )
         .run(outboundGuid, this.now(), providerGuid, lease);
+      this.#forgetAttachment(providerGuid);
     })();
   }
 
@@ -536,6 +578,7 @@ export class DeliveryJournal {
         .run(this.now(), providerGuid, lease).changes,
       "mark delivery ambiguous",
     );
+    this.#forgetAttachment(providerGuid);
   }
 
   markFailed(providerGuid: string, lease: string): void {
@@ -554,6 +597,7 @@ export class DeliveryJournal {
         .run(this.now(), providerGuid, lease).changes,
       "mark delivery failed",
     );
+    this.#forgetAttachment(providerGuid);
   }
 
   markParked(providerGuid: string, lease: string): void {
@@ -674,6 +718,14 @@ export class DeliveryJournal {
            WHERE state = 'sending'`,
         )
         .run(now).changes;
+      this.database
+        .query(
+          `DELETE FROM service_state
+           WHERE key LIKE ? AND substr(key, ?) NOT IN (
+             SELECT provider_guid FROM delivery_events WHERE state = 'ready_to_send'
+           )`,
+        )
+        .run(`${ATTACHMENT_KEY_PREFIX}%`, ATTACHMENT_KEY_PREFIX.length + 1);
       return { ambiguous, parked, resumed: replayed + readyToSend.count };
     })();
   }
@@ -686,6 +738,12 @@ export class DeliveryJournal {
       throw new Error("Stored chat address is invalid");
     }
     return { channel: row.channel, id: row.chat_address };
+  }
+
+  #forgetAttachment(providerGuid: string): void {
+    this.database
+      .query("DELETE FROM service_state WHERE key = ?")
+      .run(`${ATTACHMENT_KEY_PREFIX}${providerGuid}`);
   }
 
   #requireChange(changes: number, action: string): void {

@@ -1,2 +1,3 @@
 export const MAX_WORKSPACE_CANDIDATES = 5;
 export const MAX_RUNTIME_TEXT_CHARACTERS = 4_000;
+export const MAX_PATH_CHARACTERS = 4_096;

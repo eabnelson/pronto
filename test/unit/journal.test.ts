@@ -373,3 +373,75 @@ describe("per-app state", () => {
   });
 });
 
+describe("staged reply attachments", () => {
+  const readyEvent = (journal: DeliveryJournal, guid: string, attachmentPath?: string) => {
+    journal.admit({ chat: IMESSAGE_CHAT, chatKey: `chat-${guid}`, providerGuid: guid, request: guid });
+    const lease = journal.lease(guid)!;
+    journal.accept(guid, lease, { ...(attachmentPath === undefined ? {} : { attachmentPath }), reply: "Here." });
+    return lease;
+  };
+  const attachmentRows = (journal: DeliveryJournal) => journal.database
+    .query("SELECT key FROM service_state WHERE key LIKE 'outbound_attachment:%' ORDER BY key")
+    .all();
+
+  test("persists with the accepted reply on the iMessage-only schema and clears when sends settle", async () => {
+    const { close, journal } = await stores();
+    try {
+      expect(journal.database.query("PRAGMA user_version").get()).toEqual({ user_version: 5 });
+      expect(() => readyEvent(journal, "relative", "chart.png")).toThrow("Invalid staged attachment path");
+      const confirmed = readyEvent(journal, "confirmed", "/staging/reply-1/chart.png");
+      const failed = readyEvent(journal, "failed", "/staging/reply-2/data.csv");
+      const ambiguous = readyEvent(journal, "ambiguous", "/staging/reply-3/notes.pdf");
+      readyEvent(journal, "text-only");
+      expect(journal.nextRunnable()).toMatchObject({
+        acceptedAttachmentPath: "/staging/reply-1/chart.png",
+        acceptedReply: "Here.",
+        providerGuid: "confirmed",
+        state: "ready_to_send",
+      });
+      expect(journal.pendingAttachmentPaths().sort()).toEqual([
+        "/staging/reply-1/chart.png",
+        "/staging/reply-2/data.csv",
+        "/staging/reply-3/notes.pdf",
+      ]);
+
+      journal.beginSend("confirmed", confirmed);
+      journal.confirmDelivery("confirmed", confirmed, "OUT-1");
+      journal.markFailed("failed", failed);
+      journal.beginSend("ambiguous", ambiguous);
+      journal.markAmbiguous("ambiguous", ambiguous);
+      expect(attachmentRows(journal)).toEqual([]);
+      expect(journal.pendingAttachmentPaths()).toEqual([]);
+      const textOnly = journal.nextRunnable();
+      expect(textOnly).toMatchObject({ providerGuid: "text-only", state: "ready_to_send" });
+      expect(textOnly).not.toHaveProperty("acceptedAttachmentPath");
+    } finally {
+      close();
+    }
+  });
+
+  test("keeps pending attachments across a restart and drops those whose send was interrupted", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pronto-journal-"));
+    temporaryDirectories.push(directory);
+    const database = openProntoDatabase(join(directory, "state.sqlite"), {
+      schemaVersion: MULTI_APP_SCHEMA_VERSION,
+    });
+    try {
+      const journal = new DeliveryJournal(database);
+      readyEvent(journal, "waiting", "/staging/reply-1/chart.png");
+      const interrupted = readyEvent(journal, "interrupted", "/staging/reply-2/chart.png");
+      journal.beginSend("interrupted", interrupted);
+
+      expect(journal.recoverInterrupted()).toMatchObject({ ambiguous: 1 });
+      expect(journal.pendingAttachmentPaths()).toEqual(["/staging/reply-1/chart.png"]);
+      expect(attachmentRows(journal)).toEqual([{ key: "outbound_attachment:waiting" }]);
+      expect(journal.nextRunnable()).toMatchObject({
+        acceptedAttachmentPath: "/staging/reply-1/chart.png",
+        providerGuid: "waiting",
+      });
+    } finally {
+      database.close();
+    }
+  });
+});
+

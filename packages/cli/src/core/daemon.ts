@@ -235,6 +235,7 @@ export class ProntoDaemon {
           memory,
           runtimes: new RuntimeChain(primary, fallback),
           defaultWorkingDirectory: this.#config.workingDirectory,
+          outboundStagingDirectory: this.paths.outboundStagingDirectory,
           workspaces,
         }),
         journal,
@@ -328,7 +329,7 @@ export class ProntoDaemon {
         scopeTtlMs: STANDALONE_SCOPE_TTL_MS,
         wacliPath: whatsapp.wacliPath,
       }),
-      { matchesOutboundEcho },
+      { acknowledge: whatsapp.acknowledge !== false, matchesOutboundEcho },
     );
   }
 }

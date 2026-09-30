@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import type {
-  MaterializedWhatsappAttachment,
-  ProntoWhatsapp,
-  WhatsappConversationReference,
-  WhatsappEvent,
-  WhatsappSubscription,
+import {
+  WhatsappAttachmentExpiredError,
+  type MaterializedWhatsappAttachment,
+  type ProntoWhatsapp,
+  type WhatsappConversationReference,
+  type WhatsappEvent,
+  type WhatsappSubscription,
 } from "pronto-whatsapp";
 import { removeOneMatchedTag } from "../activation";
 import {
@@ -15,6 +16,7 @@ import {
   type ChannelRecoveryOutcome,
   type ChannelWatch,
   type ChatAddress,
+  type OutboundAttachment,
   type SendDisposition,
 } from "../channels/types";
 import type { CurrentChatMessage } from "../imessage/event-adapter";
@@ -65,6 +67,9 @@ export function whatsappActivation(
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_MATERIALIZED_ATTACHMENTS = 32;
+export const ACKNOWLEDGMENT_EMOJI = "👀";
+export const EXPIRED_ATTACHMENT_MESSAGE =
+  "attachment-expired: WhatsApp no longer has this media on its servers. Ask the sender to send it again.";
 
 /** Opaque per-chat attachment id: WhatsApp messages carry at most one media item. */
 export function whatsappAttachmentId(chatJid: string, messageId: string): string {
@@ -110,6 +115,7 @@ function reference(conversation: unknown): WhatsappConversationReference | undef
 export class WhatsappChannel implements Channel {
   readonly kind = "whatsapp" as const;
   readonly conversationLabel = "WhatsApp";
+  readonly maxAttachmentBytes = MAX_ATTACHMENT_BYTES;
   readonly currentChat: CurrentChatSource;
   readonly #conversations = new Map<string, ObservedConversation>();
   readonly #materialized = new Set<MaterializedWhatsappAttachment>();
@@ -117,6 +123,8 @@ export class WhatsappChannel implements Channel {
   constructor(
     readonly whatsapp: ProntoWhatsapp,
     readonly options: {
+      /** React with 👀 to the tagged message when its turn starts. */
+      acknowledge?: boolean;
       matchesOutboundEcho?: (chat: ChatAddress, text: string) => boolean;
     } = {},
   ) {
@@ -128,6 +136,10 @@ export class WhatsappChannel implements Channel {
           conversation: observed.reference,
           maxBytes: MAX_ATTACHMENT_BYTES,
           providerMessageId: messageGuid,
+        }).catch((error: unknown) => {
+          throw error instanceof WhatsappAttachmentExpiredError
+            ? new Error(EXPIRED_ATTACHMENT_MESSAGE)
+            : error;
         });
         while (this.#materialized.size >= MAX_MATERIALIZED_ATTACHMENTS) {
           const oldest = this.#materialized.values().next().value;
@@ -232,7 +244,12 @@ export class WhatsappChannel implements Channel {
     return events.map(currentChatMessage);
   }
 
-  async sendText(chat: ChatAddress, text: string, conversation?: unknown): Promise<SendDisposition> {
+  async sendText(
+    chat: ChatAddress,
+    text: string,
+    conversation?: unknown,
+    attachment?: OutboundAttachment,
+  ): Promise<SendDisposition> {
     const scope = reference(conversation) ?? this.#conversations.get(chat.id)?.reference;
     if (scope === undefined || scope.chatJid !== chat.id) {
       throw new Error("Current conversation scope is unavailable");
@@ -240,6 +257,7 @@ export class WhatsappChannel implements Channel {
     const quote = (conversation as WhatsappTurnConversation | undefined)?.quote;
     const outcome = await this.whatsapp.reply({
       conversation: scope,
+      ...(attachment === undefined ? {} : { filePath: attachment.filePath }),
       ...(quote === undefined ? {} : { quote }),
       text,
     });
@@ -248,6 +266,19 @@ export class WhatsappChannel implements Channel {
     }
     if (outcome.status === "ambiguous") return { disposition: "ambiguous" };
     return { disposition: "failed", retrySafe: outcome.retryable };
+  }
+
+  async acknowledge(chat: ChatAddress, conversation: unknown): Promise<void> {
+    if (this.options.acknowledge !== true) return;
+    const scope = reference(conversation);
+    const quote = (conversation as WhatsappTurnConversation | undefined)?.quote;
+    if (scope === undefined || scope.chatJid !== chat.id || quote === undefined) return;
+    await this.whatsapp.react({
+      conversation: scope,
+      emoji: ACKNOWLEDGMENT_EMOJI,
+      providerMessageId: quote.providerMessageId,
+      sender: quote.sender,
+    }).catch(() => undefined);
   }
 
   async setTyping(chat: ChatAddress, conversation: unknown, typing: boolean): Promise<void> {

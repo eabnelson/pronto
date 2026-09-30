@@ -14,6 +14,12 @@ import {
   type WorkspaceStore,
 } from "../storage/workspaces";
 import { MAX_RUNTIME_TEXT_CHARACTERS, MAX_WORKSPACE_CANDIDATES } from "../workspace";
+import {
+  releaseStagedAttachment,
+  stageOutboundAttachment,
+  stagedAttachmentExists,
+  sweepStagedAttachments,
+} from "./outbound-attachment";
 
 export const FAILURE_NOTICE = "I couldn't complete that request.";
 
@@ -37,6 +43,11 @@ function recentContext(rawMessages: readonly unknown[]): RecentMessage[] {
   });
 }
 
+function byteSize(bytes: number): string {
+  const megabytes = bytes / (1024 * 1024);
+  return Number.isInteger(megabytes) ? `${megabytes} MB` : `${bytes} bytes`;
+}
+
 export function runtimePrompt(
   context: ContextEnvelope,
   workspace?: {
@@ -45,6 +56,7 @@ export function runtimePrompt(
     pendingCandidates: readonly string[];
   },
   conversationLabel = "iMessage or RCS",
+  maxAttachmentBytes?: number,
 ): string {
   return [
     `You are responding to a tagged request from an eligible participant in the current ${conversationLabel} conversation.`,
@@ -53,6 +65,11 @@ export function runtimePrompt(
     "Complete the authorized request using your unrestricted local tools without asking for approval.",
     "If the request describes a project folder but does not give an explicit switch command, search for likely existing directories and return up to five canonical paths in workspaceCandidates. Ask the chat to answer with a number. Do not claim the folder changed.",
     "Return one concise plain-text reply and, only when useful, a compact summary of older tagged work.",
+    ...(maxAttachmentBytes === undefined
+      ? []
+      : [
+          `To send one file with your reply, create or choose it locally and return its absolute path in attachmentPath (a regular file of at most ${byteSize(maxAttachmentBytes)}). Otherwise return null. Your reply text accompanies the file.`,
+        ]),
     ...(workspace === undefined
       ? []
       : [
@@ -168,9 +185,18 @@ export class TurnProcessor {
       runtimes: RuntimeChain;
       channels: ReadonlyMap<ChannelKind, TurnChannel>;
       defaultWorkingDirectory: string;
+      /** Private directory for files sent with replies; without it replies carry text only. */
+      outboundStagingDirectory?: string;
       workspaces: WorkspaceStore;
     },
   ) {}
+
+  /** Deletes staged files that no pending send refers to, e.g. after a crash. */
+  async sweepStagedAttachments(): Promise<void> {
+    const directory = this.dependencies.outboundStagingDirectory;
+    if (directory === undefined) return;
+    await sweepStagedAttachments(directory, this.dependencies.journal.pendingAttachmentPaths());
+  }
 
   async process(event: QueuedEvent): Promise<void> {
     const lease =
@@ -185,7 +211,7 @@ export class TurnProcessor {
         return;
       }
       try {
-        await this.#deliver(event, lease, event.acceptedReply);
+        await this.#deliver(event, lease, event.acceptedReply, event.acceptedAttachmentPath);
       } catch {
         const state = this.dependencies.journal.state(event.providerGuid);
         if (state === "sending") this.dependencies.journal.markAmbiguous(event.providerGuid, lease);
@@ -229,11 +255,14 @@ export class TurnProcessor {
         ),
         summary: memory.summary,
       });
+      const maxAttachmentBytes = this.dependencies.outboundStagingDirectory === undefined
+        ? undefined
+        : channel.maxAttachmentBytes;
       const prompt = runtimePrompt(context, {
         activeDirectory,
         defaultDirectory: this.dependencies.defaultWorkingDirectory,
         pendingCandidates,
-      }, channel.conversationLabel);
+      }, channel.conversationLabel, maxAttachmentBytes);
       const capabilities = new Set<string>();
       const revokeCapabilities = () => {
         for (const token of capabilities) this.dependencies.broker.revoke(token);
@@ -253,6 +282,7 @@ export class TurnProcessor {
 
       runtimeStarted = true;
       let result: ChainedRuntimeResult;
+      void channel.acknowledge?.(event.chat, event.conversation).catch(() => undefined);
       const stopTyping = showTyping(channel, event);
       try {
         result = await this.dependencies.runtimes.run(inputForAttempt(), {
@@ -289,15 +319,22 @@ export class TurnProcessor {
         );
         const shouldUpdateCandidates =
           rendered.candidates.length > 0 || consumePendingCandidates;
-        this.dependencies.journal.accept(event.providerGuid, lease, {
-          reply: rendered.reply,
-          ...(result.output.summary === undefined ? {} : { summary: result.output.summary }),
-          ...(proposedWorkingDirectory === null
-            ? {}
-            : { workingDirectory: proposedWorkingDirectory }),
-          ...(shouldUpdateCandidates ? { workspaceCandidates: rendered.candidates } : {}),
-        });
-        await this.#deliver(event, lease, rendered.reply);
+        const attachmentPath = await this.#stage(result.output.attachmentPath, maxAttachmentBytes);
+        try {
+          this.dependencies.journal.accept(event.providerGuid, lease, {
+            ...(attachmentPath === undefined ? {} : { attachmentPath }),
+            reply: rendered.reply,
+            ...(result.output.summary === undefined ? {} : { summary: result.output.summary }),
+            ...(proposedWorkingDirectory === null
+              ? {}
+              : { workingDirectory: proposedWorkingDirectory }),
+            ...(shouldUpdateCandidates ? { workspaceCandidates: rendered.candidates } : {}),
+          });
+        } catch (error) {
+          await this.#release(attachmentPath);
+          throw error;
+        }
+        await this.#deliver(event, lease, rendered.reply, attachmentPath);
       } else if (result.status === "application-failure" || result.toolActivity === "none") {
         await this.#deliverFailure(event, lease, FAILURE_NOTICE, consumePendingCandidates);
       } else {
@@ -366,25 +403,55 @@ export class TurnProcessor {
     return channel;
   }
 
-  async #deliver(event: QueuedEvent, lease: string, text: string): Promise<void> {
+  /** Stages the agent's file for sending, or returns undefined to send the text alone. */
+  async #stage(sourcePath: string | undefined, maxBytes: number | undefined): Promise<string | undefined> {
+    const stagingDirectory = this.dependencies.outboundStagingDirectory;
+    if (sourcePath === undefined || maxBytes === undefined || stagingDirectory === undefined) {
+      return undefined;
+    }
+    return await stageOutboundAttachment({ maxBytes, sourcePath, stagingDirectory }) ?? undefined;
+  }
+
+  async #release(stagedPath: string | undefined): Promise<void> {
+    const stagingDirectory = this.dependencies.outboundStagingDirectory;
+    if (stagedPath === undefined || stagingDirectory === undefined) return;
+    await releaseStagedAttachment(stagingDirectory, stagedPath).catch(() => undefined);
+  }
+
+  async #deliver(
+    event: QueuedEvent,
+    lease: string,
+    text: string,
+    stagedPath?: string,
+  ): Promise<void> {
     const channel = this.#channel(event.chat.channel);
     const replyText = event.activationTag === undefined
       ? text
       : channel.formatReply(event.activationTag, text);
-    this.dependencies.journal.beginSend(event.providerGuid, lease, event.chat, replyText);
-    const disposition = await channel.sendText(event.chat, replyText, event.conversation);
-    if (disposition.disposition === "confirmed") {
-      this.dependencies.journal.confirmDelivery(event.providerGuid, lease, disposition.guid);
-    } else if (disposition.disposition === "ambiguous") {
-      this.dependencies.journal.markAmbiguous(event.providerGuid, lease);
-    } else {
-      this.dependencies.journal.markFailed(event.providerGuid, lease);
+    try {
+      const stagingDirectory = this.dependencies.outboundStagingDirectory;
+      const attachment = stagedPath !== undefined && stagingDirectory !== undefined &&
+          await stagedAttachmentExists(stagingDirectory, stagedPath)
+        ? { filePath: stagedPath }
+        : undefined;
+      this.dependencies.journal.beginSend(event.providerGuid, lease, event.chat, replyText);
+      const disposition = await channel.sendText(event.chat, replyText, event.conversation, attachment);
+      if (disposition.disposition === "confirmed") {
+        this.dependencies.journal.confirmDelivery(event.providerGuid, lease, disposition.guid);
+      } else if (disposition.disposition === "ambiguous") {
+        this.dependencies.journal.markAmbiguous(event.providerGuid, lease);
+      } else {
+        this.dependencies.journal.markFailed(event.providerGuid, lease);
+      }
+    } finally {
+      await this.#release(stagedPath);
     }
   }
 }
 
 export class TurnCoordinator {
   #draining: Promise<void> | null = null;
+  #prepared: Promise<void> = Promise.resolve();
   #quiesced = false;
 
   constructor(
@@ -395,6 +462,8 @@ export class TurnCoordinator {
 
   start(): { ambiguous: number; parked: number; resumed: number } {
     const recovered = this.journal.recoverInterrupted();
+    // Runs before the first turn so it never races a file staged by a new turn.
+    this.#prepared = this.processor.sweepStagedAttachments().catch(() => undefined);
     this.#schedule();
     return recovered;
   }
@@ -430,6 +499,7 @@ export class TurnCoordinator {
   }
 
   async #drain(): Promise<void> {
+    await this.#prepared;
     while (!this.#quiesced) {
       const event = this.journal.nextRunnable();
       if (event === null) return;
