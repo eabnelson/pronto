@@ -165,8 +165,10 @@ macOS setting.
    ambiguously. Then, for each app I chose, ask me to send `<my-tag> ping` in a
    conversation where I have already sent a message: an iMessage or RCS chat, a
    WhatsApp chat, or both. "Message yourself" in WhatsApp works too. Confirm that
-   exactly one agent reply arrives each time; on WhatsApp it is sent from my
-   account, quotes my message, and shows typing first. SMS does not activate
+   exactly one agent reply arrives each time; on WhatsApp my message first gets
+   a 👀 reaction and typing, then the reply is sent from my account quoting it.
+   The agent can also read photos and files I send with a tag and reply with a
+   file when I ask for one. SMS does not activate
    Pronto. If I later want to stop using WhatsApp, `"$PRONTO" whatsapp unlink`
    removes the linked device.
 
