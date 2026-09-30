@@ -3,7 +3,7 @@ import Foundation
 /// Prompts people paste into Codex or Claude Code to have their agent set Pronto
 /// up by following the hosted setup guide.
 public enum SetupPrompt {
-    public static let guideURL = URL(string: "https://studiofour.io/imessage-setup.md")!
+    public static let guideURL = URL(string: "https://studiofour.io/pronto-setup.md")!
 
     /// Installs Pronto from scratch. Matches the "Help me get set up" prompt on the website.
     public static var install: String {
