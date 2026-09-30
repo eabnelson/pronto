@@ -78,6 +78,7 @@ export async function downloadAttachment(input: {
   readonly storeDir: string;
   readonly timeoutMs: number;
   readonly wacliPath: string;
+  readonly env?: NodeJS.ProcessEnv;
 }): Promise<MaterializedWhatsappAttachment> {
   if (!MESSAGE_ID.test(input.messageId)) throw new Error("WhatsApp message id is invalid");
   if (!Number.isSafeInteger(input.maxBytes) || input.maxBytes <= 0) {
@@ -95,7 +96,7 @@ export async function downloadAttachment(input: {
         `--timeout=${Math.max(1, Math.floor(input.timeoutMs / 1_000) - 2)}s`,
         "media", "download", `--chat=${input.chatJid}`, `--id=${input.messageId}`, `--output=${directory}`,
       ],
-      { timeoutMs: input.timeoutMs },
+      { ...(input.env === undefined ? {} : { env: input.env }), timeoutMs: input.timeoutMs },
     );
     if (result.code !== 0) {
       const failure = describeFailure(result);

@@ -58,6 +58,7 @@ class WhatsappModule implements ProntoWhatsapp {
   readonly presence?: WhatsappPresence;
   readonly #wacliPath: string;
   readonly #storeDir: string;
+  readonly #env: NodeJS.ProcessEnv;
   readonly #attachmentsDir: string;
   readonly #limits: Limits;
   readonly #signer: ReferenceSigner;
@@ -82,6 +83,8 @@ class WhatsappModule implements ProntoWhatsapp {
     }
     this.#wacliPath = options.wacliPath;
     this.#storeDir = options.storeDir;
+    const label = options.deviceLabel?.trim();
+    this.#env = label === undefined || label === "" ? process.env : { ...process.env, WACLI_DEVICE_LABEL: label };
     if (options.attachmentsDir !== undefined && !isAbsolute(options.attachmentsDir)) {
       throw new Error("attachmentsDir must be an absolute path");
     }
@@ -110,6 +113,10 @@ class WhatsappModule implements ProntoWhatsapp {
 
   get state(): DeliveryState {
     return this.#state;
+  }
+
+  get env(): NodeJS.ProcessEnv {
+    return this.#env;
   }
 
   get tuning(): Tuning {
@@ -196,7 +203,7 @@ class WhatsappModule implements ProntoWhatsapp {
       const sender = input.quote.sender ?? null;
       if (sender !== null && sender.trim() !== "") args.push(`--reply-to-sender=${canonicalJid(sender)}`);
     }
-    const result = await runCommand(this.#wacliPath, args, { timeoutMs });
+    const result = await runCommand(this.#wacliPath, args, { env: this.#env, timeoutMs });
     const outcome = sendOutcome(result);
     if (outcome.status === "confirmed") {
       await this.#state.load().then(async () => {
@@ -229,7 +236,7 @@ class WhatsappModule implements ProntoWhatsapp {
       `--timeout=${Math.max(1, Math.floor(this.#tuning.sendTimeoutMs / 1000) - 5)}s`,
       "send", "react", `--to=${chatJid}`, `--id=${input.providerMessageId}`, `--reaction=${input.emoji}`,
       ...(sender === null ? [] : [`--sender=${sender}`]),
-    ], { timeoutMs: this.#tuning.sendTimeoutMs });
+    ], { env: this.#env, timeoutMs: this.#tuning.sendTimeoutMs });
     const outcome = sendOutcome(result);
     if (outcome.status === "confirmed") {
       await this.#state.load()
@@ -254,6 +261,7 @@ class WhatsappModule implements ProntoWhatsapp {
       maxBytes: input.maxBytes,
       messageId: input.providerMessageId,
       storeDir: this.#storeDir,
+      env: this.#env,
       timeoutMs: this.#tuning.attachmentTimeoutMs,
       wacliPath: this.#wacliPath,
     });
@@ -273,6 +281,7 @@ class WhatsappModule implements ProntoWhatsapp {
     try {
       yield* linkSteps({
         closeGraceMs: this.#tuning.closeGraceMs,
+        env: this.#env,
         linkedJid: () => this.#authStatus(),
         ...(input.phone === undefined ? {} : { phone: input.phone }),
         signal: controller.signal,
@@ -290,7 +299,7 @@ class WhatsappModule implements ProntoWhatsapp {
     const result = await runCommand(
       this.#wacliPath,
       ["--store", this.#storeDir, "auth", "logout"],
-      { timeoutMs: this.#tuning.commandTimeoutMs },
+      { env: this.#env, timeoutMs: this.#tuning.commandTimeoutMs },
     );
     this.#linkedJid = null;
     this.#linkedLidUser = null;
@@ -372,7 +381,7 @@ class WhatsappModule implements ProntoWhatsapp {
     const result = await runCommand(
       this.#wacliPath,
       ["--store", this.#storeDir, "--read-only", "--json", "messages", "list", ...filters],
-      { timeoutMs: this.#tuning.commandTimeoutMs },
+      { env: this.#env, timeoutMs: this.#tuning.commandTimeoutMs },
     );
     const envelope = parseEnvelope(result);
     if (result.code !== 0 || envelope === null || !envelope.success || !isRecord(envelope.data)) return null;
@@ -383,7 +392,7 @@ class WhatsappModule implements ProntoWhatsapp {
     const result = await runCommand(
       this.#wacliPath,
       ["--store", this.#storeDir, "--read-only", "--json", "messages", "show", `--chat=${chatJid}`, `--id=${messageId}`],
-      { timeoutMs: this.#tuning.commandTimeoutMs },
+      { env: this.#env, timeoutMs: this.#tuning.commandTimeoutMs },
     );
     const envelope = parseEnvelope(result);
     if (result.code !== 0 || envelope === null || !envelope.success) return null;
@@ -399,7 +408,7 @@ class WhatsappModule implements ProntoWhatsapp {
     await runCommand(
       this.#wacliPath,
       ["--store", this.#storeDir, "presence", typing ? "typing" : "paused", `--to=${chatJid}`],
-      { timeoutMs: this.#tuning.presenceTimeoutMs },
+      { env: this.#env, timeoutMs: this.#tuning.presenceTimeoutMs },
     ).catch(() => undefined);
   }
 
@@ -419,7 +428,7 @@ class WhatsappModule implements ProntoWhatsapp {
   }
 
   async #wacliVersion(): Promise<string> {
-    const result = await runCommand(this.#wacliPath, ["version"], { timeoutMs: this.#tuning.commandTimeoutMs });
+    const result = await runCommand(this.#wacliPath, ["version"], { env: this.#env, timeoutMs: this.#tuning.commandTimeoutMs });
     if (result.code !== 0) throw new Error(`wacli is unavailable: ${describeFailure(result)}`);
     const version = parseVersion(result.stdout);
     if (version === null) throw new Error("Could not determine the wacli version");
@@ -442,7 +451,7 @@ class WhatsappModule implements ProntoWhatsapp {
     const result = await runCommand(
       this.#wacliPath,
       ["--store", this.#storeDir, "--read-only", "--json", "auth", "status"],
-      { timeoutMs: this.#tuning.commandTimeoutMs },
+      { env: this.#env, timeoutMs: this.#tuning.commandTimeoutMs },
     );
     const envelope = parseEnvelope(result);
     if (envelope === null || !envelope.success || !isRecord(envelope.data)) {
@@ -503,6 +512,7 @@ class Subscription {
           void this.#shutdown().then(() => this.end());
         },
       },
+      env: this.module.env,
       storeDir,
       tuning: this.module.tuning,
       wacliPath,

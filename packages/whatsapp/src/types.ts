@@ -204,6 +204,11 @@ export interface CreateProntoWhatsappOptions {
     readonly ttlMs?: number;
   };
   readonly presence?: boolean;
+  /**
+   * Name this Mac shows under WhatsApp → Linked devices, set when the device links.
+   * Defaults to wacli's own choice (the host name, or "wacli").
+   */
+  readonly deviceLabel?: string;
   /** Private directory for downloaded attachments. Defaults to a per-user temporary directory. */
   readonly attachmentsDir?: string;
 }

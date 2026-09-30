@@ -10,6 +10,7 @@ export interface LinkInput {
   readonly signal?: AbortSignal;
   readonly storeDir: string;
   readonly wacliPath: string;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 type Item =
@@ -39,7 +40,7 @@ export async function* linkSteps(input: LinkInput): AsyncGenerator<WhatsappLinkS
   };
   let child: ChildProcess;
   try {
-    child = spawnWacli(input.wacliPath, args);
+    child = spawnWacli(input.wacliPath, args, input.env);
   } catch (error) {
     yield { reason: error instanceof Error ? error.message : String(error), type: "failed" };
     return;
