@@ -196,8 +196,10 @@ class WhatsappModule implements ProntoWhatsapp {
           `--as=${sendFileKind(filePath)}`,
         ]),
     ];
-    // Only text sends reject the linked account itself; file sends have no such check.
-    if (filePath === undefined && this.isSelfChat(chatJid)) args.push("--allow-self");
+    // wacli refuses text to the linked account unless --allow-self, which only skips that check.
+    // Pronto can't always tell a self-chat addressed by LID (its LID is learned from live
+    // messages and lost on restart), so every text send passes it. File sends have no such check.
+    if (filePath === undefined) args.push("--allow-self");
     if (input.quote !== undefined) {
       args.push(`--reply-to=${input.quote.providerMessageId}`);
       const sender = input.quote.sender ?? null;
