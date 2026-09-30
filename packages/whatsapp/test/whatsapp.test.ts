@@ -237,7 +237,7 @@ test("recovery sweeps report limits and failures", async () => {
   expect(f.recovery[0]).toEqual({ messages: 0, reason: "sweep-failed", status: "degraded" });
 });
 
-test("reply waits for the delegate socket and passes self-chat and quote flags", async () => {
+test("reply waits for the delegate socket and passes the self and quote flags", async () => {
   const h = await setup({ auth: LINKED, send: { id: "3EB0SENT", mode: "ok" }, syncRuns: [{ socketDelayMs: 400 }] });
   await h.module.subscribe(collector().input);
   const started = Date.now();
@@ -257,8 +257,24 @@ test("reply waits for the delegate socket and passes self-chat and quote flags",
 
   await h.module.reply({ conversation: h.reference(ALICE), text: "hi" });
   const second = (await h.invocations("send"))[1]!.args;
-  expect(second).not.toContain("--allow-self");
   expect(second.some((arg) => arg.startsWith("--reply-to"))).toBe(false);
+});
+
+test("text replies reach a self-chat addressed by LID before its LID is learned", async () => {
+  // After a restart Pronto hasn't seen a live self-chat message, so it can't recognise the LID chat.
+  const selfLid = "211128126849043@lid";
+  const h = await setup({ auth: LINKED, send: { id: "3EB0SELF", mode: "ok" }, syncRuns: [{}] });
+  await h.module.subscribe(collector().input);
+  expect(h.module.isSelfChat(selfLid)).toBe(false);
+  const outcome = await h.module.reply({
+    conversation: h.reference(selfLid),
+    quote: { providerMessageId: "PHOTO", sender: OWNER },
+    text: "It's a red circle.",
+  });
+  expect(outcome).toEqual({ providerMessageId: "3EB0SELF", status: "confirmed" });
+  const args = (await h.invocations("send"))[0]!.args;
+  expect(args).toContain(`--to=${selfLid}`);
+  expect(args).toContain("--allow-self");
 });
 
 test("reply fails retryably when the delegate never becomes ready", async () => {
