@@ -7,6 +7,8 @@ export interface LinkInput {
   readonly linkedJid: () => Promise<string | null>;
   readonly closeGraceMs: number;
   readonly phone?: string;
+  /** Pause before retrying when `wacli auth` exits before showing a code. */
+  readonly retryDelayMs: number;
   readonly signal?: AbortSignal;
   readonly storeDir: string;
   readonly wacliPath: string;
@@ -18,6 +20,8 @@ type Item =
   | { readonly kind: "exit"; readonly code: number | null; readonly error: string | null };
 
 const MAX_LINE_BYTES = 64 * 1024;
+/** Attempts when `wacli auth` exits cleanly without showing a code, e.g. right after an unlink. */
+const EARLY_EXIT_ATTEMPTS = 3;
 const BOOTSTRAP_LIMIT_MS = 10 * 60_000;
 
 /** Drives `wacli auth` and reports QR codes, pairing codes, and the outcome. */
@@ -28,6 +32,19 @@ export async function* linkSteps(input: LinkInput): AsyncGenerator<WhatsappLinkS
     yield { reason: "Phone number must contain digits", type: "failed" };
     return;
   }
+  for (let attempt = 1; ; attempt += 1) {
+    const outcome = yield* linkAttempt(input, phone, attempt < EARLY_EXIT_ATTEMPTS);
+    if (outcome !== "retry" || input.signal?.aborted) return;
+    await abortableSleep(input.retryDelayMs, input.signal);
+  }
+}
+
+/** One `wacli auth` run. Returns "retry" when it exited cleanly before showing a code and `mayRetry`. */
+async function* linkAttempt(
+  input: LinkInput,
+  phone: string,
+  mayRetry: boolean,
+): AsyncGenerator<WhatsappLinkStep, "done" | "retry"> {
   const args = ["--store", input.storeDir, "--events", "auth", "--qr-format", "text"];
   if (phone !== "") args.push(`--phone=${phone}`);
 
@@ -43,7 +60,7 @@ export async function* linkSteps(input: LinkInput): AsyncGenerator<WhatsappLinkS
     child = spawnWacli(input.wacliPath, args, input.env);
   } catch (error) {
     yield { reason: error instanceof Error ? error.message : String(error), type: "failed" };
-    return;
+    return "done";
   }
   let spawned = false;
   child.once("spawn", () => {
@@ -76,10 +93,11 @@ export async function* linkSteps(input: LinkInput): AsyncGenerator<WhatsappLinkS
   input.signal?.addEventListener("abort", onAbort, { once: true });
 
   let linked = false;
+  let shownCode = false;
   let lastError: string | null = null;
   try {
     for (;;) {
-      if (aborted) return;
+      if (aborted) return "done";
       const item = items.shift();
       if (item === undefined) {
         await new Promise<void>((resolve) => {
@@ -88,23 +106,34 @@ export async function* linkSteps(input: LinkInput): AsyncGenerator<WhatsappLinkS
         continue;
       }
       if (item.kind === "exit") {
-        if (linked) return;
+        if (linked) return "done";
         if (item.error !== null) {
           yield { reason: item.error, type: "failed" };
-          return;
+          return "done";
         }
         const jid = item.code === 0 ? await input.linkedJid().catch(() => null) : null;
-        yield jid === null
-          ? { reason: lastError ?? `wacli auth exited (${item.code ?? "signal"})`, type: "failed" }
-          : { linkedJid: jid, type: "linked" };
-        return;
+        if (jid !== null) {
+          yield { linkedJid: jid, type: "linked" };
+          return "done";
+        }
+        const earlyExit = item.code === 0 && !shownCode && lastError === null;
+        if (earlyExit && mayRetry) return "retry";
+        yield {
+          reason: lastError ?? (earlyExit
+            ? "WhatsApp didn't offer a link code. Wait a minute and try again."
+            : `wacli auth exited (${item.code ?? "signal"})`),
+          type: "failed",
+        };
+        return "done";
       }
       const event = parseEvent(item.line);
       if (event === null) continue;
       const code = typeof event.data.code === "string" ? event.data.code : null;
       if (event.event === "qr_code" && code !== null && !linked) {
+        shownCode = true;
         yield { code, type: "qr" };
       } else if (event.event === "pair_code" && code !== null && !linked) {
+        shownCode = true;
         yield { code, type: "pairing_code" };
       } else if (event.event === "connected" && !linked) {
         const jid = await input.linkedJid().catch(() => null);
@@ -147,4 +176,16 @@ async function stopChild(child: ChildProcess, graceMs: number, interrupt: boolea
   await exited;
   clearTimeout(bootstrapTimer);
   if (killTimer !== undefined) clearTimeout(killTimer);
+}
+
+function abortableSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
