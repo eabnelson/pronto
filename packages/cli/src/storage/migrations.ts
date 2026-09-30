@@ -1,6 +1,15 @@
 import type { Database } from "bun:sqlite";
 
-export const CURRENT_SCHEMA_VERSION = 5;
+/** Newest schema this build can open. */
+export const CURRENT_SCHEMA_VERSION = 6;
+/** Schema an ordinary open migrates to. iMessage-only installs stay here. */
+export const DEFAULT_SCHEMA_VERSION = 5;
+/**
+ * Adds per-app chat addresses. Applied only when a non-iMessage app is enabled, which
+ * always happens after an update has committed, so a failed update never leaves an older
+ * executable facing a schema it cannot open.
+ */
+export const MULTI_APP_SCHEMA_VERSION = 6;
 
 const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS delivery_events (
@@ -95,12 +104,25 @@ SET state = 'failed', activation_tag = NULL, tagged_request = NULL,
 WHERE state IN ('admitted', 'ready_to_send');
 `;
 
-export function migrateDatabase(database: Database): void {
+// chat_id remains the iMessage chat id and is 0 for other apps' rows.
+const SCHEMA_V6 = `
+ALTER TABLE delivery_events ADD COLUMN channel TEXT NOT NULL DEFAULT 'imessage';
+ALTER TABLE delivery_events ADD COLUMN chat_address TEXT;
+UPDATE delivery_events SET chat_address = CAST(chat_id AS TEXT);
+`;
+
+export function migrateDatabase(
+  database: Database,
+  targetVersion: number = DEFAULT_SCHEMA_VERSION,
+): void {
+  if (targetVersion < DEFAULT_SCHEMA_VERSION || targetVersion > CURRENT_SCHEMA_VERSION) {
+    throw new Error(`Unsupported target schema version ${targetVersion}`);
+  }
   const row = database.query("PRAGMA user_version").get() as { user_version: number };
   if (row.user_version > CURRENT_SCHEMA_VERSION) {
     throw new Error(`Database version ${row.user_version} is newer than this pronto build`);
   }
-  if (row.user_version === CURRENT_SCHEMA_VERSION) return;
+  if (row.user_version >= targetVersion) return;
 
   database.transaction(() => {
     if (row.user_version < 1) database.exec(SCHEMA_V1);
@@ -108,6 +130,7 @@ export function migrateDatabase(database: Database): void {
     if (row.user_version < 3) database.exec(SCHEMA_V3);
     if (row.user_version < 4) database.exec(SCHEMA_V4);
     if (row.user_version < 5) database.exec(SCHEMA_V5);
-    database.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION}`);
+    if (row.user_version < 6 && targetVersion >= 6) database.exec(SCHEMA_V6);
+    database.exec(`PRAGMA user_version = ${targetVersion}`);
   })();
 }

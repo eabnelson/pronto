@@ -22,7 +22,13 @@ import {
   saveConfig,
   UNRESTRICTED_TRUST_VERSION,
 } from "../../packages/cli/src/config";
+import { Database } from "bun:sqlite";
 import { pathsForHome } from "../../packages/cli/src/macos/paths";
+import { openProntoDatabase } from "../../packages/cli/src/storage/database";
+import {
+  CURRENT_SCHEMA_VERSION,
+  DEFAULT_SCHEMA_VERSION,
+} from "../../packages/cli/src/storage/migrations";
 
 const temporaryDirectories: string[] = [];
 
@@ -138,11 +144,10 @@ describe("Pronto updater", () => {
     await writeFile(paths.executablePath, "previous", { mode: 0o700 });
     await chmod(paths.executablePath, 0o700);
     await saveConfig(paths.configPath, createConfig({
-      imsgPath: "/usr/local/bin/imsg",
+      channels: { imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@pronto"] } },
       installedExecutableHash: createHash("sha256").update("previous").digest("hex"),
       primaryRuntime: "codex",
       primaryRuntimePath: "/usr/local/bin/codex",
-      tags: ["@pronto"],
       unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
       workingDirectory: home,
     }));
@@ -216,11 +221,10 @@ describe("Pronto updater", () => {
     await writeFile(paths.executablePath, "known good", { mode: 0o700 });
     const originalHash = createHash("sha256").update("known good").digest("hex");
     await saveConfig(paths.configPath, createConfig({
-      imsgPath: "/usr/local/bin/imsg",
+      channels: { imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@pronto"] } },
       installedExecutableHash: originalHash,
       primaryRuntime: "codex",
       primaryRuntimePath: "/usr/local/bin/codex",
-      tags: ["@pronto"],
       unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
       workingDirectory: home,
     }));
@@ -252,6 +256,57 @@ describe("Pronto updater", () => {
     expect(waitedMs).toBe(300_000);
   });
 
+  test("restores the state database when a failed candidate migrated it", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pronto-update-schema-"));
+    temporaryDirectories.push(home);
+    const paths = pathsForHome(home);
+    const candidate = new TextEncoder().encode("candidate with newer schema");
+    await mkdir(join(paths.appSupportDirectory, "bin"), { recursive: true });
+    await writeFile(paths.executablePath, "known good", { mode: 0o700 });
+    await saveConfig(paths.configPath, createConfig({
+      channels: { imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@pronto"] } },
+      installedExecutableHash: createHash("sha256").update("known good").digest("hex"),
+      primaryRuntime: "codex",
+      primaryRuntimePath: "/usr/local/bin/codex",
+      unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+      workingDirectory: home,
+    }));
+    openProntoDatabase(paths.databasePath).close();
+    const available = manifest(candidate);
+    let fetchCount = 0;
+    const updater = new ProntoUpdater(paths, {
+      currentVersion: "0.2.4",
+      fetch: async () => new Response(++fetchCount === 1 ? "manifest" : candidate),
+      inspectIdentity: async () => ({
+        identifier: PRONTO_SIGNING_IDENTIFIER,
+        teamIdentifier: PRONTO_SIGNING_TEAM_IDENTIFIER,
+      }),
+      randomId: () => "schema",
+      installMainAgent: async () => undefined,
+      run: async (_executable, args) => {
+        if (args[0] === "--version") return { exitCode: 0, stderr: "", stdout: "pronto 0.3.0\n" };
+        const database = new Database(paths.databasePath, { strict: true });
+        database.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION + 1}`);
+        database.close();
+        return { exitCode: 1, stderr: "not ready", stdout: "" };
+      },
+      stopAgent: async () => undefined,
+      verifyEnvelope: () => available,
+      wait: async () => undefined,
+    });
+
+    await expect(updater.install()).rejects.toThrow("update_candidate_qualification_failed");
+    expect(await readFile(paths.executablePath, "utf8")).toBe("known good");
+    const database = openProntoDatabase(paths.databasePath);
+    try {
+      expect(database.query("PRAGMA user_version").get()).toEqual({
+        user_version: DEFAULT_SCHEMA_VERSION,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   test("migrates an existing ad-hoc install from a separately downloaded signed candidate", async () => {
     const home = await mkdtemp(join(tmpdir(), "pronto-update-local-migration-"));
     temporaryDirectories.push(home);
@@ -261,11 +316,10 @@ describe("Pronto updater", () => {
     await writeFile(paths.executablePath, "ad-hoc 0.2.4", { mode: 0o700 });
     await writeFile(candidatePath, "developer-id 0.3.0", { mode: 0o700 });
     await saveConfig(paths.configPath, createConfig({
-      imsgPath: "/usr/local/bin/imsg",
+      channels: { imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@pronto"] } },
       installedExecutableHash: createHash("sha256").update("ad-hoc 0.2.4").digest("hex"),
       primaryRuntime: "codex",
       primaryRuntimePath: "/usr/local/bin/codex",
-      tags: ["@pronto"],
       unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
       workingDirectory: home,
     }));

@@ -7,6 +7,9 @@ Pronto has two independent release surfaces:
 - The public `pronto-imessage` package is an in-process library. Consumers such
   as Studio Four exact-pin it and ship it inside their own signed host. Pronto
   never mutates a consumer's embedded copy.
+- The public `pronto-whatsapp` package is the equivalent in-process library for
+  WhatsApp. It is released at the same version as `pronto-imessage`, with the
+  same checksum, attestation, and npm provenance steps.
 
 ## User lifecycle
 
@@ -65,6 +68,16 @@ or starting status never counts as ready; failure still restores the previous
 binary and configuration. An older updater retains its older startup budget and
 may need an idle retry if a large recovery backlog prevents timely qualification.
 
+Before replacing the executable, the updater also copies the state database to
+`updates/last-known-good-state.sqlite` without migrating it. If the candidate
+fails and has migrated the database past the schema the previous executable
+supports, rollback restores that copy; otherwise the candidate's state is kept.
+Updaters without this step restore only the executable and configuration, so a
+release that raises the schema of every installation must set
+`minimumUpdaterVersion` to a release that includes it. The schema that stores
+WhatsApp chats avoids this: it is applied only when WhatsApp is enabled, which
+always happens after an update has committed.
+
 The listener's LaunchAgent requests a finite 120-second exit window; launchd may
 apply a shorter effective limit (60 seconds was reported on macOS 26.5.1 during
 candidate-2 qualification). Shutdown
@@ -90,6 +103,12 @@ GitHub `release` environment:
 - `PRONTO_NOTARY_ISSUER_ID`
 - `PRONTO_RELEASE_ED25519_PRIVATE_KEY`
 
+npm publishing uses trusted publishing, so no npm token is stored. Each package
+(`pronto-imessage`, `pronto-whatsapp`) must list this repository's `release.yml`
+workflow and `release` environment as its trusted publisher on npmjs.com. npm
+only offers that setting for a package that already exists, so a new package
+needs its first version published by the owner before the workflow can publish it.
+
 The environment permits only `v*` tags and requires release-owner approval. The
 workflow checks out that immutable tag, runs all tests and live-evidence gates,
 imports the certificate into a temporary keychain on a GitHub-hosted macOS
@@ -98,8 +117,8 @@ designated requirement, submits both architectures to `notarytool`, and deletes
 all temporary signing material in an `always()` step.
 
 The publish job receives no Apple or manifest private key. It verifies checksums,
-creates GitHub artifact attestations, publishes `pronto-imessage` through npm
-OIDC with provenance, verifies registry propagation, and only then makes the
+creates GitHub artifact attestations, publishes `pronto-imessage` and
+`pronto-whatsapp` through npm OIDC with provenance, verifies registry propagation, and only then makes the
 immutable GitHub release public.
 
 ## Release qualification

@@ -3,9 +3,22 @@
 import packageJson from "../package.json" with { type: "json" };
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
-import { addTag, loadConfig, normalizeTags, removeTag, saveConfig } from "./config";
+import {
+  addTagToApps,
+  createConfig,
+  channelTags,
+  enabledChannels,
+  loadConfig,
+  normalizeTag,
+  normalizeTags,
+  removeTagFromApps,
+  saveConfig,
+  tagAssignments,
+  type ProntoConfig,
+  WHATSAPP_RISK_CONSENT_VERSION,
+} from "./config";
 import {
   launchAgentStateForLabel,
   parseLaunchAgentState,
@@ -21,6 +34,7 @@ import {
   completeSetupCutover,
   createWorkspaceDirectory,
   discoverCommands,
+  type DoctorCheck,
   fullDiskAccessInstructions,
   inspectInstallation,
   installSetup,
@@ -36,11 +50,24 @@ import {
 import { openProntoDatabase } from "./storage/database";
 import { MemoryStore } from "./storage/memory";
 import { brokerQuery, runMcpStdio } from "./tools/mcp";
-import { ProntoDaemon } from "./core/daemon";
+import { ProntoDaemon, STANDALONE_SCOPE_TTL_MS } from "./core/daemon";
+import {
+  linkWhatsappInTerminal,
+  standaloneWhatsapp,
+  WHATSAPP_DISCLOSURE,
+} from "./whatsapp/standalone";
 import { qualifyRuntime } from "./runtimes/qualification";
 import { createRuntimeAdapter } from "./runtimes/factory";
 import { ImsgTransport } from "./imessage/transport";
 import { DeliveryJournal } from "./storage/journal";
+import { CHANNEL_LABELS, type ChannelKind } from "./channels/types";
+import {
+  appList,
+  parseAppFlags,
+  parseTagAppChoice,
+  tagAppChoices,
+  tagAppPrompt,
+} from "./tag-apps";
 import { LAUNCH_AGENT_LABEL, UPDATER_LAUNCH_AGENT_LABEL } from "./macos/paths";
 import { createProntoMessages } from "pronto-imessage";
 import {
@@ -58,7 +85,8 @@ Commands:
   run         Run the listener in the foreground
   status      Show listener health without conversation content
   doctor      Check local capabilities and permissions
-  tags        List, add, or remove trigger tags
+  tags        List, add, or remove trigger tags and the apps they apply to
+  whatsapp    Link or unlink WhatsApp
   update      Check for or install a verified Pronto update
   stop        Stop the installed listener
   forget      Remove one chat's tagged memory and workspace state
@@ -89,6 +117,27 @@ async function runSetup(): Promise<number> {
     const legacyPaths = legacyPathsForHome(homedir());
     const existing = await loadExistingSetupDefaults(paths.configPath) ??
       await loadExistingSetupDefaults(legacyPaths.configPath);
+    const installedApps: ChannelKind[] = [
+      ...(discovery.imsgPath === undefined ? [] : ["imessage" as const]),
+      ...(discovery.wacliPath === undefined ? [] : ["whatsapp" as const]),
+    ];
+    const appChoices = tagAppChoices(installedApps);
+    let apps = appChoices[0]!.apps;
+    if (appChoices.length > 1) {
+      const options = appChoices.map((choice, index) => {
+        return `  ${index + 1}. ${choice.label}${index === 0 ? " (default)" : ""}`;
+      });
+      while (true) {
+        const chosen = parseTagAppChoice(await prompt.question(
+          `Which messaging apps should Pronto answer in?\n${options.join("\n")}\nChoose [1]: `,
+        ), appChoices);
+        if (chosen !== null) {
+          apps = chosen;
+          break;
+        }
+        console.error("Choose one of the listed numbers.");
+      }
+    }
     const defaultTags = existing?.tags ?? ["@s4"];
     const tagAnswer = (await prompt.question(
       `Trigger tags, separated by commas [${defaultTags.join(", ")}]: `,
@@ -96,6 +145,24 @@ async function runSetup(): Promise<number> {
     const tags = tagAnswer === ""
       ? defaultTags
       : normalizeTags(tagAnswer.split(",").map((tag) => tag.trim()));
+    const tagApps: Record<string, ChannelKind[]> = {};
+    const tagChoices = tagAppChoices(apps);
+    for (const tag of tagChoices.length > 1 ? tags : []) {
+      while (true) {
+        const chosen = parseTagAppChoice(await prompt.question(tagAppPrompt(tag, tagChoices)), tagChoices);
+        if (chosen !== null) {
+          tagApps[tag] = chosen;
+          break;
+        }
+        console.error("Choose one of the listed numbers.");
+      }
+    }
+    for (const app of apps) {
+      if (!tags.some((tag) => (tagApps[tag] ?? apps).includes(app))) {
+        console.error(`Give ${CHANNEL_LABELS[app]} at least one tag.`);
+        return 1;
+      }
+    }
     const primaryAnswer =
       available.length === 1
         ? available[0]!
@@ -147,20 +214,51 @@ async function runSetup(): Promise<number> {
       console.error("Setup cancelled without changing the service.");
       return 1;
     }
+    if (apps.includes("whatsapp")) {
+      console.log(`\n${WHATSAPP_DISCLOSURE}\n`);
+      const accepted = (await prompt.question("Type yes to use WhatsApp with this risk: "))
+        .trim()
+        .toLowerCase();
+      if (accepted !== "yes") {
+        console.error("Setup cancelled without changing the service.");
+        return 1;
+      }
+    }
 
     const workingDirectory = selection.exists
       ? selection.path
       : await createWorkspaceDirectory(selection.path);
     const config = prepareSetupConfig({
+      apps,
       ...(existing === null ? {} : { chatKeySalt: existing.chatKeySalt }),
       discovery,
       ...(wantsFallback && fallbackCandidate !== undefined
         ? { fallbackRuntime: fallbackCandidate }
         : {}),
       primaryRuntime: primaryAnswer,
+      tagApps,
       tags,
+      ...(apps.includes("whatsapp") ? { whatsappRiskConsentVersion: WHATSAPP_RISK_CONSENT_VERSION } : {}),
       workingDirectory,
     });
+    const whatsappConfig = config.channels.whatsapp;
+    if (whatsappConfig !== undefined) {
+      const whatsapp = standaloneWhatsapp({
+        chatKeySalt: config.chatKeySalt,
+        paths,
+        scopeTtlMs: STANDALONE_SCOPE_TTL_MS,
+        wacliPath: whatsappConfig.wacliPath,
+      });
+      try {
+        if ((await whatsapp.qualify()).status === "needs_link") {
+          console.log("\nLink this Mac to WhatsApp.");
+          await linkWhatsappInTerminal(whatsapp);
+        }
+        printCheck({ id: "whatsapp-linked", status: "ok" });
+      } finally {
+        await whatsapp.close().catch(() => undefined);
+      }
+    }
     const sourceEntry = process.argv[1];
     const sourceInvocation = sourceEntry !== undefined && sourceEntry.endsWith(".ts");
     const bridgeExecutablePath = process.execPath;
@@ -178,32 +276,8 @@ async function runSetup(): Promise<number> {
       },
       prepareMigration: () => prepareLegacyInstallation({ legacyPaths, paths }),
       preflight: async () => {
-        const messages = createProntoMessages({ imsgPath: discovery.imsgPath });
-        try {
-          const transport = new ImsgTransport(messages);
-          const imsg = await transport.qualify();
-          const watch = await transport.watch({
-            onActivation: () => undefined,
-            tags: config.tags,
-          });
-          await watch.close();
-          printCheck({ id: "imessage-read-watch", status: "ok" });
-          for (const capability of imsg.degraded) {
-            printCheck({ id: `imessage-${capability}`, status: "degraded" });
-          }
-        } catch (error) {
-          printCheck({
-            id: "imessage-read-watch",
-            remediation: "Grant Full Disk Access to this setup terminal and verify imsg RPC access.",
-            status: "failed",
-          });
-          throw new Error(
-            "Setup stopped before installation because iMessage qualification failed.",
-            { cause: error },
-          );
-        } finally {
-          await messages.close().catch(() => undefined);
-        }
+        const imessage = config.channels.imessage;
+        if (imessage !== undefined) await imessagePreflight(imessage.imsgPath, imessage.tags);
         console.log("Qualifying each selected runtime with one temporary, noninteractive file-tool probe...");
         for (const [kind, executablePath] of [
           [config.primaryRuntime, config.primaryRuntimePath],
@@ -226,8 +300,10 @@ async function runSetup(): Promise<number> {
         }
       },
       qualify: async () => {
-        console.log(fullDiskAccessInstructions(paths.executablePath));
-        await prompt.question("After granting access, press Enter to qualify the installed Pronto executable: ");
+        if (config.channels.imessage !== undefined) {
+          console.log(fullDiskAccessInstructions(paths.executablePath));
+          await prompt.question("After granting access, press Enter to qualify the installed Pronto executable: ");
+        }
         await qualifyInstalledExecutable(paths.executablePath, runCommand, async () => {
           const state = await launchAgentStateForLabel({ label: LAUNCH_AGENT_LABEL });
           if (state === "stopped") return async () => undefined;
@@ -260,7 +336,9 @@ async function runSetup(): Promise<number> {
         return restore;
       },
     });
-    console.log(setupCompletionMessage(paths, config.tags));
+    console.log(setupCompletionMessage(paths, Object.fromEntries(
+      enabledChannels(config).map((app) => [app, channelTags(config, app)]),
+    )));
     return 0;
   } finally {
     prompt.close();
@@ -331,41 +409,232 @@ function printCheck(check: { id: string; remediation?: string; status: string })
   if (check.remediation !== undefined) console.log(`         ${check.remediation}`);
 }
 
+async function imessagePreflight(imsgPath: string, tags: readonly string[]): Promise<void> {
+  const messages = createProntoMessages({ imsgPath });
+  try {
+    const transport = new ImsgTransport(messages);
+    const imsg = await transport.qualify();
+    const watch = await transport.watch({
+      onActivation: () => undefined,
+      tags,
+    });
+    await watch.close();
+    printCheck({ id: "imessage-read-watch", status: "ok" });
+    for (const capability of imsg.degraded) {
+      printCheck({ id: `imessage-${capability}`, status: "degraded" });
+    }
+  } catch (error) {
+    printCheck({
+      id: "imessage-read-watch",
+      remediation: "Grant Full Disk Access to this setup terminal and verify imsg RPC access.",
+      status: "failed",
+    });
+    throw new Error(
+      "Setup stopped before installation because iMessage qualification failed.",
+      { cause: error },
+    );
+  } finally {
+    await messages.close().catch(() => undefined);
+  }
+}
+
+async function whatsappDoctorCheck(
+  config: ProntoConfig,
+  paths: ReturnType<typeof pathsForHome>,
+): Promise<DoctorCheck> {
+  const whatsapp = standaloneWhatsapp({
+    chatKeySalt: config.chatKeySalt,
+    paths,
+    scopeTtlMs: STANDALONE_SCOPE_TTL_MS,
+    wacliPath: config.channels.whatsapp!.wacliPath,
+  });
+  try {
+    const qualification = await whatsapp.qualify();
+    return qualification.status === "ready"
+      ? { id: "whatsapp-linked", status: "ok" }
+      : { id: "whatsapp-linked", remediation: "Run pronto whatsapp link.", status: "failed" };
+  } catch (error) {
+    return {
+      id: "whatsapp-linked",
+      remediation: `${(error as Error).message}. Install or upgrade wacli (brew install openclaw/tap/wacli).`,
+      status: "failed",
+    };
+  } finally {
+    await whatsapp.close().catch(() => undefined);
+  }
+}
+
+const WHATSAPP_USAGE = "Usage: pronto whatsapp [link [--phone <number>] | unlink]";
+
+async function runWhatsapp(args: readonly string[]): Promise<number> {
+  const [action, ...rest] = args;
+  const paths = pathsForHome(homedir());
+  const config = await loadConfig(paths.configPath);
+  if (action === "unlink" && rest.length === 0) return await unlinkWhatsapp(config, paths);
+  const phoneIndex = rest.indexOf("--phone");
+  const phone = phoneIndex === -1 ? undefined : rest[phoneIndex + 1];
+  if (action !== "link" || (phoneIndex === -1 ? rest.length !== 0 : rest.length !== 2 || phone === undefined)) {
+    console.error(WHATSAPP_USAGE);
+    return 2;
+  }
+
+  const wacliPath = config.channels.whatsapp?.wacliPath ?? Bun.which("wacli");
+  if (wacliPath === null || !isAbsolute(wacliPath)) {
+    console.error("wacli was not found on PATH. Install it with: brew install openclaw/tap/wacli");
+    return 1;
+  }
+  const prompt = createInterface({ input: stdin, output: stdout });
+  let next: ProntoConfig;
+  try {
+    const existing = config.channels.whatsapp;
+    let tags = existing?.tags;
+    if (existing === undefined) {
+      console.log(`${WHATSAPP_DISCLOSURE}\n`);
+      const accepted = (await prompt.question("Type yes to use WhatsApp with this risk: "))
+        .trim()
+        .toLowerCase();
+      if (accepted !== "yes") {
+        console.error("WhatsApp was not enabled.");
+        return 1;
+      }
+      const defaults = tagAssignments(config).map(({ tag }) => tag);
+      const answer = (await prompt.question(
+        `WhatsApp trigger tags, separated by commas [${defaults.join(", ")}]: `,
+      )).trim();
+      tags = answer === "" ? defaults : normalizeTags(answer.split(",").map((tag) => tag.trim()));
+    }
+    next = createConfig({
+      ...config,
+      channels: {
+        ...config.channels,
+        whatsapp: {
+          enabled: true,
+          riskConsentVersion: WHATSAPP_RISK_CONSENT_VERSION,
+          tags: tags!,
+          wacliPath,
+        },
+      },
+    });
+  } catch (error) {
+    console.error((error as Error).message);
+    return 2;
+  } finally {
+    prompt.close();
+  }
+
+  const whatsapp = standaloneWhatsapp({
+    chatKeySalt: next.chatKeySalt,
+    paths,
+    scopeTtlMs: STANDALONE_SCOPE_TTL_MS,
+    wacliPath,
+  });
+  try {
+    if ((await whatsapp.qualify()).status === "needs_link") {
+      await linkWhatsappInTerminal(whatsapp, phone === undefined ? {} : { phone });
+    }
+  } catch (error) {
+    console.error((error as Error).message);
+    return 1;
+  } finally {
+    await whatsapp.close().catch(() => undefined);
+  }
+  await saveConfig(paths.configPath, next);
+  const restarted = await restartLaunchAgent();
+  if (restarted.exitCode !== 0) {
+    console.error("WhatsApp is linked, but the listener could not restart. Run pronto setup to repair it.");
+    return 1;
+  }
+  console.log(`WhatsApp is linked. Tags: ${channelTags(next, "whatsapp").join(", ")}`);
+  return 0;
+}
+
+async function unlinkWhatsapp(
+  config: ProntoConfig,
+  paths: ReturnType<typeof pathsForHome>,
+): Promise<number> {
+  const existing = config.channels.whatsapp;
+  if (existing === undefined) {
+    console.log("WhatsApp is not set up.");
+    return 0;
+  }
+  const whatsapp = standaloneWhatsapp({
+    chatKeySalt: config.chatKeySalt,
+    paths,
+    scopeTtlMs: STANDALONE_SCOPE_TTL_MS,
+    wacliPath: existing.wacliPath,
+  });
+  try {
+    await whatsapp.unlink();
+  } catch (error) {
+    console.error(`WhatsApp could not be unlinked: ${(error as Error).message}`);
+    return 1;
+  } finally {
+    await whatsapp.close().catch(() => undefined);
+  }
+  const othersEnabled = enabledChannels(config).some((app) => app !== "whatsapp");
+  if (othersEnabled) {
+    await saveConfig(paths.configPath, {
+      ...config,
+      channels: { ...config.channels, whatsapp: { ...existing, enabled: false } },
+    });
+    await restartLaunchAgent();
+    console.log("WhatsApp is unlinked and turned off. Run pronto whatsapp link to use it again.");
+  } else {
+    console.log("WhatsApp is unlinked. It is the only enabled app, so Pronto will report it as needing a link.");
+  }
+  return 0;
+}
+
+async function imessageDoctorChecks(
+  imsgPath: string,
+  tags: readonly string[],
+): Promise<DoctorCheck[]> {
+  const checks: DoctorCheck[] = [];
+  const messages = createProntoMessages({ imsgPath });
+  try {
+    const transport = new ImsgTransport(messages);
+    const imsg = await transport.qualify();
+    const watch = await transport.watch({
+      onActivation: () => undefined,
+      tags,
+    });
+    await watch.close();
+    checks.push({ id: "imessage-read-watch", status: "ok" });
+    for (const capability of imsg.degraded) {
+      checks.push({
+        id: `imessage-${capability}`,
+        remediation: `Update or reconfigure imsg to expose ${capability}; core tagged replies remain available.`,
+        status: "degraded",
+      });
+    }
+    checks.push({
+      id: "messages-send-automation",
+      remediation: "A real send cannot be tested without messaging a chat; complete the documented live smoke after setup.",
+      status: "degraded",
+    });
+  } catch {
+    checks.push({
+      id: "imessage-read-watch",
+      remediation: "Grant Full Disk Access to the installed pronto executable and verify imsg RPC access.",
+      status: "failed",
+    });
+  } finally {
+    await messages.close().catch(() => undefined);
+  }
+  return checks;
+}
+
 async function runDoctor(json = false, offline = false): Promise<number> {
   const paths = pathsForHome(homedir());
   const report = await inspectInstallation(paths);
   if (report.healthy) {
     const config = await loadConfig(paths.configPath);
-    const messages = createProntoMessages({ imsgPath: config.imsgPath });
-    try {
-      const transport = new ImsgTransport(messages);
-      const imsg = await transport.qualify();
-      const watch = await transport.watch({
-        onActivation: () => undefined,
-        tags: config.tags,
-      });
-      await watch.close();
-      report.checks.push({ id: "imessage-read-watch", status: "ok" });
-      for (const capability of imsg.degraded) {
-        report.checks.push({
-          id: `imessage-${capability}`,
-          remediation: `Update or reconfigure imsg to expose ${capability}; core tagged replies remain available.`,
-          status: "degraded",
-        });
-      }
-      report.checks.push({
-        id: "messages-send-automation",
-        remediation: "A real send cannot be tested without messaging a chat; complete the documented live smoke after setup.",
-        status: "degraded",
-      });
-    } catch {
-      report.checks.push({
-        id: "imessage-read-watch",
-        remediation: "Grant Full Disk Access to the installed pronto executable and verify imsg RPC access.",
-        status: "failed",
-      });
-    } finally {
-      await messages.close().catch(() => undefined);
+    const imessage = config.channels.imessage;
+    if (imessage?.enabled === true) {
+      report.checks.push(...await imessageDoctorChecks(imessage.imsgPath, imessage.tags));
+    }
+    if (config.channels.whatsapp?.enabled === true) {
+      report.checks.push(await whatsappDoctorCheck(config, paths));
     }
 
     for (const [kind, executablePath] of [
@@ -425,6 +694,7 @@ async function runStatus(json: boolean, includeChats: boolean): Promise<number> 
     const journal = new DeliveryJournal(database);
     const daemonHealth = journal.daemonHealth();
     const status = {
+      channels: await channelStatus(paths.configPath, journal.channelHealth()),
       database: "ready",
       daemon: daemonHealth?.state ?? "unknown",
       degradedCapabilities: journal.degradedCapabilities(),
@@ -444,12 +714,35 @@ async function runStatus(json: boolean, includeChats: boolean): Promise<number> 
       for (const capability of status.degradedCapabilities) {
         console.log(`degraded   ${capability}`);
       }
+      for (const [kind, channel] of Object.entries(status.channels)) {
+        const tags = channel.tags === undefined ? "" : ` ${channel.tags.join(", ")}`;
+        console.log(`${kind.padEnd(10)} ${channel.state}${tags}`);
+      }
       for (const chat of status.chats ?? []) console.log(`chat       ${chat}`);
     }
     return listenerState === "running" && daemonHealth?.state === "ready" ? 0 : 1;
   } finally {
     database.close();
   }
+}
+
+// Status must stay usable as the updater's health probe, so configuration is best-effort here.
+async function channelStatus(
+  configPath: string,
+  health: ReturnType<DeliveryJournal["channelHealth"]>,
+): Promise<Partial<Record<ChannelKind, { reason?: string; state: string; tags?: string[] }>>> {
+  const config = await loadConfig(configPath).catch(() => null);
+  const kinds = config === null
+    ? Object.keys(health) as ChannelKind[]
+    : enabledChannels(config);
+  return Object.fromEntries(kinds.map((kind) => {
+    const current = health[kind];
+    return [kind, {
+      ...(current?.reason === undefined ? {} : { reason: current.reason }),
+      state: current?.state ?? "unknown",
+      ...(config === null ? {} : { tags: channelTags(config, kind) }),
+    }];
+  }));
 }
 
 async function runDaemon(): Promise<number> {
@@ -491,46 +784,88 @@ async function runUninstall(args: readonly string[]): Promise<number> {
   return 0;
 }
 
+const TAGS_USAGE = "Usage: pronto tags [list [--json] | add <tag> [--app <app>]... | remove <tag> [--app <app>]...]";
+
 async function runTags(args: readonly string[]): Promise<number> {
   const paths = pathsForHome(homedir());
   const config = await loadConfig(paths.configPath);
-  const [action = "list", value, extra] = args;
-
-  if (action === "list") {
-    if (value !== undefined) {
-      console.error("Usage: pronto tags [list|add <tag>|remove <tag>]");
-      return 2;
-    }
-    for (const tag of config.tags) console.log(tag);
-    return 0;
-  }
-  if ((action !== "add" && action !== "remove") || value === undefined || extra !== undefined) {
-    console.error("Usage: pronto tags [list|add <tag>|remove <tag>]");
-    return 2;
-  }
-
-  let tags: string[];
-  let normalizedValue: string;
+  let parsed: ReturnType<typeof parseAppFlags>;
   try {
-    normalizedValue = normalizeTags([value])[0]!;
-    tags = action === "add" ? addTag(config.tags, value) : removeTag(config.tags, value);
+    parsed = parseAppFlags(args);
   } catch (error) {
     console.error((error as Error).message);
     return 2;
   }
-  if (tags.length === config.tags.length && tags.every((tag, index) => tag === config.tags[index])) {
+  const [action = "list", value, extra] = parsed.positional;
+  const enabled = enabledChannels(config);
+
+  if (action === "list") {
+    if (value !== undefined || parsed.apps.length > 0) {
+      console.error(TAGS_USAGE);
+      return 2;
+    }
+    const assignments = tagAssignments(config);
+    if (parsed.json) console.log(JSON.stringify(assignments));
+    else {
+      for (const { apps, tag } of assignments) {
+        console.log(enabled.length > 1 ? `${tag.padEnd(12)} ${appList(apps)}` : tag);
+      }
+    }
+    return 0;
+  }
+  if ((action !== "add" && action !== "remove") || value === undefined || extra !== undefined) {
+    console.error(TAGS_USAGE);
+    return 2;
+  }
+
+  let next: ProntoConfig;
+  let normalizedValue: string;
+  try {
+    normalizedValue = normalizeTag(value);
+    for (const app of parsed.apps) {
+      if (!enabled.includes(app)) throw new Error(`${CHANNEL_LABELS[app]} is not enabled`);
+    }
+    let apps = parsed.apps;
+    if (apps.length === 0 && action === "add") apps = await chooseTagApps(normalizedValue, enabled);
+    if (apps.length === 0) apps = enabled;
+    next = action === "add"
+      ? addTagToApps(config, value, apps)
+      : removeTagFromApps(config, value, apps);
+  } catch (error) {
+    console.error((error as Error).message);
+    return 2;
+  }
+  if (JSON.stringify(next.channels) === JSON.stringify(config.channels)) {
     console.log(`${normalizedValue} is already configured.`);
     return 0;
   }
 
-  await saveConfig(paths.configPath, { ...config, tags });
+  await saveConfig(paths.configPath, next);
   const restarted = await restartLaunchAgent();
   if (restarted.exitCode !== 0) {
     console.error("Tags were saved, but the listener could not restart. Run pronto setup to repair it.");
     return 1;
   }
-  console.log(`Configured tags: ${tags.join(", ")}`);
+  console.log(`Configured tags: ${tagAssignments(next).map(({ apps, tag }) => {
+    return enabled.length > 1 ? `${tag} (${appList(apps)})` : tag;
+  }).join(", ")}`);
   return 0;
+}
+
+/** Asks which apps a new tag applies to when more than one is enabled; defaults to all of them. */
+async function chooseTagApps(tag: string, enabled: readonly ChannelKind[]): Promise<ChannelKind[]> {
+  const choices = tagAppChoices(enabled);
+  if (choices.length === 1 || !stdin.isTTY) return [...enabled];
+  const prompt = createInterface({ input: stdin, output: stdout });
+  try {
+    while (true) {
+      const apps = parseTagAppChoice(await prompt.question(tagAppPrompt(tag, choices)), choices);
+      if (apps !== null) return apps;
+      console.error("Choose one of the listed numbers.");
+    }
+  } finally {
+    prompt.close();
+  }
 }
 
 export async function runCli(args: readonly string[]): Promise<number> {
@@ -561,6 +896,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
   if (command === "doctor") return runDoctor(args.includes("--json"), args.includes("--offline"));
   if (command === "status") return runStatus(args.includes("--json"), args.includes("--chats"));
   if (command === "tags" || command === "tag") return runTags(args.slice(1));
+  if (command === "whatsapp") return runWhatsapp(args.slice(1));
   if (command === "update") return runUpdate(args.slice(1));
   if (command === "stop") {
     const result = await stopLaunchAgent();

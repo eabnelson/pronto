@@ -1,14 +1,16 @@
 import { expect, test } from "bun:test";
+import type { ChatAddress } from "../../packages/cli/src/channels/types";
+import { imessageAddress } from "../../packages/cli/src/imessage/channel";
 import { ConversationBroker, type CurrentChatSource } from "../../packages/cli/src/tools/broker";
 import { brokerQuery } from "../../packages/cli/src/tools/mcp";
 
 class TwoChatSource implements CurrentChatSource {
-  async details(chatId: number): Promise<unknown> {
-    return { opaqueFixtureChat: chatId === 1 ? "alpha" : "beta" };
+  async details(chat: ChatAddress): Promise<unknown> {
+    return { opaqueFixtureChat: chat.id === "1" ? "alpha" : "beta" };
   }
 
-  async history(chatId: number, limit: number): Promise<unknown> {
-    return { chat: chatId, limit, messages: [] };
+  async history(chat: ChatAddress, limit: number): Promise<unknown> {
+    return { chat: Number(chat.id), limit, messages: [] };
   }
 
   async attachment(): Promise<null> {
@@ -18,8 +20,8 @@ class TwoChatSource implements CurrentChatSource {
 
 test("isolates two simultaneous capabilities through the loopback broker", async () => {
   const broker = new ConversationBroker(new TwoChatSource());
-  const first = broker.issue(1);
-  const second = broker.issue(2);
+  const first = broker.issue(imessageAddress(1));
+  const second = broker.issue(imessageAddress(2));
   const listener = broker.listen();
   try {
     expect(listener.url).toStartWith("http://127.0.0.1:");
@@ -46,7 +48,7 @@ test("isolates two simultaneous capabilities through the loopback broker", async
 
 test("rejects request bodies over the byte limit before parsing tool arguments", async () => {
   const broker = new ConversationBroker(new TwoChatSource());
-  const capability = broker.issue(1);
+  const capability = broker.issue(imessageAddress(1));
   const listener = broker.listen();
   try {
     const response = await fetch(`${listener.url}/query`, {

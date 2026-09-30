@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 const repoRoot = new URL("../../", import.meta.url);
 const siteRoot = new URL("site/", repoRoot);
 const setupPrompt =
-  "Help me set up iMessage Tags on this Mac. Follow https://studiofour.io/imessage-setup.md and stay with me until one tagged iMessage or RCS message gets exactly one agent reply.";
+  "Help me set up Pronto on this Mac. Follow https://studiofour.io/imessage-setup.md and stay with me until, in each messaging app I choose, one tagged message gets exactly one agent reply.";
 
 async function read(name: string): Promise<string> {
   return Bun.file(new URL(name, siteRoot)).text();
@@ -294,7 +294,7 @@ describe("public landing page", () => {
     const html = await read("index.html");
 
     expect(html).toContain(">Pick any tag</h1>");
-    expect(html).toContain("iMessage your agent from any conversation");
+    expect(html).toContain("iMessage or WhatsApp your agent from any conversation");
     expect(html).toContain('id="copy-prompt"');
     expect(html).toContain('href="https://studiofour.io/imessage-setup.md"');
     expect(html).toContain(">Help me get set up</a>");
@@ -302,6 +302,30 @@ describe("public landing page", () => {
     expect(html).toContain("overflow-x: hidden");
     expect(html).toContain("overflow-y: auto");
     expect(html).not.toContain('class="mark"');
+  });
+
+  test("renders the setup button as still, frosted glass", async () => {
+    const html = await read("index.html");
+    const button = html.slice(html.indexOf("      .cta {"), html.indexOf(".cta:focus-visible"));
+
+    expect(button).toContain("backdrop-filter: blur(12px) saturate(180%);");
+    expect(button).toContain("-webkit-backdrop-filter: blur(12px) saturate(180%);");
+    expect(button).toContain("feTurbulence");
+    expect(button).not.toContain("animation");
+    expect(html).not.toContain(".cta:hover");
+    expect(html).not.toContain("cta-morph");
+  });
+
+  test("styles WhatsApp bubbles in WhatsApp's light theme", async () => {
+    const html = await read("index.html");
+
+    expect(html).toContain('const bubbleStyles = ["blue", "gray", "whatsapp-sent", "whatsapp-received"];');
+    expect(html).toContain("background: #e0fbd6;");
+    expect(html).toContain("color: #111b21;");
+    expect(html).toContain("color: #667781;");
+    expect(html).toContain("content: attr(data-time);");
+    expect(html).toContain("%2353bdeb");
+    expect(html).toContain("bubbleBody.dataset.time = clockTime();");
   });
 
   test("publishes a bubble-only social preview", async () => {
@@ -328,12 +352,13 @@ describe("public landing page", () => {
     expect(source).toContain("@plan");
     expect(source).toContain("#0a84ff");
     expect(source).toContain("#e5e5ea");
+    expect(source).toContain("#e0fbd6");
     expect(source).not.toContain(">pronto<");
     expect(createHash("sha256").update(sourceBytes).digest("hex")).toBe(
-      "7d3642d252cbf645f065dc39ef896d3329086548056fe7f2009b31fc4b05945b",
+      "45c66b76430c5f044841c66b858bc41666c1afbeb7f2f7bab6e570b853b44629",
     );
     expect(createHash("sha256").update(png).digest("hex")).toBe(
-      "35c89432a4d86da90db84ba2600d3724e35f58f41dc7fae26456421e4fc7daaa",
+      "56e39e4d43ae8f2f1fd0f7dd11f38579d4a5ce1a45559db16c8e072079d121c4",
     );
     expect([...png.slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(view.getUint32(16)).toBe(1200);
@@ -357,7 +382,7 @@ describe("public landing page", () => {
     expect(html).toContain("bubble.animate(keyframes");
     expect(html).toContain("iterations: Number.POSITIVE_INFINITY");
     expect(html).toContain("transform: `translate3d(");
-    expect(html).toContain('copyButton.getBoundingClientRect().bottom');
+    expect(html).toContain('copyButton.getBoundingClientRect().top - mobileFadeOvershoot');
     expect(html).toContain("if (window.innerWidth === layoutWidth) return");
     expect(html).not.toContain("68% {\n          opacity: 0;");
     expect(html).not.toContain("setInterval");
@@ -445,7 +470,7 @@ describe("public landing page", () => {
     expect(bubbleBody.textContent).not.toBe(initialText);
   });
 
-  test("anchors the mobile fade endpoint to the setup button position", async () => {
+  test("lets mobile bubbles rise past the setup button before fading", async () => {
     const harness = await createLandingPageHarness({ innerWidth: 390 });
     const bubble = harness.stream.children[0];
     if (!bubble) throw new Error("expected an animated bubble");
@@ -456,7 +481,7 @@ describe("public landing page", () => {
         frame.opacity === 0 && Number(frame.offset) > 0.05 && Number(frame.offset) < 1,
     );
     const expectedFadeEnd =
-      (bubble.offsetTop - harness.copyButton.getBoundingClientRect().bottom) /
+      (bubble.offsetTop - (harness.copyButton.getBoundingClientRect().top - 60)) /
       (harness.window.innerHeight * 0.85);
 
     expect(Number(fadeFrame?.offset)).toBeCloseTo(expectedFadeEnd);
@@ -514,6 +539,28 @@ describe("public landing page", () => {
     expect(setup).toContain("Do not use `sudo`");
     expect(setup).toContain("iMessage or RCS");
     expect(setup).toContain("SMS messages do not activate Pronto");
+  });
+
+  test("guides WhatsApp setup without deciding or linking for the owner", async () => {
+    // Compare prose with line wrapping collapsed so rewrapping the guide doesn't matter.
+    const setup = (await read("setup.md")).replace(/\s+/g, " ");
+
+    expect(setup).toContain("brew install openclaw/tap/wacli");
+    expect(setup).toContain("WhatsApp risk prompt");
+    expect(setup).toContain("never scan, approve, or link a device for me");
+    expect(setup).toContain("Settings → Linked devices → Link a device");
+    expect(setup).toContain("WhatsApp alone needs no Full Disk Access");
+    expect(setup).toContain('"$PRONTO" tags add @plan --app whatsapp');
+    expect(setup).toContain('"$PRONTO" whatsapp link');
+  });
+
+  test("explains choosing apps and adding one to an existing install", async () => {
+    const setup = (await read("setup.md")).replace(/\s+/g, " ");
+
+    expect(setup).toContain("Ask whether I want iMessage and RCS, WhatsApp, or both");
+    expect(setup).toContain("every app I chose needs its tool before setup runs");
+    expect(setup).toContain("choose every app I want to keep, not just the new one");
+    expect(setup).toContain("A Mac that is already linked skips this step");
   });
 
   test("grants setup and installed executables Full Disk Access at the right times", async () => {

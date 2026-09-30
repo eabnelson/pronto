@@ -4,12 +4,16 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   addTag,
+  addTagToApps,
   createConfig,
+  enabledChannels,
   loadConfig,
   normalizeTag,
   normalizeTags,
   removeTag,
+  removeTagFromApps,
   saveConfig,
+  tagAssignments,
   UNRESTRICTED_TRUST_VERSION,
 } from "../../packages/cli/src/config";
 
@@ -50,9 +54,8 @@ describe("configuration persistence", () => {
     expect(() =>
       createConfig({
         fallbackRuntime: "codex",
-        imsgPath: "/opt/homebrew/bin/imsg",
+        channels: { imessage: { enabled: true, imsgPath: "/opt/homebrew/bin/imsg", tags: ["@helper"] } },
         primaryRuntime: "codex",
-        tags: ["@helper"],
         unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
         workingDirectory: "/Users/example",
       }),
@@ -65,9 +68,8 @@ describe("configuration persistence", () => {
     const path = join(directory, "nested", "config.json");
     const config = createConfig({
       fallbackRuntime: "claude",
-      imsgPath: "/opt/homebrew/bin/imsg",
+      channels: { imessage: { enabled: true, imsgPath: "/opt/homebrew/bin/imsg", tags: ["@Helper", "@Plan"] } },
       primaryRuntime: "codex",
-      tags: ["@Helper", "@Plan"],
       unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
       workingDirectory: "/Users/example",
     });
@@ -94,7 +96,10 @@ describe("configuration persistence", () => {
       workingDirectory: "/Users/example",
     }));
 
-    expect(await loadConfig(path)).toMatchObject({ tags: ["@helper"], version: 2 });
+    expect(await loadConfig(path)).toMatchObject({
+      channels: { imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@helper"] } },
+      version: 3,
+    });
     expect(await loadConfig(path)).not.toHaveProperty("selfChatHandle");
   });
 
@@ -125,9 +130,8 @@ describe("configuration persistence", () => {
       saveConfig(
         join(directory, "linked", "config.json"),
         createConfig({
-          imsgPath: "/usr/local/bin/imsg",
+          channels: { imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@helper"] } },
           primaryRuntime: "claude",
-          tags: ["@helper"],
           unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
           workingDirectory: "/Users/example",
         }),
@@ -144,9 +148,8 @@ describe("configuration persistence", () => {
     await saveConfig(
       join(stateDirectory, "config.json"),
       createConfig({
-        imsgPath: "/usr/local/bin/imsg",
+        channels: { imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@helper"] } },
         primaryRuntime: "codex",
-        tags: ["@helper"],
         unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
         workingDirectory: "/Users/example",
       }),
@@ -163,9 +166,8 @@ describe("configuration persistence", () => {
     await saveConfig(
       join(directory, "private", "config.json"),
       createConfig({
-        imsgPath: "/usr/local/bin/imsg",
+        channels: { imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@helper"] } },
         primaryRuntime: "codex",
-        tags: ["@helper"],
         unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
         workingDirectory: "/Users/example",
       }),
@@ -174,4 +176,82 @@ describe("configuration persistence", () => {
     expect((await lstat(directory)).mode & 0o777).toBe(0o755);
     expect((await lstat(join(directory, "private"))).mode & 0o777).toBe(0o700);
   });
+
+  test("upgrades an iMessage-only version 2 configuration to per-app tags", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pronto-config-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "config.json");
+    await Bun.write(path, JSON.stringify({
+      version: 2,
+      chatKeySalt: "x".repeat(32),
+      imsgPath: "/usr/local/bin/imsg",
+      primaryRuntime: "codex",
+      tags: ["@Helper", "@plan"],
+      unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+      workingDirectory: "/Users/example",
+    }));
+
+    const config = await loadConfig(path);
+    expect(config.version).toBe(3);
+    expect(config.channels).toEqual({
+      imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@helper", "@plan"] },
+    });
+    expect(config).not.toHaveProperty("tags");
+    expect(config).not.toHaveProperty("imsgPath");
+  });
+
+  test("rejects messaging apps this build cannot run", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pronto-config-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "config.json");
+    await Bun.write(path, JSON.stringify({
+      version: 3,
+      chatKeySalt: "x".repeat(32),
+      channels: {
+        imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@helper"] },
+        telegram: { enabled: true, tags: ["@helper"] },
+      },
+      primaryRuntime: "codex",
+      unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+      workingDirectory: "/Users/example",
+    }));
+    await expect(loadConfig(path)).rejects.toThrow("Unsupported messaging app in configuration: telegram");
+  });
+
+  test("requires at least one enabled messaging app", () => {
+    expect(() => createConfig({
+      channels: { imessage: { enabled: false, imsgPath: "/usr/local/bin/imsg", tags: ["@helper"] } },
+      primaryRuntime: "codex",
+      unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+      workingDirectory: "/Users/example",
+    })).toThrow("Enable at least one messaging app");
+  });
 });
+
+describe("per-app tags", () => {
+  const config = createConfig({
+    channels: { imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@helper"] } },
+    primaryRuntime: "codex",
+    unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+    workingDirectory: "/Users/example",
+  });
+
+  test("adds and removes tags on the chosen apps", () => {
+    expect(enabledChannels(config)).toEqual(["imessage"]);
+    const added = addTagToApps(config, "Plan", ["imessage"]);
+    expect(tagAssignments(added)).toEqual([
+      { apps: ["imessage"], tag: "@helper" },
+      { apps: ["imessage"], tag: "@plan" },
+    ]);
+    expect(tagAssignments(removeTagFromApps(added, "@HELPER", ["imessage"]))).toEqual([
+      { apps: ["imessage"], tag: "@plan" },
+    ]);
+  });
+
+  test("requires an app choice and never leaves an app without tags", () => {
+    expect(() => addTagToApps(config, "@plan", [])).toThrow("Choose at least one messaging app");
+    expect(() => removeTagFromApps(config, "@helper", ["imessage"])).toThrow("last tag");
+    expect(() => removeTagFromApps(config, "@missing", ["imessage"])).toThrow("not configured");
+  });
+});
+

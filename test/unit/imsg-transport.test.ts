@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import type { ChannelActivation, ChatAddress } from "../../packages/cli/src/channels/types";
+import { ImessageChannel } from "../../packages/cli/src/imessage/channel";
 import { ImsgTransport } from "../../packages/cli/src/imessage/transport";
 import type {
   DeliveryOutcome,
@@ -182,4 +184,67 @@ test("delivery can resume from a persisted exact conversation reference", async 
   });
   await expect(transport.sendText(7, "wrong chat", event().conversation))
     .rejects.toThrow("scope is unavailable");
+});
+
+test("the iMessage channel speaks chat addresses without changing transport behavior", async () => {
+  const messages = new FakeMessages();
+  messages.events = [event()];
+  const echoes: Array<{ chat: ChatAddress; text: string }> = [];
+  const rows: number[] = [];
+  const channel = new ImessageChannel(messages, {
+    matchesOutboundEcho: (chat, text) => {
+      echoes.push({ chat, text });
+      return false;
+    },
+    onMessageRowId: (rowId) => { rows.push(rowId); },
+  });
+  const activations: ChannelActivation[] = [];
+  const watch = await channel.watch({
+    onActivation: (activation) => { activations.push(activation); },
+    tags: ["@helper"],
+  });
+  await watch.close();
+
+  expect(activations).toEqual([{
+    activationTag: "@helper",
+    chat: { channel: "imessage", id: "42" },
+    conversation: event().conversation,
+    isFromMe: false,
+    providerGuid: "message-guid",
+    request: "do this",
+  }]);
+  expect(rows).toEqual([101]);
+  expect(echoes).toEqual([]);
+  expect(await channel.sendText({ channel: "imessage", id: "42" }, "reply")).toEqual({
+    disposition: "confirmed",
+    guid: "sent-guid",
+  });
+  expect(messages.replyInput).toEqual({ conversation: event().conversation, text: "reply" });
+  expect(channel.formatReply("@helper", "Done.")).toBe("Helper\nDone.");
+  expect(await channel.currentChat.details({ channel: "imessage", id: "42" })).toEqual({
+    owner_participated: true,
+    provider: "apple-messages",
+    service: "iMessage",
+  });
+  await expect(channel.sendText({ channel: "whatsapp", id: "42" }, "reply"))
+    .rejects.toThrow("Invalid chat ID");
+});
+
+test("the iMessage channel checks its own echoes by chat address", () => {
+  const messages = new FakeMessages();
+  const seen: ChatAddress[] = [];
+  const channel = new ImessageChannel(messages, {
+    matchesOutboundEcho: (chat) => {
+      seen.push(chat);
+      return true;
+    },
+  });
+  messages.events = [event({ fromMe: true, text: "@helper sent" })];
+  return channel.watch({
+    onActivation: () => { throw new Error("echo must not activate"); },
+    tags: ["@helper"],
+  }).then(async (watch) => {
+    await watch.close();
+    expect(seen).toEqual([{ channel: "imessage", id: "42" }]);
+  });
 });

@@ -6,14 +6,15 @@ const root = join(import.meta.dir, "..");
 const dist = join(root, "dist");
 await rm(dist, { force: true, recursive: true });
 await mkdir(dist, { recursive: true });
-await rm(join(root, "packages", "messages", "dist"), { force: true, recursive: true });
-
-const messagesBuild = Bun.spawn(
-  [join(root, "node_modules", ".bin", "tsc"), "-p", join(root, "packages", "messages", "tsconfig.json")],
-  { stderr: "inherit", stdout: "inherit" },
-);
-const messagesExitCode = await messagesBuild.exited;
-if (messagesExitCode !== 0) process.exit(messagesExitCode);
+for (const modulePackage of ["messages", "whatsapp"]) {
+  await rm(join(root, "packages", modulePackage, "dist"), { force: true, recursive: true });
+  const moduleBuild = Bun.spawn(
+    [join(root, "node_modules", ".bin", "tsc"), "-p", join(root, "packages", modulePackage, "tsconfig.json")],
+    { stderr: "inherit", stdout: "inherit" },
+  );
+  const moduleExitCode = await moduleBuild.exited;
+  if (moduleExitCode !== 0) process.exit(moduleExitCode);
+}
 
 const prontoPath = join(dist, "pronto");
 const prontoBuild = Bun.spawn(

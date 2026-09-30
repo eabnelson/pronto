@@ -1,21 +1,22 @@
 import { lstat, realpath } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { isAbsolute } from "node:path";
+import { isChannelKind, type ChatAddress } from "../channels/types";
 
 const MAX_REQUEST_BODY_BYTES = 8_192;
 
 export interface CurrentChatSource {
-  details(chatId: number): Promise<unknown>;
-  history(chatId: number, limit: number): Promise<unknown>;
+  details(chat: ChatAddress): Promise<unknown>;
+  history(chat: ChatAddress, limit: number): Promise<unknown>;
   attachment(
-    chatId: number,
+    chat: ChatAddress,
     messageGuid: string,
     attachmentId: string,
   ): Promise<{ attachmentId: string; messageGuid: string; name: string; path: string } | null>;
 }
 
 interface CapabilityState {
-  chatId: number;
+  chat: ChatAddress;
   expiresAt: number;
   outputCharacters: number;
 }
@@ -88,11 +89,13 @@ export class ConversationBroker {
     this.#ttlMs = options.ttlMs ?? 20 * 60 * 1_000;
   }
 
-  issue(chatId: number): { token: string } {
-    if (!Number.isSafeInteger(chatId) || chatId <= 0) throw new Error("Invalid chat ID");
+  issue(chat: ChatAddress): { token: string } {
+    if (!isChannelKind(chat.channel) || chat.id.length === 0 || chat.id.length > 256) {
+      throw new Error("Invalid chat ID");
+    }
     const token = randomBytes(32).toString("base64url");
     this.#capabilities.set(token, {
-      chatId,
+      chat: { channel: chat.channel, id: chat.id },
       expiresAt: this.#now() + this.#ttlMs,
       outputCharacters: 0,
     });
@@ -117,7 +120,7 @@ export class ConversationBroker {
     switch (tool as CurrentChatTool) {
       case "current_chat_details":
         exactKeys(args, []);
-        result = await this.#source.details(capability.chatId);
+        result = await this.#source.details(capability.chat);
         break;
       case "current_chat_history": {
         exactKeys(args, ["limit"]);
@@ -125,7 +128,7 @@ export class ConversationBroker {
         if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 50) {
           throw new Error("History limit must be an integer from 1 to 50");
         }
-        result = await this.#source.history(capability.chatId, limit);
+        result = await this.#source.history(capability.chat, limit);
         break;
       }
       case "current_chat_attachment": {
@@ -141,7 +144,7 @@ export class ConversationBroker {
           throw new Error("Attachment and message identifiers are required");
         }
         const attachment = await this.#source.attachment(
-          capability.chatId,
+          capability.chat,
           args.message_guid,
           args.attachment_id,
         );

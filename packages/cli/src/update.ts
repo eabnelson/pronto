@@ -36,6 +36,8 @@ import {
   stopLaunchAgentForLabel,
 } from "./macos/launch-agent";
 import { runCommand, sha256File, type CommandRunner } from "./macos/setup";
+import { CURRENT_SCHEMA_VERSION } from "./storage/migrations";
+import { restoreNewerDatabase, snapshotDatabase } from "./storage/snapshot";
 import {
   inspectProntoExecutableIdentity,
   PRONTO_SIGNING_IDENTIFIER,
@@ -458,6 +460,8 @@ export class ProntoUpdater {
       await unlink(backupPath).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") throw error;
       });
+      // The candidate may migrate state past what this executable can open; keep a copy.
+      snapshotDatabase(this.paths.databasePath, this.paths.updateDatabaseBackupPath);
       const migrated = currentIdentity === undefined;
       let previousAtBackup = false;
       let candidateAtInstalledPath = false;
@@ -508,6 +512,15 @@ export class ProntoUpdater {
           await rename(this.paths.executablePath, failedPath).catch((rollbackError) => {
             rollbackErrors.push(rollbackError);
           });
+        }
+        try {
+          restoreNewerDatabase(
+            this.paths.databasePath,
+            this.paths.updateDatabaseBackupPath,
+            CURRENT_SCHEMA_VERSION,
+          );
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
         }
         if (previousAtBackup) {
           await rename(backupPath, this.paths.executablePath).catch((rollbackError) => {

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import type { CurrentChatSource } from "../tools/broker";
 import type {
   AttachmentReference,
   ConversationFacts,
@@ -24,7 +23,7 @@ function opaqueAttachmentId(reference: AttachmentReference): string {
   return createHash("sha256").update(reference.token, "utf8").digest("base64url");
 }
 
-export class ImsgCurrentChatSource implements CurrentChatSource {
+export class ImsgCurrentChatSource {
   readonly #attachments = new Map<string, ScopedAttachment>();
   readonly #materialized = new Set<MaterializedAttachment>();
 

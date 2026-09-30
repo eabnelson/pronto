@@ -1,11 +1,21 @@
-import type { ProntoConfig } from "../config";
-import { ImsgCurrentChatSource } from "../imessage/current-chat-source";
-import { ImsgTransport } from "../imessage/transport";
+import { routeCurrentChat } from "../channels/current-chat";
+import {
+  ChannelNeedsLinkError,
+  type Channel,
+  type ChannelKind,
+  type ChannelWatch,
+  type ChatAddress,
+} from "../channels/types";
+import { channelTags, enabledChannels, type ProntoConfig } from "../config";
+import { ImessageChannel } from "../imessage/channel";
+import { WhatsappChannel } from "../whatsapp/channel";
+import { standaloneWhatsapp } from "../whatsapp/standalone";
 import type { ProntoPaths } from "../macos/paths";
 import { RuntimeChain } from "../runtimes/chain";
 import { createRuntimeAdapter } from "../runtimes/factory";
 import { openProntoDatabase } from "../storage/database";
-import { DeliveryJournal } from "../storage/journal";
+import { DeliveryJournal, type ChannelHealth } from "../storage/journal";
+import { DEFAULT_SCHEMA_VERSION, MULTI_APP_SCHEMA_VERSION } from "../storage/migrations";
 import { MemoryStore } from "../storage/memory";
 import { WorkspaceStore } from "../storage/workspaces";
 import { ConversationBroker } from "../tools/broker";
@@ -55,29 +65,43 @@ export class ProntoDaemon {
   }
 
   async run(): Promise<void> {
-    const database = openProntoDatabase(this.paths.databasePath);
+    const kinds = enabledChannels(this.config);
+    const database = openProntoDatabase(this.paths.databasePath, {
+      schemaVersion: kinds.some((kind) => kind !== "imessage")
+        ? MULTI_APP_SCHEMA_VERSION
+        : DEFAULT_SCHEMA_VERSION,
+    });
     const journal = new DeliveryJournal(database);
     journal.recordDaemonHealth("starting");
-    const legacyUnscopedCursor = journal.cursor();
-    const messages = createProntoMessages(standaloneMessagesOptions({
-      chatKeySalt: this.config.chatKeySalt,
-      imsgPath: this.config.imsgPath,
-      ...(legacyUnscopedCursor === undefined ? {} : { legacyUnscopedCursor }),
-      providerStatePath: this.paths.providerStatePath,
-    }));
-    const transport = new ImsgTransport(messages, {
-      matchesOutboundEcho: (chatId, text) => journal.matchesOutboundEcho(chatId, text),
-    });
-    const currentChatSource = new ImsgCurrentChatSource(
-      messages,
-      (chatId) => transport.conversationContext(chatId),
-    );
-    const broker = new ConversationBroker(currentChatSource);
+    const channels = this.#createChannels(journal);
+    const broker = new ConversationBroker(routeCurrentChat(channels));
     let brokerServer: ReturnType<ConversationBroker["listen"]> | null = null;
-    let activeWatch: Awaited<ReturnType<ImsgTransport["watch"]>> | null = null;
+    const activeWatches = new Map<ChannelKind, ChannelWatch>();
+    const health = new Map<ChannelKind, { reason?: string; state: ChannelHealth["state"] }>();
 
     try {
-      const qualification = await transport.qualify();
+      const degraded: string[] = [];
+      let firstFailure: unknown;
+      for (const channel of channels.values()) {
+        journal.recordChannelHealth(channel.kind, "starting");
+        try {
+          const qualification = await channel.qualify();
+          degraded.push(...qualification.degraded);
+          health.set(channel.kind, { state: "starting" });
+        } catch (error) {
+          // One app failing to qualify must not take the others down with it.
+          firstFailure ??= error;
+          const unavailable = error instanceof ChannelNeedsLinkError
+            ? { state: "needs_link" as const }
+            : { reason: "qualification-failed", state: "failed" as const };
+          health.set(channel.kind, unavailable);
+          journal.recordChannelHealth(channel.kind, unavailable.state, unavailable.reason);
+        }
+      }
+      const running = [...channels.values()].filter((channel) => {
+        return health.get(channel.kind)?.state === "starting";
+      });
+      if (running.length === 0) throw firstFailure ?? new Error("No messaging app is enabled");
       brokerServer = broker.listen();
       const primary = createRuntimeAdapter(this.config.primaryRuntime, runtimePath(this.config));
       const fallback =
@@ -91,10 +115,10 @@ export class ProntoDaemon {
           bridgeExecutablePath: this.paths.executablePath,
           broker,
           brokerUrl: brokerServer.url,
+          channels: new Map(running.map((channel) => [channel.kind, channel])),
           journal,
           memory,
           runtimes: new RuntimeChain(primary, fallback),
-          transport,
           defaultWorkingDirectory: this.config.workingDirectory,
           workspaces,
         }),
@@ -103,17 +127,38 @@ export class ProntoDaemon {
       );
       if (this.#stopRequested) coordinator.quiesce();
       const recovered = coordinator.start();
-      journal.recordDegradedCapabilities(qualification.degraded);
-      let subscriptionReady = false;
-      let recoveryReason: string | undefined;
+      journal.recordDegradedCapabilities(degraded);
+      const recoveryReasons = new Map<ChannelKind, string>();
       const updateHealth = () => {
         if (this.#stopRequested) return;
-        journal.recordDaemonHealth(recoveryReason !== undefined
-          ? "degraded" : subscriptionReady ? "ready" : "starting");
+        for (const kind of channels.keys()) {
+          const current = health.get(kind);
+          if (current === undefined) continue;
+          journal.recordChannelHealth(kind, current.state, current.reason);
+        }
+        const states = [...health.values()].map((current) => current.state);
+        journal.recordDaemonHealth(
+          states.every((state) => state === "ready")
+            ? "ready"
+            : states.some((state) => state === "starting") ? "starting" : "degraded",
+        );
         journal.recordDegradedCapabilities([
-          ...qualification.degraded,
-          ...(recoveryReason === undefined ? [] : [`messages-recovery-${recoveryReason}`]),
+          ...degraded,
+          ...[...recoveryReasons.values()].map((reason) => `messages-recovery-${reason}`),
+          ...[...health].flatMap(([kind, current]) => {
+            if (current.state === "needs_link") return [`${kind}-needs-link`];
+            if (current.state === "failed") return [`${kind}-unavailable`];
+            return [];
+          }),
         ]);
+      };
+      const settle = (kind: ChannelKind) => {
+        const reason = recoveryReasons.get(kind);
+        const current = health.get(kind);
+        if (current?.state === "needs_link" || current?.state === "failed") return;
+        health.set(kind, reason !== undefined
+          ? { reason, state: "degraded" }
+          : { state: activeWatches.has(kind) ? "ready" : "starting" });
       };
 
       const stopSignal = new Promise<"stop">((resolve) => {
@@ -123,18 +168,32 @@ export class ProntoDaemon {
         };
         if (this.#stopRequested) this.#stop();
       });
-      activeWatch = await transport.watch({
-        onActivation: (request) => {
-          coordinator.admit(request);
-        },
-        onMessageRowId: (rowId) => journal.advanceCursor(rowId),
-        onRecovery: (outcome) => {
-          recoveryReason = outcome.status === "degraded" ? outcome.reason : undefined;
-          updateHealth();
-        },
-        tags: this.config.tags,
-      });
-      subscriptionReady = true;
+      for (const channel of running) {
+        activeWatches.set(channel.kind, await channel.watch({
+          onActivation: (activation) => {
+            coordinator.admit(activation);
+          },
+          onHealth: (connection) => {
+            if (connection.state === "needs_link") {
+              health.set(channel.kind, { state: "needs_link" });
+            } else if (connection.state === "reconnecting") {
+              health.set(channel.kind, { reason: connection.reason, state: "degraded" });
+            } else {
+              health.set(channel.kind, { state: "starting" });
+              settle(channel.kind);
+            }
+            updateHealth();
+          },
+          onRecovery: (outcome) => {
+            if (outcome.status === "degraded") recoveryReasons.set(channel.kind, outcome.reason);
+            else recoveryReasons.delete(channel.kind);
+            settle(channel.kind);
+            updateHealth();
+          },
+          tags: channelTags(this.config, channel.kind),
+        }));
+        settle(channel.kind);
+      }
       updateHealth();
       if (!this.#stopRequested) {
         console.log(JSON.stringify({
@@ -146,23 +205,66 @@ export class ProntoDaemon {
       }
       const outcome = await Promise.race([
         stopSignal,
-        activeWatch.terminated.then(() => "transport-closed" as const),
+        ...[...activeWatches.values()].map((watch) => {
+          return watch.terminated.then(() => "transport-closed" as const);
+        }),
       ]);
       if (outcome === "transport-closed") throw new Error("Pronto Messages transport closed");
-      await activeWatch.close().catch(() => undefined);
-      activeWatch = null;
+      await closeWatches(activeWatches);
       await coordinator.idle();
       journal.recordDaemonHealth("stopped");
+      for (const kind of channels.keys()) journal.recordChannelHealth(kind, "stopped");
     } catch (error) {
       journal.recordDaemonHealth("failed");
+      for (const kind of channels.keys()) journal.recordChannelHealth(kind, "failed");
       throw error;
     } finally {
       this.#stop = null;
-      await activeWatch?.close().catch(() => undefined);
+      await closeWatches(activeWatches);
       brokerServer?.close();
-      await currentChatSource.close().catch(() => undefined);
-      await messages.close().catch(() => undefined);
+      for (const channel of channels.values()) await channel.close().catch(() => undefined);
       database.close();
     }
   }
+
+  #createChannels(journal: DeliveryJournal): Map<ChannelKind, Channel> {
+    const channels = new Map<ChannelKind, Channel>();
+    const matchesOutboundEcho = (chat: ChatAddress, text: string) => {
+      return journal.matchesOutboundEcho(chat, text);
+    };
+    const imessage = this.config.channels.imessage;
+    if (imessage?.enabled === true) {
+      const legacyUnscopedCursor = journal.cursor();
+      channels.set("imessage", new ImessageChannel(
+        createProntoMessages(standaloneMessagesOptions({
+          chatKeySalt: this.config.chatKeySalt,
+          imsgPath: imessage.imsgPath,
+          ...(legacyUnscopedCursor === undefined ? {} : { legacyUnscopedCursor }),
+          providerStatePath: this.paths.providerStatePath,
+        })),
+        {
+          matchesOutboundEcho,
+          onMessageRowId: (rowId) => journal.advanceCursor(rowId),
+        },
+      ));
+    }
+    const whatsapp = this.config.channels.whatsapp;
+    if (whatsapp?.enabled === true) {
+      channels.set("whatsapp", new WhatsappChannel(
+        standaloneWhatsapp({
+          chatKeySalt: this.config.chatKeySalt,
+          paths: this.paths,
+          scopeTtlMs: STANDALONE_SCOPE_TTL_MS,
+          wacliPath: whatsapp.wacliPath,
+        }),
+        { matchesOutboundEcho },
+      ));
+    }
+    return channels;
+  }
+}
+
+async function closeWatches(watches: Map<ChannelKind, ChannelWatch>): Promise<void> {
+  for (const watch of watches.values()) await watch.close().catch(() => undefined);
+  watches.clear();
 }

@@ -1,12 +1,17 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, copyFileSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, join, parse, resolve } from "node:path";
-import { CURRENT_SCHEMA_VERSION, migrateDatabase } from "./migrations";
+import { DEFAULT_SCHEMA_VERSION, migrateDatabase } from "./migrations";
 
 export function openProntoDatabase(
   path: string,
-  options: { migrate?: (database: Database) => void } = {},
+  options: {
+    migrate?: (database: Database, targetVersion: number) => void;
+    /** Schema to migrate up to; never lowers an existing newer schema. */
+    schemaVersion?: number;
+  } = {},
 ): Database {
+  const targetVersion = options.schemaVersion ?? DEFAULT_SCHEMA_VERSION;
   const directory = dirname(path);
   const backupPath = `${path}.backup`;
   ensurePrivateDirectorySync(directory);
@@ -24,7 +29,7 @@ export function openProntoDatabase(
     const inspection = new Database(path, { strict: true });
     const version = inspection.query("PRAGMA user_version").get() as { user_version: number };
     inspection.close();
-    if (version.user_version < CURRENT_SCHEMA_VERSION) {
+    if (version.user_version < targetVersion) {
       refuseSymlink(backupPath, "database backup");
       copyFileSync(path, backupPath);
       chmodSync(backupPath, 0o600);
@@ -36,7 +41,7 @@ export function openProntoDatabase(
     database.exec("PRAGMA journal_mode = WAL");
     database.exec("PRAGMA foreign_keys = ON");
     database.exec("PRAGMA busy_timeout = 5000");
-    (options.migrate ?? migrateDatabase)(database);
+    (options.migrate ?? migrateDatabase)(database, targetVersion);
     chmodSync(path, 0o600);
     try {
       unlinkSync(backupPath);

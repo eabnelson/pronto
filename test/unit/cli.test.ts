@@ -114,9 +114,8 @@ describe("Pronto CLI", () => {
     await saveConfig(
       pathsForHome(home).configPath,
       createConfig({
-        imsgPath: "/usr/local/bin/imsg",
+        channels: { imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@helper", "@plan", "@research"] } },
         primaryRuntime: "codex",
-        tags: ["@helper", "@plan", "@research"],
         unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
         workingDirectory: home,
       }),
@@ -134,5 +133,49 @@ describe("Pronto CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(stdout.trim().split("\n")).toEqual(["@helper", "@plan", "@research"]);
+  });
+
+  test("lists each tag with the apps it applies to", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pronto-cli-"));
+    temporaryDirectories.push(home);
+    await saveConfig(
+      pathsForHome(home).configPath,
+      createConfig({
+        channels: {
+          imessage: { enabled: true, imsgPath: "/usr/local/bin/imsg", tags: ["@s4"] },
+          whatsapp: {
+            enabled: true,
+            riskConsentVersion: 1,
+            tags: ["@s4", "@work"],
+            wacliPath: "/usr/local/bin/wacli",
+          },
+        },
+        primaryRuntime: "codex",
+        unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION,
+        workingDirectory: home,
+      }),
+    );
+    const run = async (args: string[]) => {
+      const child = Bun.spawn(["bun", "packages/cli/src/cli.ts", ...args], {
+        cwd: import.meta.dir.replace(/\/test\/unit$/, ""),
+        env: { ...Bun.env, HOME: home },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [exitCode, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+      return { exitCode, stdout };
+    };
+
+    const human = await run(["tags"]);
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout.trim().split("\n")).toEqual([
+      "@s4          iMessage and WhatsApp",
+      "@work        WhatsApp",
+    ]);
+    const json = await run(["tags", "list", "--json"]);
+    expect(JSON.parse(json.stdout)).toEqual([
+      { apps: ["imessage", "whatsapp"], tag: "@s4" },
+      { apps: ["whatsapp"], tag: "@work" },
+    ]);
   });
 });

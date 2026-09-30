@@ -1,20 +1,41 @@
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
+import type { ChannelKind } from "./channels/types";
 
-export const CONFIG_VERSION = 2 as const;
+export const CONFIG_VERSION = 3 as const;
 export const UNRESTRICTED_TRUST_VERSION = 1 as const;
+/** Bumped when the WhatsApp disclosure changes materially, so setup asks again. */
+export const WHATSAPP_RISK_CONSENT_VERSION = 1 as const;
 export const TAG_PATTERN = /^@[A-Za-z0-9_-]{1,32}$/;
 
 export type RuntimeKind = "codex" | "claude";
 
+export interface ImessageChannelConfig {
+  enabled: boolean;
+  imsgPath: string;
+  tags: string[];
+}
+
+export interface WhatsappChannelConfig {
+  enabled: boolean;
+  riskConsentVersion: typeof WHATSAPP_RISK_CONSENT_VERSION;
+  tags: string[];
+  wacliPath: string;
+}
+
+/** One entry per messaging app. Each app keeps its own trigger tags. */
+export interface ChannelsConfig {
+  imessage?: ImessageChannelConfig;
+  whatsapp?: WhatsappChannelConfig;
+}
+
 export interface ProntoConfig {
   version: typeof CONFIG_VERSION;
   chatKeySalt: string;
-  tags: string[];
+  channels: ChannelsConfig;
   primaryRuntime: RuntimeKind;
   fallbackRuntime?: RuntimeKind;
-  imsgPath: string;
   installedExecutableHash?: string;
   primaryRuntimePath?: string;
   fallbackRuntimePath?: string;
@@ -24,10 +45,16 @@ export interface ProntoConfig {
 
 export type ConfigInput = Omit<
   ProntoConfig,
-  "chatKeySalt" | "tags" | "version"
+  "channels" | "chatKeySalt" | "version"
 > & {
+  channels: {
+    imessage?: Omit<ImessageChannelConfig, "tags"> & { tags: readonly string[] };
+    whatsapp?: Omit<WhatsappChannelConfig, "riskConsentVersion" | "tags"> & {
+      riskConsentVersion: number;
+      tags: readonly string[];
+    };
+  };
   chatKeySalt?: string;
-  tags: readonly string[];
 };
 
 export function normalizeTag(value: string): string {
@@ -60,6 +87,73 @@ export function removeTag(tags: readonly string[], value: string): string[] {
   return tags.filter((candidate) => candidate !== tag);
 }
 
+function channelEntry(
+  config: Pick<ProntoConfig, "channels">,
+  kind: ChannelKind,
+): { enabled: boolean; tags: string[] } | undefined {
+  return (config.channels as Partial<Record<ChannelKind, { enabled: boolean; tags: string[] }>>)[kind];
+}
+
+export function enabledChannels(config: Pick<ProntoConfig, "channels">): ChannelKind[] {
+  return (Object.keys(config.channels) as ChannelKind[])
+    .filter((kind) => channelEntry(config, kind)?.enabled === true);
+}
+
+export function channelTags(config: Pick<ProntoConfig, "channels">, kind: ChannelKind): string[] {
+  return channelEntry(config, kind)?.tags ?? [];
+}
+
+/** Every configured tag with the apps it applies to, in first-seen order. */
+export function tagAssignments(
+  config: Pick<ProntoConfig, "channels">,
+): Array<{ apps: ChannelKind[]; tag: string }> {
+  const assignments = new Map<string, ChannelKind[]>();
+  for (const kind of Object.keys(config.channels) as ChannelKind[]) {
+    for (const tag of channelTags(config, kind)) {
+      assignments.set(tag, [...(assignments.get(tag) ?? []), kind]);
+    }
+  }
+  return [...assignments].map(([tag, apps]) => ({ apps, tag }));
+}
+
+function withChannelTags(
+  config: ProntoConfig,
+  kind: ChannelKind,
+  tags: string[],
+): ProntoConfig {
+  const channel = channelEntry(config, kind);
+  if (channel === undefined) throw new Error(`Messaging app is not configured: ${kind}`);
+  return { ...config, channels: { ...config.channels, [kind]: { ...channel, tags } } };
+}
+
+/** Adds a tag to each app in `apps`; apps that already have it are unchanged. */
+export function addTagToApps(
+  config: ProntoConfig,
+  value: string,
+  apps: readonly ChannelKind[],
+): ProntoConfig {
+  if (apps.length === 0) throw new Error("Choose at least one messaging app for the tag");
+  return apps.reduce(
+    (next, kind) => withChannelTags(next, kind, addTag(channelTags(next, kind), value)),
+    config,
+  );
+}
+
+/** Removes a tag from each app in `apps` that has it; refuses to leave an app with no tags. */
+export function removeTagFromApps(
+  config: ProntoConfig,
+  value: string,
+  apps: readonly ChannelKind[],
+): ProntoConfig {
+  const tag = normalizeTag(value);
+  const holders = apps.filter((kind) => channelTags(config, kind).includes(tag));
+  if (holders.length === 0) throw new Error(`Tag is not configured: ${tag}`);
+  return holders.reduce(
+    (next, kind) => withChannelTags(next, kind, removeTag(channelTags(next, kind), tag)),
+    config,
+  );
+}
+
 export function createConfig(input: ConfigInput): ProntoConfig {
   if (input.unrestrictedTrustVersion !== UNRESTRICTED_TRUST_VERSION) {
     throw new Error("Unrestricted access consent is missing; run pronto setup");
@@ -67,15 +161,40 @@ export function createConfig(input: ConfigInput): ProntoConfig {
   if (input.fallbackRuntime === input.primaryRuntime) {
     throw new Error("Fallback runtime must differ from the primary runtime");
   }
-  if (!isAbsolute(input.imsgPath)) throw new Error("imsg path must be absolute");
   if (!isAbsolute(input.workingDirectory)) {
     throw new Error("Working directory must be absolute");
+  }
+  const channels: ChannelsConfig = {};
+  const imessage = input.channels.imessage;
+  if (imessage !== undefined) {
+    if (!isAbsolute(imessage.imsgPath)) throw new Error("imsg path must be absolute");
+    channels.imessage = {
+      enabled: imessage.enabled,
+      imsgPath: imessage.imsgPath,
+      tags: normalizeTags(imessage.tags),
+    };
+  }
+  const whatsapp = input.channels.whatsapp;
+  if (whatsapp !== undefined) {
+    if (!isAbsolute(whatsapp.wacliPath)) throw new Error("wacli path must be absolute");
+    if (whatsapp.riskConsentVersion !== WHATSAPP_RISK_CONSENT_VERSION) {
+      throw new Error("WhatsApp risk consent is missing; run pronto setup");
+    }
+    channels.whatsapp = {
+      enabled: whatsapp.enabled,
+      riskConsentVersion: WHATSAPP_RISK_CONSENT_VERSION,
+      tags: normalizeTags(whatsapp.tags),
+      wacliPath: whatsapp.wacliPath,
+    };
+  }
+  if (enabledChannels({ channels }).length === 0) {
+    throw new Error("Enable at least one messaging app");
   }
 
   return {
     ...input,
+    channels,
     chatKeySalt: input.chatKeySalt ?? randomBytes(32).toString("base64url"),
-    tags: normalizeTags(input.tags),
     version: CONFIG_VERSION,
   };
 }
@@ -138,22 +257,16 @@ export async function loadConfig(path: string): Promise<ProntoConfig> {
   const raw: unknown = JSON.parse(await readFile(path, "utf8"));
   if (raw === null || typeof raw !== "object") throw new Error("Invalid configuration");
   const value = raw as Record<string, unknown>;
-  if (value.version !== 1 && value.version !== CONFIG_VERSION) {
+  if (value.version !== 1 && value.version !== 2 && value.version !== CONFIG_VERSION) {
     throw new Error("Unsupported configuration version");
   }
   if (!isRuntime(value.primaryRuntime)) throw new Error("Invalid primary runtime");
   if (value.fallbackRuntime !== undefined && !isRuntime(value.fallbackRuntime)) {
     throw new Error("Invalid fallback runtime");
   }
-  if (typeof value.imsgPath !== "string") {
-    throw new Error("Invalid configuration fields");
-  }
-  const tags = value.version === 1
-    ? typeof value.tag === "string" ? [value.tag] : null
-    : Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string")
-      ? value.tags
-      : null;
-  if (tags === null) throw new Error("Invalid configuration tags");
+  const channels = value.version === CONFIG_VERSION
+    ? parseChannels(value.channels)
+    : legacyChannels(value);
   if (typeof value.workingDirectory !== "string") throw new Error("Invalid working directory");
   if (value.unrestrictedTrustVersion !== UNRESTRICTED_TRUST_VERSION) {
     throw new Error("Unrestricted access consent is missing; run pronto setup");
@@ -175,11 +288,60 @@ export async function loadConfig(path: string): Promise<ProntoConfig> {
     ...(typeof value.fallbackRuntimePath === "string"
       ? { fallbackRuntimePath: value.fallbackRuntimePath }
       : {}),
-    imsgPath: value.imsgPath,
+    channels,
     chatKeySalt: value.chatKeySalt,
     primaryRuntime: value.primaryRuntime,
-    tags,
     workingDirectory: value.workingDirectory,
     unrestrictedTrustVersion: value.unrestrictedTrustVersion,
   });
+}
+
+function stringArray(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : null;
+}
+
+// Versions 1 and 2 were iMessage-only with global tags.
+function legacyChannels(value: Record<string, unknown>): ConfigInput["channels"] {
+  if (typeof value.imsgPath !== "string") throw new Error("Invalid configuration fields");
+  const tags = value.version === 1
+    ? typeof value.tag === "string" ? [value.tag] : null
+    : stringArray(value.tags);
+  if (tags === null) throw new Error("Invalid configuration tags");
+  return { imessage: { enabled: true, imsgPath: value.imsgPath, tags } };
+}
+
+function parseChannels(raw: unknown): ConfigInput["channels"] {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("Invalid configuration channels");
+  }
+  const channels: ConfigInput["channels"] = {};
+  for (const [kind, entry] of Object.entries(raw)) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error("Invalid configuration channels");
+    }
+    const channel = entry as Record<string, unknown>;
+    const tags = stringArray(channel.tags);
+    if (kind === "imessage") {
+      if (typeof channel.enabled !== "boolean" || typeof channel.imsgPath !== "string" || tags === null) {
+        throw new Error("Invalid iMessage configuration");
+      }
+      channels.imessage = { enabled: channel.enabled, imsgPath: channel.imsgPath, tags };
+    } else if (kind === "whatsapp") {
+      if (
+        typeof channel.enabled !== "boolean" || typeof channel.wacliPath !== "string" ||
+        typeof channel.riskConsentVersion !== "number" || tags === null
+      ) {
+        throw new Error("Invalid WhatsApp configuration");
+      }
+      channels.whatsapp = {
+        enabled: channel.enabled,
+        riskConsentVersion: channel.riskConsentVersion,
+        tags,
+        wacliPath: channel.wacliPath,
+      };
+    } else {
+      throw new Error(`Unsupported messaging app in configuration: ${kind}`);
+    }
+  }
+  return channels;
 }

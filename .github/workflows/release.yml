@@ -31,6 +31,7 @@ jobs:
     outputs:
       package-file: ${{ steps.release-version.outputs.package-file }}
       package-version: ${{ steps.release-version.outputs.package-version }}
+      whatsapp-package-file: ${{ steps.release-version.outputs.whatsapp-package-file }}
       prerelease: ${{ steps.release-version.outputs.prerelease }}
       release-tag: ${{ steps.release-version.outputs.release-tag }}
     steps:
@@ -52,12 +53,14 @@ jobs:
       - run: ./dist/pronto --version
       - run: ./dist/pronto --help
       - run: node --input-type=module --eval 'import("./packages/messages/dist/index.js").then((module) => { if (typeof module.createProntoMessages !== "function") process.exit(1); })'
+      - run: node --input-type=module --eval 'import("./packages/whatsapp/dist/index.js").then((module) => { if (typeof module.createProntoWhatsapp !== "function") process.exit(1); })'
       - run: bun run release:validate
       - name: Verify immutable tag and package version
         id: release-version
         run: |
           VERSION="$(bun -e 'import packageJson from "./package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
           PACKAGE_VERSION="$(bun -e 'import packageJson from "./packages/messages/package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
+          WHATSAPP_PACKAGE_VERSION="$(bun -e 'import packageJson from "./packages/whatsapp/package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
           test "$GITHUB_REF_TYPE" = "tag"
           if [[ "$CANDIDATE_ONLY" = "true" ]]; then
             candidate_prefix="v$VERSION-candidate."
@@ -67,11 +70,13 @@ jobs:
             test "v$VERSION" = "$RELEASE_TAG"
           fi
           test "$VERSION" = "$PACKAGE_VERSION"
+          test "$VERSION" = "$WHATSAPP_PACKAGE_VERSION"
           test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
           {
             echo "package-file=pronto-imessage-$PACKAGE_VERSION.tgz"
             echo "package-version=$PACKAGE_VERSION"
             echo "release-tag=$RELEASE_TAG"
+            echo "whatsapp-package-file=pronto-whatsapp-$WHATSAPP_PACKAGE_VERSION.tgz"
           } >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *-* ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
@@ -170,23 +175,29 @@ jobs:
           export PRONTO_RELEASE_PUBLISHED_AT
           bun scripts/generate-update-manifest.ts
           npm pack ./packages/messages --pack-destination ./release
+          npm pack ./packages/whatsapp --pack-destination ./release
           cd release
           shasum -a 256 pronto-darwin-arm64 pronto-darwin-x64 pronto-update.json > pronto.sha256
           shasum -a 256 -c pronto.sha256
           shasum -a 256 "${{ steps.release-version.outputs.package-file }}" > pronto-imessage.sha256
           shasum -a 256 -c pronto-imessage.sha256
+          shasum -a 256 "${{ steps.release-version.outputs.whatsapp-package-file }}" > pronto-whatsapp.sha256
+          shasum -a 256 -c pronto-whatsapp.sha256
       - name: Build candidate checksums
         if: ${{ inputs.candidate_only == true }}
         env:
           PRONTO_CANDIDATE_VERSION: ${{ steps.release-version.outputs.package-version }}
         run: |
           npm pack ./packages/messages --pack-destination ./release
+          npm pack ./packages/whatsapp --pack-destination ./release
           bun -e 'console.log(JSON.stringify({version: process.env.PRONTO_CANDIDATE_VERSION, sourceRevision: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, tag: process.env.RELEASE_TAG}))' > release/pronto-candidate.json
           cd release
           shasum -a 256 pronto-darwin-arm64 pronto-darwin-x64 pronto-candidate.json > pronto.sha256
           shasum -a 256 -c pronto.sha256
           shasum -a 256 "${{ steps.release-version.outputs.package-file }}" > pronto-imessage.sha256
           shasum -a 256 -c pronto-imessage.sha256
+          shasum -a 256 "${{ steps.release-version.outputs.whatsapp-package-file }}" > pronto-whatsapp.sha256
+          shasum -a 256 -c pronto-whatsapp.sha256
       - name: Remove temporary signing material
         if: always()
         run: |
@@ -207,6 +218,8 @@ jobs:
             release/pronto.sha256
             release/pronto-imessage-*.tgz
             release/pronto-imessage.sha256
+            release/pronto-whatsapp-*.tgz
+            release/pronto-whatsapp.sha256
 
   publish:
     if: ${{ inputs.candidate_only != true && !contains(github.ref_name, '-candidate.') }}
@@ -223,6 +236,7 @@ jobs:
       PACKAGE_FILE: ${{ needs.build.outputs.package-file }}
       PACKAGE_VERSION: ${{ needs.build.outputs.package-version }}
       RELEASE_TAG: ${{ needs.build.outputs.release-tag }}
+      WHATSAPP_PACKAGE_FILE: ${{ needs.build.outputs.whatsapp-package-file }}
     steps:
       - name: Refuse to mutate an existing release
         run: |
@@ -255,6 +269,7 @@ jobs:
         run: |
           sha256sum -c pronto.sha256
           sha256sum -c pronto-imessage.sha256
+          sha256sum -c pronto-whatsapp.sha256
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
@@ -263,6 +278,7 @@ jobs:
             release-assets/pronto-darwin-x64
             release-assets/pronto-update.json
             release-assets/${{ needs.build.outputs.package-file }}
+            release-assets/${{ needs.build.outputs.whatsapp-package-file }}
       - name: Create draft release
         run: |
           gh release create "$RELEASE_TAG" --draft --generate-notes --verify-tag \
@@ -272,10 +288,12 @@ jobs:
           gh release upload "$RELEASE_TAG" \
             release-assets/pronto-darwin-arm64 release-assets/pronto-darwin-x64 \
             release-assets/pronto-update.json release-assets/pronto.sha256 \
-            "release-assets/$PACKAGE_FILE" release-assets/pronto-imessage.sha256
+            "release-assets/$PACKAGE_FILE" release-assets/pronto-imessage.sha256 \
+            "release-assets/$WHATSAPP_PACKAGE_FILE" release-assets/pronto-whatsapp.sha256
           RELEASE_ID="$(
             gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
-              jq -r --arg tag "$RELEASE_TAG" --arg package "$PACKAGE_FILE" '
+              jq -r --arg tag "$RELEASE_TAG" --arg package "$PACKAGE_FILE" \
+                --arg whatsapp "$WHATSAPP_PACKAGE_FILE" '
                 .[] |
                 select(
                   .tag_name == $tag and
@@ -286,7 +304,9 @@ jobs:
                     "pronto-update.json",
                     "pronto.sha256",
                     "pronto-imessage.sha256",
-                    $package
+                    "pronto-whatsapp.sha256",
+                    $package,
+                    $whatsapp
                   ] | sort)
                 ) |
                 .id
@@ -305,6 +325,23 @@ jobs:
           REMOTE_VERSION=""
           for ATTEMPT in {1..60}; do
             REMOTE_VERSION="$(npm view "pronto-imessage@$PACKAGE_VERSION" version 2>/dev/null || true)"
+            [[ "$REMOTE_VERSION" = "$PACKAGE_VERSION" ]] && break
+            echo "Waiting for npm registry propagation (attempt $ATTEMPT/60)."
+            sleep 5
+          done
+          test "$REMOTE_VERSION" = "$PACKAGE_VERSION"
+      - name: Publish and verify pronto-whatsapp
+        run: |
+          LOCAL_SHASUM="$(sha1sum "release-assets/$WHATSAPP_PACKAGE_FILE" | awk '{print $1}')"
+          REMOTE_SHASUM="$(npm view "pronto-whatsapp@$PACKAGE_VERSION" dist.shasum 2>/dev/null || true)"
+          if [[ -n "$REMOTE_SHASUM" ]]; then
+            test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"
+          else
+            npm publish "./release-assets/$WHATSAPP_PACKAGE_FILE" --provenance --access public
+          fi
+          REMOTE_VERSION=""
+          for ATTEMPT in {1..60}; do
+            REMOTE_VERSION="$(npm view "pronto-whatsapp@$PACKAGE_VERSION" version 2>/dev/null || true)"
             [[ "$REMOTE_VERSION" = "$PACKAGE_VERSION" ]] && break
             echo "Waiting for npm registry propagation (attempt $ATTEMPT/60)."
             sleep 5
