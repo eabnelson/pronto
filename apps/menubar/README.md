@@ -64,7 +64,7 @@ identifier "dev.pronto.cli" and anchor apple generic and certificate leaf[subjec
 ```
 
 A missing CLI shows "Pronto isn't installed" with a link to the
-[setup guide](https://studiofour.io/imessage-setup.md). A CLI that fails
+[setup guide](https://studiofour.io/pronto-setup.md). A CLI that fails
 verification is never run.
 
 ## Architecture
