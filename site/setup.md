@@ -87,10 +87,10 @@ macOS setting.
    Never fall back to building from source for an ordinary installation.
 
 3. If I chose iMessage, before running setup, guide me to **System Settings →
-   Privacy & Security → Full Disk Access** and have me enable the terminal or
-   parent app that will run setup. This lets setup perform its temporary
-   Messages database preflight. WhatsApp alone needs no Full Disk Access. Then
-   run the signed candidate:
+   Privacy & Security → Full Disk Access** and have me enable the
+   terminal or parent app that will run setup. This lets setup perform its
+   temporary Messages database preflight. WhatsApp alone needs no Full Disk
+   Access. Then run the signed candidate:
 
    ```sh
    "$PRONTO_CANDIDATE" setup
@@ -109,8 +109,8 @@ macOS setting.
      each one and let me personally decide whether to type `yes`.
 
    For WhatsApp, if this Mac is not linked yet, setup then shows a QR code in
-   the terminal. Tell me to open WhatsApp on my phone, go to **Settings → Linked
-   devices → Link a device**, and scan it. The code refreshes on its own until I
+   the terminal. Tell me to open WhatsApp on my phone, go to
+   **Settings → Linked devices → Link a device**, and scan it. The code refreshes on its own until I
    scan it. The Mac appears as **Pronto** in my linked devices. Setup continues
    after the first sync of recent messages, which can take a few minutes. A Mac
    that is already linked skips this step.

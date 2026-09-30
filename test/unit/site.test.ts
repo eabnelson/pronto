@@ -542,15 +542,25 @@ describe("public landing page", () => {
   });
 
   test("guides WhatsApp setup without deciding or linking for the owner", async () => {
-    const setup = await read("setup.md");
+    // Compare prose with line wrapping collapsed so rewrapping the guide doesn't matter.
+    const setup = (await read("setup.md")).replace(/\s+/g, " ");
 
     expect(setup).toContain("brew install openclaw/tap/wacli");
     expect(setup).toContain("WhatsApp risk prompt");
-    expect(setup).toContain("never scan, approve,\n  or link a device for me");
+    expect(setup).toContain("never scan, approve, or link a device for me");
     expect(setup).toContain("Settings → Linked devices → Link a device");
-    expect(setup).toContain("WhatsApp\n   alone needs no Full Disk Access");
+    expect(setup).toContain("WhatsApp alone needs no Full Disk Access");
     expect(setup).toContain('"$PRONTO" tags add @plan --app whatsapp');
     expect(setup).toContain('"$PRONTO" whatsapp link');
+  });
+
+  test("explains choosing apps and adding one to an existing install", async () => {
+    const setup = (await read("setup.md")).replace(/\s+/g, " ");
+
+    expect(setup).toContain("Ask whether I want iMessage and RCS, WhatsApp, or both");
+    expect(setup).toContain("every app I chose needs its tool before setup runs");
+    expect(setup).toContain("choose every app I want to keep, not just the new one");
+    expect(setup).toContain("A Mac that is already linked skips this step");
   });
 
   test("grants setup and installed executables Full Disk Access at the right times", async () => {
