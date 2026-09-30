@@ -1,7 +1,7 @@
 import ProntoMenuBarKit
 import SwiftUI
 
-/// The MenuBarExtra window content.
+/// The MenuBarExtra window content, laid out like the system Wi-Fi and Sound menus.
 struct PanelView: View {
     @Environment(AppController.self) private var controller
     @Environment(MenuBarModel.self) private var model
@@ -13,25 +13,26 @@ struct PanelView: View {
 
             if model.isInstalled, !isUnverified {
                 UpdateSection()
+                MenuSeparator()
                 appsSection
+                MenuSeparator()
                 TagsSection()
                 if let error = model.actionError {
                     InlineError(message: error)
-                        .padding(.horizontal, PanelMetrics.inset + 6)
-                        .padding(.top, 8)
+                        .padding(.horizontal, PanelMetrics.inset)
+                        .padding(.top, 6)
                 }
             } else {
+                MenuSeparator()
                 NotInstalledView(unverifiedMessage: isUnverified ? model.health.summary : nil)
-                    .panelCard()
-                    .padding(.horizontal, PanelMetrics.inset)
             }
 
-            Divider().padding(.horizontal, PanelMetrics.inset + 6).padding(.top, 12).padding(.bottom, 4)
+            MenuSeparator()
             actions
         }
-        .padding(.top, 4)
-        .padding(.bottom, 8)
+        .padding(.vertical, 5)
         .frame(width: PanelMetrics.width)
+        .fixedSize(horizontal: false, vertical: true)
         .background(WindowVisibilityReader { visible in model.setPanelOpen(visible) })
     }
 
@@ -42,66 +43,57 @@ struct PanelView: View {
 
     // MARK: Header
 
+    /// "Pronto" and an on/off switch, like "Wi-Fi" at the top of its menu.
     private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Image(systemName: model.icon.symbolName)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(headerTint.gradient))
-                .accessibilityHidden(true)
+        HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("Pronto").font(.title3.weight(.semibold))
-                    if let version = model.version {
-                        Text(version)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("version \(version)")
-                    }
+                Text("Pronto").font(.system(size: 13, weight: .semibold))
+                if showsSummary {
+                    Text(model.health.summary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(summaryColor)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Text(model.health.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Pronto \(model.version ?? ""), \(model.health.summary)")
-            Spacer()
+            Spacer(minLength: 8)
+            if model.busyAction == .listener {
+                ProgressView().controlSize(.small)
+            }
             if model.status != nil {
-                pauseButton
+                Toggle(isOn: Binding(
+                    get: { !model.isPaused },
+                    set: { on in Task { await model.setPaused(!on) } }
+                )) {
+                    Text("Answer messages")
+                }
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(model.busyAction != nil)
+                .help(model.isPaused
+                      ? "Resume answering messages"
+                      : "Pause answering messages. Quitting this menu doesn't stop Pronto.")
             }
         }
-        .padding(.horizontal, PanelMetrics.inset + 6)
-        .padding(.vertical, 10)
+        .padding(.horizontal, PanelMetrics.inset)
+        .padding(.top, 5)
+        .padding(.bottom, 4)
     }
 
-    private var headerTint: Color {
+    private var showsSummary: Bool {
+        switch model.health {
+        case .normal: return false
+        default: return model.isInstalled
+        }
+    }
+
+    private var summaryColor: Color {
         switch model.icon.tint {
         case .error: return .red
         case .warning: return .orange
-        case .none: return model.icon.dimmed ? .gray : .accentColor
+        case .none: return .secondary
         }
-    }
-
-    private var pauseButton: some View {
-        let paused = model.isPaused
-        return Button {
-            Task { await model.setPaused(!paused) }
-        } label: {
-            if model.busyAction == .listener {
-                ProgressView().controlSize(.small)
-            } else {
-                Label(paused ? "Resume" : "Pause", systemImage: paused ? "play.fill" : "pause.fill")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 16, height: 16)
-            }
-        }
-        .glassButtonStyle()
-        .buttonBorderShape(.circle)
-        .controlSize(.large)
-        .disabled(model.busyAction != nil)
-        .help(paused ? "Resume answering messages" : "Pause answering messages. Quitting this menu doesn't stop Pronto.")
     }
 
     // MARK: Apps
@@ -109,19 +101,13 @@ struct PanelView: View {
     private var appsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeader(title: "Apps")
-            VStack(spacing: 0) {
-                ForEach(Array(model.channelRows.enumerated()), id: \.element.id) { index, row in
-                    if index > 0 { Divider().padding(.leading, 52) }
-                    ChannelRowView(row: row) {
-                        controller.prepareLink()
-                        openWindow(id: WindowID.linkWhatsApp)
-                        controller.bringToFront()
-                    }
+            ForEach(model.channelRows) { row in
+                ChannelRowView(row: row) {
+                    controller.prepareLink()
+                    openWindow(id: WindowID.linkWhatsApp)
+                    controller.bringToFront()
                 }
             }
-            .padding(.vertical, 4)
-            .panelCard()
-            .padding(.horizontal, PanelMetrics.inset)
         }
     }
 
@@ -129,28 +115,32 @@ struct PanelView: View {
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 0) {
-            MenuRow(title: "Check for Updates", systemImage: "arrow.down.circle",
-                    disabled: !model.isInstalled || model.updatePhase != .idle) {
+            MenuCommand(title: "Check for Updates…", disabled: !model.isInstalled || model.updatePhase != .idle, action: {
                 Task { await model.checkForUpdates(manual: true) }
-            }
-            MenuRow(title: "Run Diagnostics…", systemImage: "stethoscope", disabled: !model.isInstalled) {
+            }, trailing: {
+                if let version = model.version {
+                    Text(version).foregroundStyle(.tertiary).accessibilityLabel("version \(version)")
+                }
+            })
+            MenuCommand(title: "Run Diagnostics…", disabled: !model.isInstalled) {
                 openWindow(id: WindowID.diagnostics)
                 controller.bringToFront()
                 controller.diagnostics.run()
             }
-            MenuRow(title: "Open Logs", systemImage: "doc.text.magnifyingglass") {
+            MenuCommand(title: "Open Logs") {
                 controller.openLogs()
             }
-            MenuRow(title: "Launch at Login", systemImage: "power", action: {
+            MenuCommand(title: "Launch at Login", action: {
                 controller.setLaunchAtLogin(!controller.launchAtLogin)
             }, trailing: {
                 if controller.launchAtLogin {
-                    Image(systemName: "checkmark").foregroundStyle(.secondary)
+                    Image(systemName: "checkmark").font(.system(size: 12, weight: .semibold))
                 }
             })
             .accessibilityValue(controller.launchAtLogin ? "On" : "Off")
             .onAppear { controller.refreshLaunchAtLogin() }
-            MenuRow(title: "Quit Pronto Menu Bar", systemImage: "xmark.circle") {
+            MenuSeparator()
+            MenuCommand(title: "Quit Pronto Menu Bar") {
                 controller.quit()
             }
             .help("Pronto keeps answering messages after the menu bar app quits.")
@@ -158,53 +148,56 @@ struct PanelView: View {
     }
 }
 
-/// One app row: status dot, name, human status, toggle, and link button.
+/// One app, like a device in the Bluetooth menu: the icon fills in when the
+/// app is on, and clicking the row turns it on or off (or links WhatsApp).
 struct ChannelRowView: View {
     let row: ChannelRow
     let onLink: () -> Void
     @Environment(MenuBarModel.self) private var model
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            AppGlyph(app: row.app, dimmed: !row.enabled)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.label).font(.body.weight(.medium))
-                HStack(spacing: 5) {
-                    StatusDot(tone: row.tone, label: row.statusText)
-                    Text(row.detail.map { "\(row.statusText) · \($0)" } ?? row.statusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(row.accessibilityLabel)
-            Spacer(minLength: 8)
-            if row.showsLinkButton {
-                Button("Link…", action: onLink)
-                    .glassButtonStyle(prominent: true)
-                    .controlSize(.small)
-                    .help("Link WhatsApp")
-            }
-            if row.showsToggle {
+        MenuItem(action: action, disabled: model.busyAction != nil) {
+            IconRow(
+                icon: MenuIcon(systemName: row.app == .whatsapp ? "phone.fill" : "message.fill",
+                               active: row.enabled && row.configured),
+                title: row.label,
+                subtitle: row.detail.map { "\(row.statusText) · \($0)" } ?? row.statusText,
+                subtitleColor: subtitleColor
+            ) {
                 if model.busyAction == .channel(row.app) {
                     ProgressView().controlSize(.small)
+                } else if row.showsLinkButton {
+                    Text("Link…").foregroundStyle(.secondary)
                 }
-                Toggle(isOn: Binding(
-                    get: { row.enabled },
-                    set: { enabled in Task { await model.setChannel(row.app, enabled: enabled) } }
-                )) {
-                    Text(row.enabled ? "Turn off \(row.label)" : "Turn on \(row.label)")
-                }
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .disabled(!row.toggleAllowed || model.busyAction != nil)
-                .help(row.toggleHelp ?? (row.enabled ? "Stop answering in \(row.label)" : "Answer in \(row.label)"))
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityHint(hint ?? "")
+        .help(hint ?? "")
+    }
+
+    private var action: (() -> Void)? {
+        if row.showsLinkButton { return onLink }
+        guard row.showsToggle, row.toggleAllowed else { return nil }
+        let enabled = !row.enabled
+        return { Task { await model.setChannel(row.app, enabled: enabled) } }
+    }
+
+    private var hint: String? {
+        if row.showsLinkButton { return "Link \(row.label)" }
+        guard row.showsToggle else { return nil }
+        if !row.toggleAllowed { return row.toggleHelp }
+        return row.enabled ? "Stop answering in \(row.label)" : "Answer in \(row.label)"
+    }
+
+    private var subtitleColor: Color? {
+        guard row.enabled else { return nil }
+        switch row.tone {
+        case .error: return .red
+        case .warning: return .orange
+        default: return nil
+        }
     }
 }
 
@@ -224,7 +217,8 @@ struct NotInstalledView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Link("Open Setup Guide", destination: AppController.setupGuideURL)
         }
-        .padding(14)
+        .padding(.horizontal, PanelMetrics.inset)
+        .padding(.vertical, 4)
     }
 }
 
@@ -234,69 +228,59 @@ struct UpdateSection: View {
     @State private var confirming = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            switch model.updatePhase {
-            case .installing(let version):
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(version.map { "Installing Pronto \($0)…" } ?? "Installing update…")
-                        .font(.callout)
-                }
-            case .checking:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Checking for updates…").font(.callout).foregroundStyle(.secondary)
-                }
-            case .idle:
-                if let update = model.pendingUpdate {
-                    if confirming {
-                        Text("Install Pronto \(update.version ?? "")? Pronto finishes the current reply, updates, and restarts.")
-                            .font(.callout)
-                            .fixedSize(horizontal: false, vertical: true)
-                        HStack {
-                            Spacer()
-                            Button("Cancel") { confirming = false }
-                                .glassButtonStyle()
-                            Button("Install") {
-                                confirming = false
-                                Task { await model.installUpdate() }
-                            }
-                            .keyboardShortcut(.defaultAction)
-                            .glassButtonStyle(prominent: true)
+        if hasContent {
+            VStack(alignment: .leading, spacing: 0) {
+                MenuSeparator()
+                switch model.updatePhase {
+                case .installing(let version):
+                    MenuItem {
+                        IconRow(icon: MenuIcon(systemName: "arrow.down", active: true),
+                                title: version.map { "Installing Pronto \($0)…" } ?? "Installing update…") {
+                            ProgressView().controlSize(.small)
                         }
-                        .controlSize(.small)
-                    } else {
-                        HStack {
-                            Label("Pronto \(update.version ?? "") is available", systemImage: "arrow.down.circle.fill")
-                                .font(.callout)
-                                .symbolRenderingMode(.hierarchical)
-                                .foregroundStyle(.tint)
-                            Spacer()
-                            Button("Install…") { confirming = true }
-                                .glassButtonStyle(prominent: true)
-                                .controlSize(.small)
-                                .disabled(model.busyAction != nil)
+                    }
+                case .checking:
+                    MenuItem {
+                        IconRow(icon: MenuIcon(systemName: "arrow.down"), title: "Checking for updates…") {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                case .idle:
+                    if let update = model.pendingUpdate {
+                        MenuItem(action: { confirming.toggle() }, disabled: model.busyAction != nil) {
+                            IconRow(icon: MenuIcon(systemName: "arrow.down", active: true),
+                                    title: "Update Available",
+                                    subtitle: "Pronto \(update.version ?? "")") {
+                                DisclosureChevron(expanded: confirming)
+                            }
+                        }
+                        if confirming {
+                            ExpandedGroup {
+                                Text("Pronto finishes the current reply, updates, and restarts.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.horizontal, PanelMetrics.inset)
+                                    .padding(.bottom, 3)
+                                MenuCommand(title: "Install and Restart") {
+                                    confirming = false
+                                    Task { await model.installUpdate() }
+                                }
+                            }
                         }
                     }
                 }
-            }
-            if let message = model.updateMessage, model.updatePhase == .idle {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(hasContent ? 12 : 0)
-        .background {
-            if hasContent {
-                RoundedRectangle(cornerRadius: PanelMetrics.cardRadius, style: .continuous)
-                    .fill(.tint.opacity(0.12))
+                if let message = model.updateMessage, model.updatePhase == .idle {
+                    Text(message)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, PanelMetrics.inset)
+                        .padding(.vertical, 3)
+                }
             }
         }
-        .padding(.horizontal, PanelMetrics.inset)
-        .padding(.top, hasContent ? 4 : 0)
     }
 
     private var hasContent: Bool {

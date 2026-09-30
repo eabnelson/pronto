@@ -10,7 +10,7 @@ struct HealthTests {
     @Test func healthyIsNormal() throws {
         let health = HealthEvaluator.evaluate(HealthInput(status: try status("status-healthy.json"), channels: try channels("channels-both.json")))
         #expect(health == .normal)
-        #expect(MenuBarIcon(health: health).symbolName == "ellipsis.bubble.fill")
+        #expect(MenuBarIcon(health: health).symbolName == "at")
         #expect(MenuBarIcon(health: health).tint == .none)
         #expect(!MenuBarIcon(health: health).dimmed)
     }
@@ -19,7 +19,7 @@ struct HealthTests {
         let health = HealthEvaluator.evaluate(HealthInput(status: try status("status-healthy.json"), channels: try channels("channels-both.json"), updateAvailable: true))
         #expect(health == .attention(["An update is available"]))
         #expect(MenuBarIcon(health: health).tint == .warning)
-        #expect(MenuBarIcon(health: health).symbolName == "exclamationmark.bubble")
+        #expect(MenuBarIcon(health: health).symbolName == "at")
     }
 
     @Test func enabledAppNeedingLinkIsError() throws {
@@ -97,7 +97,7 @@ struct HealthTests {
 
     @Test func clientErrors() throws {
         #expect(HealthEvaluator.evaluate(HealthInput(status: nil, clientError: .notInstalled(path: "/x"))) == .notInstalled)
-        #expect(MenuBarIcon(health: .notInstalled).symbolName == "questionmark.bubble")
+        #expect(MenuBarIcon(health: .notInstalled).symbolName == "at")
         let untrusted = HealthEvaluator.evaluate(HealthInput(status: nil, clientError: .untrusted(path: "/x", detail: "not signed by Pronto")))
         guard case .unavailable(let message) = untrusted else { Issue.record("expected unavailable"); return }
         #expect(message.contains("couldn't be verified"))

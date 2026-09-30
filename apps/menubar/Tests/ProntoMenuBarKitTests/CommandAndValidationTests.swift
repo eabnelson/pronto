@@ -98,7 +98,7 @@ struct TagValidationTests {
     }
 
     @Test func failureMessagesAreHuman() {
-        #expect(TagValidation.Failure.empty.message.contains("@"))
+        #expect(TagValidation.Failure.empty.message.contains("tag name"))
         #expect(TagValidation.Failure.tooLong.message.contains("32"))
     }
 }

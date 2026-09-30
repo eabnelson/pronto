@@ -15,7 +15,7 @@ struct MenuBarLabel: View {
     static func image(for icon: MenuBarIcon) -> NSImage {
         let base = NSImage(systemSymbolName: icon.symbolName, accessibilityDescription: icon.accessibilityLabel)
             ?? NSImage(systemSymbolName: "ellipsis.bubble", accessibilityDescription: icon.accessibilityLabel)!
-        let size = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+        let size = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
         switch icon.tint {
         case .none:
             let symbol = base.withSymbolConfiguration(size) ?? base
@@ -53,16 +53,20 @@ extension StatusTone {
     }
 }
 
-/// Corner radii follow macOS 26: rounder, continuous, and concentric with the panel.
+/// Metrics of the macOS 26 system menus (Wi-Fi, Sound, Bluetooth).
 enum PanelMetrics {
-    static let width: CGFloat = 356
-    static let inset: CGFloat = 10
+    static let width: CGFloat = 300
+    /// Text and separators start this far from the panel edge.
+    static let inset: CGFloat = 14
+    /// Hover highlights start this far from the panel edge.
+    static let highlightInset: CGFloat = 5
+    static let rowRadius: CGFloat = 8
+    static let iconSize: CGFloat = 26
     static let cardRadius: CGFloat = 14
-    static let rowRadius: CGFloat = 9
 }
 
 extension View {
-    /// A Control Center–style grouped module inside the panel.
+    /// A grouped box, used by the standalone windows.
     func panelCard() -> some View {
         background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: PanelMetrics.cardRadius, style: .continuous))
     }
@@ -81,109 +85,180 @@ extension View {
     }
 }
 
-/// A small colored status dot with a VoiceOver label.
-struct StatusDot: View {
-    let tone: StatusTone
-    let label: String
-
+/// A full-width menu separator.
+struct MenuSeparator: View {
     var body: some View {
-        Circle()
-            .fill(tone.color)
-            .frame(width: 7, height: 7)
-            .accessibilityElement()
-            .accessibilityLabel(label)
+        Divider()
+            .padding(.horizontal, PanelMetrics.inset)
+            .padding(.vertical, 5)
     }
 }
 
-/// A round, filled app glyph like the modules in Control Center.
-struct AppGlyph: View {
-    let app: AppID
-    var dimmed = false
-
-    var body: some View {
-        Image(systemName: app == .whatsapp ? "phone.bubble.fill" : "message.fill")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: 28, height: 28)
-            .background(Circle().fill(color.gradient))
-            .saturation(dimmed ? 0 : 1)
-            .opacity(dimmed ? 0.55 : 1)
-            .accessibilityHidden(true)
-    }
-
-    private var color: Color {
-        app == .whatsapp
-            ? Color(red: 0.15, green: 0.73, blue: 0.53)
-            : Color(red: 0.2, green: 0.78, blue: 0.35)
-    }
-}
-
-/// An app name badge ("iMessage", "WhatsApp").
-struct AppBadge: View {
-    let label: String
-
-    var body: some View {
-        Text(label)
-            .font(.caption2.weight(.medium))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(.quaternary))
-            .foregroundStyle(.secondary)
-    }
-}
-
-/// Section title above a panel card.
+/// A section title like "Known Network" in the Wi-Fi menu.
 struct SectionHeader: View {
     let title: String
     var body: some View {
         Text(title)
-            .font(.subheadline.weight(.semibold))
+            .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.secondary)
-            .padding(.horizontal, PanelMetrics.inset + 6)
-            .padding(.top, 12)
-            .padding(.bottom, 6)
+            .padding(.horizontal, PanelMetrics.inset)
+            .padding(.top, 2)
+            .padding(.bottom, 3)
             .accessibilityAddTraits(.isHeader)
     }
 }
 
-/// A full-width, menu-like action row with a hover highlight.
-struct MenuRow<Trailing: View>: View {
-    let title: String
-    let systemImage: String
+/// A round symbol like the device icons in the Sound and Bluetooth menus:
+/// accent-filled when active, a quiet gray otherwise.
+struct MenuIcon: View {
+    let systemName: String
+    var active = false
+    var tint: Color = .accentColor
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(active ? AnyShapeStyle(.white) : AnyShapeStyle(.primary.opacity(0.85)))
+            .frame(width: PanelMetrics.iconSize, height: PanelMetrics.iconSize)
+            .background(Circle().fill(active ? AnyShapeStyle(tint) : AnyShapeStyle(.primary.opacity(0.1))))
+            .accessibilityHidden(true)
+    }
+}
+
+/// A menu row that highlights on hover. Rows without an action don't highlight.
+struct MenuItem<Content: View>: View {
+    var action: (() -> Void)?
     var disabled = false
-    let action: () -> Void
-    @ViewBuilder var trailing: () -> Trailing
+    var verticalPadding: CGFloat = 4
+    @ViewBuilder var content: () -> Content
     @State private var hovering = false
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .frame(width: 16)
-                    .foregroundStyle(.secondary)
+        let row = content()
+            .padding(.horizontal, PanelMetrics.inset - PanelMetrics.highlightInset)
+            .padding(.vertical, verticalPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: PanelMetrics.rowRadius, style: .continuous)
+                    .fill(hovering && action != nil && !disabled ? Color.primary.opacity(0.1) : .clear)
+            )
+            .padding(.horizontal, PanelMetrics.highlightInset)
+        if let action {
+            Button(action: action) { row }
+                .buttonStyle(.plain)
+                .disabled(disabled)
+                .onHover { hovering = $0 }
+        } else {
+            row
+        }
+    }
+}
+
+/// A plain text command like "Wi-Fi Settings…".
+struct MenuCommand<Trailing: View>: View {
+    let title: String
+    var disabled = false
+    let action: () -> Void
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        MenuItem(action: action, disabled: disabled) {
+            HStack(spacing: 6) {
                 Text(title)
                 Spacer(minLength: 8)
                 trailing()
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .contentShape(RoundedRectangle(cornerRadius: PanelMetrics.rowRadius, style: .continuous))
-            .background(
-                RoundedRectangle(cornerRadius: PanelMetrics.rowRadius, style: .continuous)
-                    .fill(hovering && !disabled ? Color.primary.opacity(0.09) : .clear)
-            )
+            .padding(.vertical, 1)
+            .opacity(disabled ? 0.4 : 1)
         }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .opacity(disabled ? 0.5 : 1)
-        .onHover { hovering = $0 }
-        .padding(.horizontal, PanelMetrics.inset - 4)
     }
 }
 
-extension MenuRow where Trailing == EmptyView {
-    init(title: String, systemImage: String, disabled: Bool = false, action: @escaping () -> Void) {
-        self.init(title: title, systemImage: systemImage, disabled: disabled, action: action, trailing: { EmptyView() })
+extension MenuCommand where Trailing == EmptyView {
+    init(title: String, disabled: Bool = false, action: @escaping () -> Void) {
+        self.init(title: title, disabled: disabled, action: action, trailing: { EmptyView() })
+    }
+}
+
+/// A row with a round icon, a title, and an optional subtitle.
+struct IconRow<Trailing: View>: View {
+    let icon: MenuIcon
+    let title: String
+    var subtitle: String?
+    var subtitleColor: Color?
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 8) {
+            icon
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title).lineLimit(1)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(subtitleColor.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            trailing()
+        }
+    }
+}
+
+extension IconRow where Trailing == EmptyView {
+    init(icon: MenuIcon, title: String, subtitle: String? = nil, subtitleColor: Color? = nil) {
+        self.init(icon: icon, title: title, subtitle: subtitle, subtitleColor: subtitleColor, trailing: { EmptyView() })
+    }
+}
+
+/// A disclosure chevron like the one on AirPods in the Sound menu.
+struct DisclosureChevron: View {
+    let expanded: Bool
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .rotationEffect(.degrees(expanded ? 90 : 0))
+            .accessibilityHidden(true)
+    }
+}
+
+/// The shaded band an expanded row's options sit in (see "Listening Mode" in the Sound menu).
+struct ExpandedGroup<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0, content: content)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.06))
+            .padding(.vertical, 3)
+    }
+}
+
+/// A checkable option inside an expanded group: a leading checkmark column, then the title.
+struct CheckItem: View {
+    let title: String
+    let checked: Bool
+    var disabled = false
+    let action: () -> Void
+
+    var body: some View {
+        MenuItem(action: action, disabled: disabled) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .opacity(checked ? 1 : 0)
+                    .frame(width: PanelMetrics.iconSize)
+                Text(title)
+                Spacer()
+            }
+            .padding(.vertical, 1)
+            .opacity(disabled ? 0.4 : 1)
+        }
+        .accessibilityAddTraits(checked ? .isSelected : [])
     }
 }
 

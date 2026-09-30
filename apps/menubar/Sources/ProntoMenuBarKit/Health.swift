@@ -107,7 +107,8 @@ public enum HealthEvaluator {
     }
 }
 
-/// How the menu bar icon should look for a given health.
+/// How the menu bar icon should look for a given health: always an @, dimmed
+/// when idle and tinted when something needs attention.
 public struct MenuBarIcon: Equatable, Sendable {
     public enum Tint: Equatable, Sendable { case none, warning, error }
 
@@ -126,21 +127,21 @@ public struct MenuBarIcon: Equatable, Sendable {
     public init(health: OverallHealth) {
         switch health {
         case .loading:
-            self.init(symbolName: "ellipsis.bubble", tint: .none, dimmed: true, accessibilityLabel: "Pronto: checking status")
+            self.init(symbolName: "at", tint: .none, dimmed: true, accessibilityLabel: "Pronto: checking status")
         case .notInstalled:
-            self.init(symbolName: "questionmark.bubble", tint: .none, dimmed: true, accessibilityLabel: "Pronto isn't installed")
+            self.init(symbolName: "at", tint: .none, dimmed: true, accessibilityLabel: "Pronto isn't installed")
         case .unavailable:
-            self.init(symbolName: "exclamationmark.bubble.fill", tint: .error, dimmed: false, accessibilityLabel: "Pronto: unavailable")
+            self.init(symbolName: "at", tint: .error, dimmed: false, accessibilityLabel: "Pronto: unavailable")
         case .paused:
-            self.init(symbolName: "ellipsis.bubble", tint: .none, dimmed: true, accessibilityLabel: "Pronto: paused")
+            self.init(symbolName: "at", tint: .none, dimmed: true, accessibilityLabel: "Pronto: paused")
         case .error(let reasons):
-            self.init(symbolName: "exclamationmark.bubble.fill", tint: .error, dimmed: false,
+            self.init(symbolName: "at", tint: .error, dimmed: false,
                       accessibilityLabel: "Pronto: " + (reasons.first ?? "needs attention"))
         case .attention(let reasons):
-            self.init(symbolName: "exclamationmark.bubble", tint: .warning, dimmed: false,
+            self.init(symbolName: "at", tint: .warning, dimmed: false,
                       accessibilityLabel: "Pronto: " + (reasons.first ?? "needs attention"))
         case .normal:
-            self.init(symbolName: "ellipsis.bubble.fill", tint: .none, dimmed: false, accessibilityLabel: "Pronto: ready")
+            self.init(symbolName: "at", tint: .none, dimmed: false, accessibilityLabel: "Pronto: ready")
         }
     }
 }

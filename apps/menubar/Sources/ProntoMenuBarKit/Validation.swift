@@ -10,8 +10,8 @@ public enum TagValidation {
 
         public var message: String {
             switch self {
-            case .empty: return "Enter a tag, like @pronto."
-            case .tooLong: return "Tags can be at most 32 characters after the @."
+            case .empty: return "Enter a tag name, like pronto."
+            case .tooLong: return "Tags can be at most 32 characters."
             case .invalidCharacters: return "Use only letters, numbers, - and _."
             }
         }
