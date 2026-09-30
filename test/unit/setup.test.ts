@@ -219,6 +219,25 @@ describe("setup discovery", () => {
     });
   });
 
+  test("preserves every app's tags from a WhatsApp-only config", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pronto-defaults-"));
+    temporaryDirectories.push(home);
+    const path = join(home, "config.json");
+    await writeFile(path, JSON.stringify({
+      version: 3,
+      chatKeySalt: "s".repeat(32),
+      channels: {
+        whatsapp: { enabled: true, riskConsentVersion: 1, tags: ["@eee", "@wa"], wacliPath: "/opt/homebrew/bin/wacli" },
+      },
+      workingDirectory: "/Users/example/project",
+    }));
+    expect(await loadExistingSetupDefaults(path)).toEqual({
+      chatKeySalt: "s".repeat(32),
+      tags: ["@eee", "@wa"],
+      workingDirectory: "/Users/example/project",
+    });
+  });
+
   test("refuses to replace malformed existing setup state", async () => {
     const home = await mkdtemp(join(tmpdir(), "s4imsg-workspace-"));
     temporaryDirectories.push(home);
