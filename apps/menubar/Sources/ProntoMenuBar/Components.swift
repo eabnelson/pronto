@@ -262,6 +262,47 @@ struct CheckItem: View {
     }
 }
 
+/// A setup prompt to paste into Codex or Claude Code, with a Copy Prompt command.
+struct CopyablePrompt: View {
+    let prompt: String
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Paste this into Codex or Claude Code and your agent will set it up with you.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, PanelMetrics.inset)
+            Text(prompt)
+                .font(.system(size: 11))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: PanelMetrics.rowRadius, style: .continuous))
+                .padding(.horizontal, PanelMetrics.inset)
+                .padding(.vertical, 2)
+            MenuCommand(title: copied ? "Copied" : "Copy Prompt", action: copy, trailing: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+            })
+        }
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(prompt, forType: .string)
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+        }
+    }
+}
+
 /// Inline error text.
 struct InlineError: View {
     let message: String

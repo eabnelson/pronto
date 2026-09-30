@@ -9,7 +9,6 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppController {
-    static let setupGuideURL = URL(string: "https://studiofour.io/imessage-setup.md")!
     static let logURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/pronto/daemon.log")
 

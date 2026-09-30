@@ -155,8 +155,24 @@ struct ChannelRowView: View {
     let row: ChannelRow
     let onLink: () -> Void
     @Environment(MenuBarModel.self) private var model
+    @State private var showingSetup = false
+
+    /// Apps that aren't set up and can't be linked from here show a prompt for the owner's agent.
+    private var offersSetupPrompt: Bool { !row.configured && !row.showsLinkButton }
 
     var body: some View {
+        VStack(spacing: 0) {
+            item
+            if offersSetupPrompt && showingSetup {
+                ExpandedGroup {
+                    CopyablePrompt(prompt: SetupPrompt.add(row.app, labels: model.appLabels,
+                                                           keeping: model.channels?.enabledApps ?? []))
+                }
+            }
+        }
+    }
+
+    private var item: some View {
         MenuItem(action: action, disabled: model.busyAction != nil) {
             IconRow(
                 icon: MenuIcon(systemName: row.app == .whatsapp ? "phone.fill" : "message.fill",
@@ -169,6 +185,8 @@ struct ChannelRowView: View {
                     ProgressView().controlSize(.small)
                 } else if row.showsLinkButton {
                     Text("Link…").foregroundStyle(.secondary)
+                } else if offersSetupPrompt {
+                    DisclosureChevron(expanded: showingSetup)
                 }
             }
         }
@@ -180,6 +198,9 @@ struct ChannelRowView: View {
 
     private var action: (() -> Void)? {
         if row.showsLinkButton { return onLink }
+        if offersSetupPrompt {
+            return { withAnimation(.snappy(duration: 0.2)) { showingSetup.toggle() } }
+        }
         guard row.showsToggle, row.toggleAllowed else { return nil }
         let enabled = !row.enabled
         return { Task { await model.setChannel(row.app, enabled: enabled) } }
@@ -187,6 +208,7 @@ struct ChannelRowView: View {
 
     private var hint: String? {
         if row.showsLinkButton { return "Link \(row.label)" }
+        if offersSetupPrompt { return "Get a prompt that has your agent set up \(row.label)" }
         guard row.showsToggle else { return nil }
         if !row.toggleAllowed { return row.toggleHelp }
         return row.enabled ? "Stop answering in \(row.label)" : "Answer in \(row.label)"
@@ -207,19 +229,14 @@ struct NotInstalledView: View {
     let unverifiedMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(unverifiedMessage == nil ? "Pronto isn't installed" : "Pronto couldn't be verified",
-                  systemImage: unverifiedMessage == nil ? "shippingbox" : "lock.trianglebadge.exclamationmark")
-                .font(.headline)
-            Text(unverifiedMessage.map { "\($0) Reinstall Pronto using the setup guide." }
-                 ?? "Install Pronto with the setup guide. This menu updates automatically once it's installed.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Link("Open Setup Guide", destination: AppController.setupGuideURL)
+        VStack(alignment: .leading, spacing: 4) {
+            IconRow(icon: MenuIcon(systemName: unverifiedMessage == nil ? "shippingbox" : "lock"),
+                    title: unverifiedMessage == nil ? "Pronto isn't installed" : "Pronto couldn't be verified",
+                    subtitle: unverifiedMessage.map { "\($0) Reinstall Pronto to fix this." })
+                .padding(.horizontal, PanelMetrics.inset)
+                .padding(.bottom, 4)
+            CopyablePrompt(prompt: SetupPrompt.install)
         }
-        .padding(.horizontal, PanelMetrics.inset)
-        .padding(.vertical, 4)
     }
 }
 

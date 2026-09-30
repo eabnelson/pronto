@@ -170,3 +170,20 @@ struct QRCodeTests {
         #expect(big.width % small.width == 0)
     }
 }
+
+@Suite("Setup prompt")
+struct SetupPromptTests {
+    @Test func installMatchesWebsite() {
+        #expect(SetupPrompt.install == "Help me set up Pronto on this Mac. Follow https://studiofour.io/imessage-setup.md and stay with me until, in each messaging app I choose, one tagged message gets exactly one agent reply.")
+    }
+
+    @Test func addKeepsEnabledApps() {
+        #expect(SetupPrompt.add(.imessage, keeping: [.whatsapp]) == "Help me add iMessage to Pronto on this Mac. Pronto is already installed and answering in WhatsApp. Follow https://studiofour.io/imessage-setup.md, re-run setup and choose iMessage as well as WhatsApp so they all stay on, and stay with me until one tagged message in iMessage gets exactly one agent reply.")
+    }
+
+    @Test func addWithNothingEnabled() {
+        let prompt = SetupPrompt.add(.whatsapp, keeping: [])
+        #expect(prompt.contains("Pronto is already installed. Follow"))
+        #expect(prompt.contains("choose WhatsApp,"))
+    }
+}
