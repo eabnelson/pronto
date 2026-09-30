@@ -34,9 +34,13 @@ export function jidUser(value: string): string {
   return (at < 0 ? value : value.slice(0, at)).split(":")[0] ?? "";
 }
 
-/** Dedupe key. Edits and revokes reuse the target message ID, so they get their own keys. */
-export function deliveryKey(message: Pick<RawMessage, "chatJid" | "id" | "kind" | "text">): string {
-  const base = `${message.chatJid}|${message.id}`;
+/**
+ * Dedupe key. It uses the message ID alone: wacli can file the same message under a chat's
+ * phone-number JID and later its LID (or the reverse), and the message must still be seen once.
+ * Edits and revokes reuse the target message ID, so they get their own keys.
+ */
+export function deliveryKey(message: Pick<RawMessage, "id" | "kind" | "text">): string {
+  const base = `id|${message.id}`;
   if (message.kind === "edit") {
     const digest = createHash("sha256").update(message.text ?? "").digest("base64url").slice(0, 16);
     return `${base}|edit|${digest}`;

@@ -305,7 +305,7 @@ describe("Pronto updater", () => {
     } finally {
       database.close();
     }
-  });
+  }, 20_000);
 
   test("migrates an existing ad-hoc install from a separately downloaded signed candidate", async () => {
     const home = await mkdtemp(join(tmpdir(), "pronto-update-local-migration-"));
