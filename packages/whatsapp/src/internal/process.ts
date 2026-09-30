@@ -11,6 +11,8 @@ export interface CommandResult {
 }
 
 export interface CommandOptions {
+  /** Environment for the wacli process; defaults to this process's environment. */
+  readonly env?: NodeJS.ProcessEnv;
   readonly maxOutputBytes?: number;
   readonly signal?: AbortSignal;
   readonly timeoutMs: number;
@@ -38,9 +40,13 @@ class BoundedBuffer {
   }
 }
 
-export function spawnWacli(path: string, args: readonly string[]): ChildProcess {
+export function spawnWacli(
+  path: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): ChildProcess {
   return spawn(path, [...args], {
-    env: process.env,
+    env,
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -57,7 +63,7 @@ export async function runCommand(
   const stderr = new BoundedBuffer(limit);
   let child: ChildProcess;
   try {
-    child = spawnWacli(path, args);
+    child = spawnWacli(path, args, options.env);
   } catch (error) {
     return failedSpawn(error);
   }

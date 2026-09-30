@@ -88,7 +88,8 @@ function priorInvocations(prefix: string): number {
 
 function record(): void {
   if (store === "") return;
-  appendFileSync(invocationsPath, `${JSON.stringify({ args: argv, at: Date.now(), command })}\n`);
+  const deviceLabel = process.env.WACLI_DEVICE_LABEL ?? null;
+  appendFileSync(invocationsPath, `${JSON.stringify({ args: argv, at: Date.now(), command, deviceLabel })}\n`);
 }
 
 function ok(data: unknown): never {
