@@ -201,7 +201,7 @@ test("the iMessage channel speaks chat addresses without changing transport beha
   const activations: ChannelActivation[] = [];
   const watch = await channel.watch({
     onActivation: (activation) => { activations.push(activation); },
-    tags: ["@helper"],
+    tags: () => ["@helper"],
   });
   await watch.close();
 
@@ -242,9 +242,31 @@ test("the iMessage channel checks its own echoes by chat address", () => {
   messages.events = [event({ fromMe: true, text: "@helper sent" })];
   return channel.watch({
     onActivation: () => { throw new Error("echo must not activate"); },
-    tags: ["@helper"],
+    tags: () => ["@helper"],
   }).then(async (watch) => {
     await watch.close();
     expect(seen).toEqual([{ channel: "imessage", id: "42" }]);
   });
 });
+
+test("tag changes reach a running iMessage watch without resubscribing", async () => {
+  let deliver: ((value: MessagesEvent) => Promise<void>) | undefined;
+  const messages = new FakeMessages();
+  messages.subscribe = async (input) => {
+    deliver = async (value) => { await input.onEvent(value); };
+    return { close: async () => undefined, terminated: new Promise<void>(() => undefined) };
+  };
+  let tags = ["@helper"];
+  const requests: string[] = [];
+  const channel = new ImessageChannel(messages);
+  await channel.watch({
+    onActivation: (activation) => { requests.push(activation.activationTag); },
+    tags: () => tags,
+  });
+
+  await deliver!(event({ guid: "one", text: "@plan first" }));
+  tags = ["@plan"];
+  await deliver!(event({ guid: "two", text: "@plan second" }));
+  expect(requests).toEqual(["@plan"]);
+});
+

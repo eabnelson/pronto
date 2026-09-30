@@ -173,9 +173,22 @@ describe("Pronto CLI", () => {
       "@work        WhatsApp",
     ]);
     const json = await run(["tags", "list", "--json"]);
-    expect(JSON.parse(json.stdout)).toEqual([
-      { apps: ["imessage", "whatsapp"], tag: "@s4" },
-      { apps: ["whatsapp"], tag: "@work" },
+    expect(JSON.parse(json.stdout)).toEqual({
+      tags: [
+        { apps: ["imessage", "whatsapp"], tag: "@s4" },
+        { apps: ["whatsapp"], tag: "@work" },
+      ],
+    });
+
+    const channels = JSON.parse((await run(["channels", "list", "--json"])).stdout);
+    expect(channels.channels.map((channel: { app: string; enabled: boolean; tags: string[] }) => ({
+      app: channel.app, enabled: channel.enabled, tags: channel.tags,
+    }))).toEqual([
+      { app: "imessage", enabled: true, tags: ["@s4"] },
+      { app: "whatsapp", enabled: true, tags: ["@s4", "@work"] },
     ]);
+    const invalid = await run(["tags", "add", "@x", "--app", "telegram", "--json"]);
+    expect(invalid.exitCode).toBe(2);
+    expect(JSON.parse(invalid.stdout)).toEqual({ error: "--app must be imessage or whatsapp" });
   });
 });

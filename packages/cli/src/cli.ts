@@ -2,6 +2,7 @@
 
 import packageJson from "../package.json" with { type: "json" };
 import { createInterface } from "node:readline/promises";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
@@ -22,10 +23,9 @@ import {
 import {
   launchAgentStateForLabel,
   parseLaunchAgentState,
+  reloadLaunchAgent,
   removeLaunchAgent,
   restoreLaunchAgentForLabel,
-  restartLaunchAgent,
-  stopLaunchAgent,
   stopLaunchAgentForLabel,
 } from "./macos/launch-agent";
 import { legacyPathsForHome, pathsForHome } from "./macos/paths";
@@ -60,7 +60,7 @@ import { qualifyRuntime } from "./runtimes/qualification";
 import { createRuntimeAdapter } from "./runtimes/factory";
 import { ImsgTransport } from "./imessage/transport";
 import { DeliveryJournal } from "./storage/journal";
-import { CHANNEL_LABELS, type ChannelKind } from "./channels/types";
+import { CHANNEL_KINDS, CHANNEL_LABELS, isChannelKind, type ChannelKind } from "./channels/types";
 import {
   appList,
   parseAppFlags,
@@ -86,8 +86,10 @@ Commands:
   status      Show listener health without conversation content
   doctor      Check local capabilities and permissions
   tags        List, add, or remove trigger tags and the apps they apply to
+  channels    List, enable, or disable messaging apps
   whatsapp    Link or unlink WhatsApp
   update      Check for or install a verified Pronto update
+  start       Start the installed listener
   stop        Stop the installed listener
   forget      Remove one chat's tagged memory and workspace state
   uninstall   Remove the listener while preserving data by default
@@ -345,11 +347,16 @@ async function runSetup(): Promise<number> {
   }
 }
 
+/** Prints a failure for `--json` callers as `{"error": ...}` on stdout, otherwise on stderr. */
+function fail(json: boolean, message: string, code = 1): number {
+  if (json) console.log(JSON.stringify({ error: message }));
+  else console.error(message);
+  return code;
+}
+
 async function runUpdate(args: readonly string[]): Promise<number> {
-  if (process.platform !== "darwin") {
-    console.error("Pronto updates require macOS.");
-    return 1;
-  }
+  const json = args.includes("--json");
+  if (process.platform !== "darwin") return fail(json, "Pronto updates require macOS.");
   const automatic = args.includes("--automatic");
   const checkOnly = args.includes("--check");
   const allowIdentityMigration = args.includes("--migrate-signing");
@@ -372,12 +379,24 @@ async function runUpdate(args: readonly string[]): Promise<number> {
     }
     if (checkOnly) {
       const result = await updater.check();
-      console.log(result.status === "current"
-        ? `Pronto ${result.version} is current.`
-        : `Pronto ${result.manifest.version} is available.`);
+      if (json) {
+        console.log(JSON.stringify({
+          installedVersion: packageJson.version,
+          status: result.status === "current" ? "current" : "available",
+          version: result.status === "current" ? result.version : result.manifest.version,
+        }));
+      } else {
+        console.log(result.status === "current"
+          ? `Pronto ${result.version} is current.`
+          : `Pronto ${result.manifest.version} is available.`);
+      }
       return 0;
     }
     const result = await updater.install({ allowIdentityMigration });
+    if (json) {
+      console.log(JSON.stringify({ status: result.status, version: result.version }));
+      return result.status === "migration_required" || result.status === "migration_installed" ? 2 : 0;
+    }
     if (result.status === "current") {
       if (!automatic) console.log(`Pronto ${result.version} is current.`);
       return 0;
@@ -399,8 +418,8 @@ async function runUpdate(args: readonly string[]): Promise<number> {
     console.log(`Pronto updated to ${result.version}.`);
     return 0;
   } catch (error) {
-    console.error(`Pronto update failed: ${(error as Error).message}`);
-    return automatic ? 0 : 1;
+    if (automatic) return 0;
+    return fail(json, `Pronto update failed: ${(error as Error).message}`);
   }
 }
 
@@ -464,44 +483,173 @@ async function whatsappDoctorCheck(
   }
 }
 
-const WHATSAPP_USAGE = "Usage: pronto whatsapp [link [--phone <number>] | unlink]";
+const CHANNELS_USAGE = "Usage: pronto channels [list | enable <app> | disable <app>] [--json]";
+
+const CHANNEL_TOOLS: Record<ChannelKind, "imsg" | "wacli"> = { imessage: "imsg", whatsapp: "wacli" };
+
+function channelListing(config: ProntoConfig) {
+  return CHANNEL_KINDS.map((app) => {
+    const entry = config.channels[app];
+    const configuredPath = entry === undefined
+      ? undefined
+      : "imsgPath" in entry ? entry.imsgPath : entry.wacliPath;
+    const path = configuredPath ?? Bun.which(CHANNEL_TOOLS[app]);
+    return {
+      app,
+      configured: entry !== undefined,
+      enabled: entry?.enabled === true,
+      label: CHANNEL_LABELS[app],
+      tags: channelTags(config, app),
+      tool: {
+        installed: path !== null && existsSync(path),
+        name: CHANNEL_TOOLS[app],
+        path: path ?? null,
+      },
+    };
+  });
+}
+
+function printChannels(config: ProntoConfig): void {
+  console.log(JSON.stringify({ channels: channelListing(config) }));
+}
+
+async function runChannels(args: readonly string[]): Promise<number> {
+  const json = args.includes("--json");
+  const [action = "list", app, extra] = args.filter((arg) => arg !== "--json");
+  const paths = pathsForHome(homedir());
+  const config = await loadConfig(paths.configPath);
+  if (action === "list" && app === undefined) {
+    if (json) printChannels(config);
+    else {
+      for (const channel of channelListing(config)) {
+        const state = channel.enabled ? "enabled" : channel.configured ? "disabled" : "not set up";
+        console.log(`${channel.label.padEnd(10)} ${state}`);
+      }
+    }
+    return 0;
+  }
+  if ((action !== "enable" && action !== "disable") || !isChannelKind(app) || extra !== undefined) {
+    return fail(json, CHANNELS_USAGE, 2);
+  }
+  const entry = config.channels[app];
+  if (entry === undefined) {
+    return fail(json, app === "whatsapp"
+      ? "WhatsApp is not set up. Run pronto whatsapp link."
+      : "iMessage is not set up. Run pronto setup.", 2);
+  }
+  let next: ProntoConfig;
+  try {
+    next = createConfig({ ...config, channels: { ...config.channels, [app]: { ...entry, enabled: action === "enable" } } });
+  } catch (error) {
+    return fail(json, (error as Error).message, 2);
+  }
+  await saveConfig(paths.configPath, next);
+  await reloadLaunchAgent().catch(() => undefined);
+  if (json) printChannels(next);
+  else console.log(`${CHANNEL_LABELS[app]} is ${action === "enable" ? "enabled" : "disabled"}.`);
+  return 0;
+}
+
+async function runListener(action: "start" | "stop", json: boolean): Promise<number> {
+  const paths = pathsForHome(homedir());
+  const state = await launchAgentStateForLabel({ label: LAUNCH_AGENT_LABEL });
+  try {
+    if (action === "stop" && state !== "stopped") await stopLaunchAgentForLabel({ label: LAUNCH_AGENT_LABEL });
+    if (action === "start" && state === "stopped") {
+      if (!existsSync(paths.launchAgentPath)) throw new Error("Pronto is not installed. Run pronto setup.");
+      await restoreLaunchAgentForLabel({ label: LAUNCH_AGENT_LABEL, plistPath: paths.launchAgentPath });
+    }
+  } catch (error) {
+    return fail(json, (error as Error).message);
+  }
+  const listener = action === "start" ? "running" : "stopped";
+  if (json) console.log(JSON.stringify({ listener }));
+  else console.log(action === "start" ? "Pronto is running." : "Pronto is stopped.");
+  return 0;
+}
+
+const WHATSAPP_USAGE =
+  "Usage: pronto whatsapp link [--phone <number>] [--events [--accept-risk] [--tag <tag>]...] | unlink [--json]";
+
+function parseWhatsappLinkArgs(args: readonly string[]): {
+  acceptRisk: boolean;
+  events: boolean;
+  phone?: string;
+  tags: string[];
+} {
+  const options: { acceptRisk: boolean; events: boolean; phone?: string; tags: string[] } = {
+    acceptRisk: false,
+    events: false,
+    tags: [],
+  };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const value = args[index + 1];
+    if (arg === "--events") options.events = true;
+    else if (arg === "--accept-risk") options.acceptRisk = true;
+    else if ((arg === "--phone" || arg === "--tag") && value !== undefined && !value.startsWith("--")) {
+      if (arg === "--phone") options.phone = value;
+      else options.tags.push(value);
+      index += 1;
+    } else throw new Error(WHATSAPP_USAGE);
+  }
+  return options;
+}
 
 async function runWhatsapp(args: readonly string[]): Promise<number> {
   const [action, ...rest] = args;
   const paths = pathsForHome(homedir());
   const config = await loadConfig(paths.configPath);
-  if (action === "unlink" && rest.length === 0) return await unlinkWhatsapp(config, paths);
-  const phoneIndex = rest.indexOf("--phone");
-  const phone = phoneIndex === -1 ? undefined : rest[phoneIndex + 1];
-  if (action !== "link" || (phoneIndex === -1 ? rest.length !== 0 : rest.length !== 2 || phone === undefined)) {
-    console.error(WHATSAPP_USAGE);
-    return 2;
+  if (action === "unlink") {
+    const json = rest.includes("--json");
+    if (rest.some((arg) => arg !== "--json")) return fail(json, WHATSAPP_USAGE, 2);
+    return await unlinkWhatsapp(config, paths, json);
   }
+  let options: ReturnType<typeof parseWhatsappLinkArgs>;
+  try {
+    if (action !== "link") throw new Error(WHATSAPP_USAGE);
+    options = parseWhatsappLinkArgs(rest);
+  } catch (error) {
+    return fail(false, (error as Error).message, 2);
+  }
+  const emit = (event: Record<string, unknown>) => console.log(JSON.stringify(event));
+  const failLink = (reason: string, message: string, code = 1) => {
+    if (options.events) emit({ event: "error", message, reason });
+    else console.error(message);
+    return code;
+  };
 
   const wacliPath = config.channels.whatsapp?.wacliPath ?? Bun.which("wacli");
   if (wacliPath === null || !isAbsolute(wacliPath)) {
-    console.error("wacli was not found on PATH. Install it with: brew install openclaw/tap/wacli");
-    return 1;
+    return failLink("wacli-missing", "wacli was not found on PATH. Install it with: brew install openclaw/tap/wacli");
   }
-  const prompt = createInterface({ input: stdin, output: stdout });
   let next: ProntoConfig;
   try {
     const existing = config.channels.whatsapp;
     let tags = existing?.tags;
-    if (existing === undefined) {
-      console.log(`${WHATSAPP_DISCLOSURE}\n`);
-      const accepted = (await prompt.question("Type yes to use WhatsApp with this risk: "))
-        .trim()
-        .toLowerCase();
-      if (accepted !== "yes") {
-        console.error("WhatsApp was not enabled.");
-        return 1;
+    if (existing === undefined && options.events) {
+      if (!options.acceptRisk) {
+        return failLink("consent-required", "Accept the WhatsApp risk disclosure with --accept-risk.", 2);
       }
-      const defaults = tagAssignments(config).map(({ tag }) => tag);
-      const answer = (await prompt.question(
-        `WhatsApp trigger tags, separated by commas [${defaults.join(", ")}]: `,
-      )).trim();
-      tags = answer === "" ? defaults : normalizeTags(answer.split(",").map((tag) => tag.trim()));
+      tags = options.tags.length > 0
+        ? normalizeTags(options.tags)
+        : tagAssignments(config).map(({ tag }) => tag);
+    } else if (existing === undefined) {
+      const prompt = createInterface({ input: stdin, output: stdout });
+      try {
+        console.log(`${WHATSAPP_DISCLOSURE}\n`);
+        const accepted = (await prompt.question("Type yes to use WhatsApp with this risk: "))
+          .trim()
+          .toLowerCase();
+        if (accepted !== "yes") return failLink("consent-required", "WhatsApp was not enabled.");
+        const defaults = tagAssignments(config).map(({ tag }) => tag);
+        const answer = (await prompt.question(
+          `WhatsApp trigger tags, separated by commas [${defaults.join(", ")}]: `,
+        )).trim();
+        tags = answer === "" ? defaults : normalizeTags(answer.split(",").map((tag) => tag.trim()));
+      } finally {
+        prompt.close();
+      }
     }
     next = createConfig({
       ...config,
@@ -516,10 +664,7 @@ async function runWhatsapp(args: readonly string[]): Promise<number> {
       },
     });
   } catch (error) {
-    console.error((error as Error).message);
-    return 2;
-  } finally {
-    prompt.close();
+    return failLink("invalid-configuration", (error as Error).message, 2);
   }
 
   const whatsapp = standaloneWhatsapp({
@@ -530,32 +675,60 @@ async function runWhatsapp(args: readonly string[]): Promise<number> {
   });
   try {
     if ((await whatsapp.qualify()).status === "needs_link") {
-      await linkWhatsappInTerminal(whatsapp, phone === undefined ? {} : { phone });
+      const phone = options.phone === undefined ? {} : { phone: options.phone };
+      if (options.events) {
+        let linked = false;
+        for await (const step of whatsapp.link(phone)) {
+          if (step.type === "qr") emit({ code: step.code, event: "qr" });
+          else if (step.type === "pairing_code") emit({ code: step.code, event: "pairing_code" });
+          else if (step.type === "linked") {
+            linked = true;
+            // Closing the link waits for wacli's first history sync to finish.
+            emit({ event: "syncing" });
+            break;
+          } else return failLink("link-failed", `WhatsApp linking failed: ${step.reason}`);
+        }
+        if (!linked) return failLink("link-failed", "WhatsApp linking ended before the device was linked");
+      } else {
+        await linkWhatsappInTerminal(whatsapp, phone);
+      }
     }
   } catch (error) {
-    console.error((error as Error).message);
-    return 1;
+    return failLink("link-failed", (error as Error).message);
   } finally {
     await whatsapp.close().catch(() => undefined);
   }
   await saveConfig(paths.configPath, next);
-  const restarted = await restartLaunchAgent();
-  if (restarted.exitCode !== 0) {
-    console.error("WhatsApp is linked, but the listener could not restart. Run pronto setup to repair it.");
-    return 1;
-  }
-  console.log(`WhatsApp is linked. Tags: ${channelTags(next, "whatsapp").join(", ")}`);
+  await reloadLaunchAgent().catch(() => undefined);
+  if (options.events) emit({ event: "linked" });
+  else console.log(`WhatsApp is linked. Tags: ${channelTags(next, "whatsapp").join(", ")}`);
   return 0;
 }
 
 async function unlinkWhatsapp(
   config: ProntoConfig,
   paths: ReturnType<typeof pathsForHome>,
+  json: boolean,
 ): Promise<number> {
   const existing = config.channels.whatsapp;
   if (existing === undefined) {
-    console.log("WhatsApp is not set up.");
+    if (json) printChannels(config);
+    else console.log("WhatsApp is not set up.");
     return 0;
+  }
+  // The listener's wacli session holds the store lock, so it must release WhatsApp first.
+  const othersEnabled = enabledChannels(config).some((app) => app !== "whatsapp");
+  const next: ProntoConfig = othersEnabled
+    ? { ...config, channels: { ...config.channels, whatsapp: { ...existing, enabled: false } } }
+    : config;
+  let resume: (() => Promise<unknown>) | undefined;
+  if (othersEnabled) {
+    await saveConfig(paths.configPath, next);
+    await reloadLaunchAgent().catch(() => undefined);
+    await Bun.sleep(1_500);
+  } else if (await launchAgentStateForLabel({ label: LAUNCH_AGENT_LABEL }) !== "stopped") {
+    await stopLaunchAgentForLabel({ label: LAUNCH_AGENT_LABEL });
+    resume = () => restoreLaunchAgentForLabel({ label: LAUNCH_AGENT_LABEL, plistPath: paths.launchAgentPath });
   }
   const whatsapp = standaloneWhatsapp({
     chatKeySalt: config.chatKeySalt,
@@ -566,18 +739,13 @@ async function unlinkWhatsapp(
   try {
     await whatsapp.unlink();
   } catch (error) {
-    console.error(`WhatsApp could not be unlinked: ${(error as Error).message}`);
-    return 1;
+    return fail(json, `WhatsApp could not be unlinked: ${(error as Error).message}`);
   } finally {
     await whatsapp.close().catch(() => undefined);
+    await resume?.().catch(() => undefined);
   }
-  const othersEnabled = enabledChannels(config).some((app) => app !== "whatsapp");
-  if (othersEnabled) {
-    await saveConfig(paths.configPath, {
-      ...config,
-      channels: { ...config.channels, whatsapp: { ...existing, enabled: false } },
-    });
-    await restartLaunchAgent();
+  if (json) printChannels(next);
+  else if (othersEnabled) {
     console.log("WhatsApp is unlinked and turned off. Run pronto whatsapp link to use it again.");
   } else {
     console.log("WhatsApp is unlinked. It is the only enabled app, so Pronto will report it as needing a link.");
@@ -694,6 +862,7 @@ async function runStatus(json: boolean, includeChats: boolean): Promise<number> 
     const journal = new DeliveryJournal(database);
     const daemonHealth = journal.daemonHealth();
     const status = {
+      version: packageJson.version,
       channels: await channelStatus(paths.configPath, journal.channelHealth()),
       database: "ready",
       daemon: daemonHealth?.state ?? "unknown",
@@ -750,8 +919,10 @@ async function runDaemon(): Promise<number> {
   const config = await loadConfig(paths.configPath);
   const daemon = new ProntoDaemon(config, paths);
   const stop = () => daemon.stop();
+  const reload = () => void daemon.reload(() => loadConfig(paths.configPath));
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
+  process.on("SIGHUP", reload);
   try {
     try {
       await daemon.run();
@@ -764,6 +935,7 @@ async function runDaemon(): Promise<number> {
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
+    process.off("SIGHUP", reload);
   }
   return 0;
 }
@@ -784,38 +956,36 @@ async function runUninstall(args: readonly string[]): Promise<number> {
   return 0;
 }
 
-const TAGS_USAGE = "Usage: pronto tags [list [--json] | add <tag> [--app <app>]... | remove <tag> [--app <app>]...]";
+const TAGS_USAGE = "Usage: pronto tags [list | add <tag> [--app <app>]... | remove <tag> [--app <app>]...] [--json]";
 
 async function runTags(args: readonly string[]): Promise<number> {
   const paths = pathsForHome(homedir());
-  const config = await loadConfig(paths.configPath);
+  const json = args.includes("--json");
   let parsed: ReturnType<typeof parseAppFlags>;
   try {
     parsed = parseAppFlags(args);
   } catch (error) {
-    console.error((error as Error).message);
-    return 2;
+    return fail(json, (error as Error).message, 2);
   }
+  const config = await loadConfig(paths.configPath);
   const [action = "list", value, extra] = parsed.positional;
   const enabled = enabledChannels(config);
+  const printTags = (current: ProntoConfig) => {
+    console.log(JSON.stringify({ tags: tagAssignments(current) }));
+  };
 
   if (action === "list") {
-    if (value !== undefined || parsed.apps.length > 0) {
-      console.error(TAGS_USAGE);
-      return 2;
-    }
-    const assignments = tagAssignments(config);
-    if (parsed.json) console.log(JSON.stringify(assignments));
+    if (value !== undefined || parsed.apps.length > 0) return fail(json, TAGS_USAGE, 2);
+    if (json) printTags(config);
     else {
-      for (const { apps, tag } of assignments) {
+      for (const { apps, tag } of tagAssignments(config)) {
         console.log(enabled.length > 1 ? `${tag.padEnd(12)} ${appList(apps)}` : tag);
       }
     }
     return 0;
   }
   if ((action !== "add" && action !== "remove") || value === undefined || extra !== undefined) {
-    console.error(TAGS_USAGE);
-    return 2;
+    return fail(json, TAGS_USAGE, 2);
   }
 
   let next: ProntoConfig;
@@ -826,29 +996,28 @@ async function runTags(args: readonly string[]): Promise<number> {
       if (!enabled.includes(app)) throw new Error(`${CHANNEL_LABELS[app]} is not enabled`);
     }
     let apps = parsed.apps;
-    if (apps.length === 0 && action === "add") apps = await chooseTagApps(normalizedValue, enabled);
+    if (apps.length === 0 && action === "add" && !json) apps = await chooseTagApps(normalizedValue, enabled);
     if (apps.length === 0) apps = enabled;
     next = action === "add"
       ? addTagToApps(config, value, apps)
       : removeTagFromApps(config, value, apps);
   } catch (error) {
-    console.error((error as Error).message);
-    return 2;
+    return fail(json, (error as Error).message, 2);
   }
   if (JSON.stringify(next.channels) === JSON.stringify(config.channels)) {
-    console.log(`${normalizedValue} is already configured.`);
+    if (json) printTags(config);
+    else console.log(`${normalizedValue} is already configured.`);
     return 0;
   }
 
   await saveConfig(paths.configPath, next);
-  const restarted = await restartLaunchAgent();
-  if (restarted.exitCode !== 0) {
-    console.error("Tags were saved, but the listener could not restart. Run pronto setup to repair it.");
-    return 1;
+  await reloadLaunchAgent().catch(() => undefined);
+  if (json) printTags(next);
+  else {
+    console.log(`Configured tags: ${tagAssignments(next).map(({ apps, tag }) => {
+      return enabled.length > 1 ? `${tag} (${appList(apps)})` : tag;
+    }).join(", ")}`);
   }
-  console.log(`Configured tags: ${tagAssignments(next).map(({ apps, tag }) => {
-    return enabled.length > 1 ? `${tag} (${appList(apps)})` : tag;
-  }).join(", ")}`);
   return 0;
 }
 
@@ -898,11 +1067,8 @@ export async function runCli(args: readonly string[]): Promise<number> {
   if (command === "tags" || command === "tag") return runTags(args.slice(1));
   if (command === "whatsapp") return runWhatsapp(args.slice(1));
   if (command === "update") return runUpdate(args.slice(1));
-  if (command === "stop") {
-    const result = await stopLaunchAgent();
-    if (result.exitCode !== 0) console.error("Pronto was not running.");
-    return result.exitCode === 0 ? 0 : 1;
-  }
+  if (command === "stop" || command === "start") return runListener(command, args.includes("--json"));
+  if (command === "channels") return runChannels(args.slice(1));
   if (command === "forget") {
     const chatKey = args[1];
     if (chatKey === undefined || !/^[A-Za-z0-9_-]{8,128}$/.test(chatKey)) {

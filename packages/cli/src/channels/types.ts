@@ -82,7 +82,8 @@ export interface Channel extends TurnChannel {
     onActivation: (activation: ChannelActivation) => void | Promise<void>;
     onHealth?: (health: ChannelConnectionHealth) => void;
     onRecovery?: (outcome: ChannelRecoveryOutcome) => void;
-    tags: readonly string[];
+    /** Read on every message, so tag changes apply without restarting the watch. */
+    tags: () => readonly string[];
   }): Promise<ChannelWatch>;
   close(): Promise<void>;
 }

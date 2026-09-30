@@ -40,6 +40,7 @@ export async function linkWhatsappInTerminal(
     } else if (step.type === "pairing_code") {
       write(`\nIn WhatsApp choose Link with phone number instead, then enter: ${step.code}`);
     } else if (step.type === "linked") {
+      write("Linked. Finishing the first sync of recent messages; this can take a few minutes…");
       return step.linkedJid;
     } else {
       throw new Error(`WhatsApp linking failed: ${step.reason}`);

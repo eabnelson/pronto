@@ -10,6 +10,7 @@ import {
   renderLaunchAgent,
   renderUpdaterLaunchAgent,
   restoreLaunchAgentForLabel,
+  reloadLaunchAgent,
   restartLaunchAgent,
   stopLaunchAgentForLabel,
   type LaunchctlRunner,
@@ -37,6 +38,8 @@ test("renders a stable owner LaunchAgent without shell interpolation", () => {
   expect(plist).toContain("dev.pronto.agent");
   expect(plist).toContain("<string>run</string>");
   expect(plist).toContain("<key>ExitTimeOut</key>\n  <integer>120</integer>");
+  // Background would let macOS throttle replies on a busy Mac.
+  expect(plist).toContain("<key>ProcessType</key>\n  <string>Adaptive</string>");
   expect(plist).toContain("agent &amp; output.log");
   expect(plist).toContain(
     "<string>/opt/homebrew/bin:/Users/me/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
@@ -82,6 +85,15 @@ test("restarts the stable listener after a tag change", async () => {
 
   expect(result.exitCode).toBe(0);
   expect(calls).toEqual([["kickstart", "-k", "gui/501/dev.pronto.agent"]]);
+});
+
+test("asks the running listener to reload its configuration", async () => {
+  const calls: string[][] = [];
+  await reloadLaunchAgent(async (args) => {
+    calls.push([...args]);
+    return { exitCode: 0, stderr: "", stdout: "" };
+  }, 501);
+  expect(calls).toEqual([["kill", "SIGHUP", "gui/501/dev.pronto.agent"]]);
 });
 
 test("removes the legacy service by its legacy label", async () => {
