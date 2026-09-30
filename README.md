@@ -228,6 +228,28 @@ WhatsApp removes the device, or stop using it:
 "$PRONTO" whatsapp unlink
 ```
 
+## Menu bar app
+
+Setup offers to install the Pronto menu bar app, signed and notarized like the
+CLI, into `~/Applications`. Its **@** icon shows whether Pronto is answering and
+opens a menu to:
+
+- pause or resume Pronto,
+- see each app's status, turn apps on or off, and link WhatsApp,
+- add tags (just the name; the @ is added for you), choose which apps each tag
+  works in, or remove tags,
+- copy a setup prompt for an app that isn't set up yet, to paste into your agent,
+- install updates, run diagnostics, and open the logs.
+
+The menu bar app only runs the installed `pronto` CLI and has no access of its
+own; quitting it doesn't stop Pronto. The signed updater keeps it on the same
+release as the CLI. Install or remove it any time:
+
+```sh
+"$PRONTO" menubar install
+"$PRONTO" menubar uninstall
+```
+
 ## Operations
 
 ```sh
