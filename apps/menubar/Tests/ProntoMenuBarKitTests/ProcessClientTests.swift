@@ -150,8 +150,10 @@ struct CLILocationTests {
             #"identifier "dev.pronto.cli" and anchor apple generic and certificate leaf[subject.OU] = "9YCNUWK84C""#)
     }
 
-    @Test(.enabled(if: FileManager.default.fileExists(atPath: CLILocation.installedURL().path),
-                   "Only on Macs with Pronto installed"))
+    // Opt-in: a development install is ad-hoc signed and would fail this check.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["PRONTO_TEST_INSTALLED_CLI"] == "1"
+                       && FileManager.default.fileExists(atPath: CLILocation.installedURL().path),
+                   "Set PRONTO_TEST_INSTALLED_CLI=1 on a Mac with the signed release installed"))
     func installedCLISatisfiesRequirement() {
         #expect(CodeSignatureVerifier.verify(CLILocation.installedURL()) == nil)
     }

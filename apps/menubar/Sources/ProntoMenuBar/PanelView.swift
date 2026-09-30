@@ -10,26 +10,28 @@ struct PanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider().padding(.horizontal, 10)
 
             if model.isInstalled, !isUnverified {
+                UpdateSection()
                 appsSection
                 TagsSection()
                 if let error = model.actionError {
                     InlineError(message: error)
-                        .padding(.horizontal, 14)
+                        .padding(.horizontal, PanelMetrics.inset + 6)
                         .padding(.top, 8)
                 }
-                UpdateSection()
             } else {
                 NotInstalledView(unverifiedMessage: isUnverified ? model.health.summary : nil)
+                    .panelCard()
+                    .padding(.horizontal, PanelMetrics.inset)
             }
 
-            Divider().padding(.horizontal, 10).padding(.top, 10)
+            Divider().padding(.horizontal, PanelMetrics.inset + 6).padding(.top, 12).padding(.bottom, 4)
             actions
         }
-        .padding(.bottom, 6)
-        .frame(width: 340)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+        .frame(width: PanelMetrics.width)
         .background(WindowVisibilityReader { visible in model.setPanelOpen(visible) })
     }
 
@@ -42,12 +44,15 @@ struct PanelView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            MenuBarLabel(icon: model.icon)
-                .font(.title2)
+            Image(systemName: model.icon.symbolName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(headerTint.gradient))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("Pronto").font(.headline)
+                    Text("Pronto").font(.title3.weight(.semibold))
                     if let version = model.version {
                         Text(version)
                             .font(.caption)
@@ -67,8 +72,16 @@ struct PanelView: View {
                 pauseButton
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, PanelMetrics.inset + 6)
         .padding(.vertical, 10)
+    }
+
+    private var headerTint: Color {
+        switch model.icon.tint {
+        case .error: return .red
+        case .warning: return .orange
+        case .none: return model.icon.dimmed ? .gray : .accentColor
+        }
     }
 
     private var pauseButton: some View {
@@ -80,9 +93,13 @@ struct PanelView: View {
                 ProgressView().controlSize(.small)
             } else {
                 Label(paused ? "Resume" : "Pause", systemImage: paused ? "play.fill" : "pause.fill")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 16, height: 16)
             }
         }
-        .controlSize(.small)
+        .glassButtonStyle()
+        .buttonBorderShape(.circle)
+        .controlSize(.large)
         .disabled(model.busyAction != nil)
         .help(paused ? "Resume answering messages" : "Pause answering messages. Quitting this menu doesn't stop Pronto.")
     }
@@ -92,13 +109,19 @@ struct PanelView: View {
     private var appsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeader(title: "Apps")
-            ForEach(model.channelRows) { row in
-                ChannelRowView(row: row) {
-                    controller.prepareLink()
-                    openWindow(id: WindowID.linkWhatsApp)
-                    controller.bringToFront()
+            VStack(spacing: 0) {
+                ForEach(Array(model.channelRows.enumerated()), id: \.element.id) { index, row in
+                    if index > 0 { Divider().padding(.leading, 52) }
+                    ChannelRowView(row: row) {
+                        controller.prepareLink()
+                        openWindow(id: WindowID.linkWhatsApp)
+                        controller.bringToFront()
+                    }
                 }
             }
+            .padding(.vertical, 4)
+            .panelCard()
+            .padding(.horizontal, PanelMetrics.inset)
         }
     }
 
@@ -132,7 +155,6 @@ struct PanelView: View {
             }
             .help("Pronto keeps answering messages after the menu bar app quits.")
         }
-        .padding(.top, 6)
     }
 }
 
@@ -143,21 +165,26 @@ struct ChannelRowView: View {
     @Environment(MenuBarModel.self) private var model
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            StatusDot(tone: row.tone, label: row.statusText)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(row.label)
-                Text(row.detail.map { "\(row.statusText) · \($0)" } ?? row.statusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+        HStack(alignment: .center, spacing: 10) {
+            AppGlyph(app: row.app, dimmed: !row.enabled)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.label).font(.body.weight(.medium))
+                HStack(spacing: 5) {
+                    StatusDot(tone: row.tone, label: row.statusText)
+                    Text(row.detail.map { "\(row.statusText) · \($0)" } ?? row.statusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(row.accessibilityLabel)
             Spacer(minLength: 8)
             if row.showsLinkButton {
-                Button("Link WhatsApp…", action: onLink)
+                Button("Link…", action: onLink)
+                    .glassButtonStyle(prominent: true)
                     .controlSize(.small)
+                    .help("Link WhatsApp")
             }
             if row.showsToggle {
                 if model.busyAction == .channel(row.app) {
@@ -171,13 +198,13 @@ struct ChannelRowView: View {
                 }
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .controlSize(.mini)
+                .controlSize(.small)
                 .disabled(!row.toggleAllowed || model.busyAction != nil)
                 .help(row.toggleHelp ?? (row.enabled ? "Stop answering in \(row.label)" : "Answer in \(row.label)"))
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 }
 
@@ -229,11 +256,13 @@ struct UpdateSection: View {
                         HStack {
                             Spacer()
                             Button("Cancel") { confirming = false }
+                                .glassButtonStyle()
                             Button("Install") {
                                 confirming = false
                                 Task { await model.installUpdate() }
                             }
                             .keyboardShortcut(.defaultAction)
+                            .glassButtonStyle(prominent: true)
                         }
                         .controlSize(.small)
                     } else {
@@ -243,7 +272,8 @@ struct UpdateSection: View {
                                 .symbolRenderingMode(.hierarchical)
                                 .foregroundStyle(.tint)
                             Spacer()
-                            Button("Install Update…") { confirming = true }
+                            Button("Install…") { confirming = true }
+                                .glassButtonStyle(prominent: true)
                                 .controlSize(.small)
                                 .disabled(model.busyAction != nil)
                         }
@@ -258,8 +288,15 @@ struct UpdateSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.top, hasContent ? 10 : 0)
+        .padding(hasContent ? 12 : 0)
+        .background {
+            if hasContent {
+                RoundedRectangle(cornerRadius: PanelMetrics.cardRadius, style: .continuous)
+                    .fill(.tint.opacity(0.12))
+            }
+        }
+        .padding(.horizontal, PanelMetrics.inset)
+        .padding(.top, hasContent ? 4 : 0)
     }
 
     private var hasContent: Bool {

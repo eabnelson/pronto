@@ -53,6 +53,34 @@ extension StatusTone {
     }
 }
 
+/// Corner radii follow macOS 26: rounder, continuous, and concentric with the panel.
+enum PanelMetrics {
+    static let width: CGFloat = 356
+    static let inset: CGFloat = 10
+    static let cardRadius: CGFloat = 14
+    static let rowRadius: CGFloat = 9
+}
+
+extension View {
+    /// A Control Center–style grouped module inside the panel.
+    func panelCard() -> some View {
+        background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: PanelMetrics.cardRadius, style: .continuous))
+    }
+
+    /// Liquid Glass buttons on macOS 26, bordered buttons before that.
+    @ViewBuilder func glassButtonStyle(prominent: Bool = false) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) }
+        } else {
+            if prominent { buttonStyle(.borderedProminent) } else { buttonStyle(.bordered) }
+        }
+        #else
+        if prominent { buttonStyle(.borderedProminent) } else { buttonStyle(.bordered) }
+        #endif
+    }
+}
+
 /// A small colored status dot with a VoiceOver label.
 struct StatusDot: View {
     let tone: StatusTone
@@ -61,10 +89,32 @@ struct StatusDot: View {
     var body: some View {
         Circle()
             .fill(tone.color)
-            .frame(width: 8, height: 8)
-            .overlay(Circle().strokeBorder(.black.opacity(0.1), lineWidth: 0.5))
+            .frame(width: 7, height: 7)
             .accessibilityElement()
             .accessibilityLabel(label)
+    }
+}
+
+/// A round, filled app glyph like the modules in Control Center.
+struct AppGlyph: View {
+    let app: AppID
+    var dimmed = false
+
+    var body: some View {
+        Image(systemName: app == .whatsapp ? "phone.bubble.fill" : "message.fill")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 28, height: 28)
+            .background(Circle().fill(color.gradient))
+            .saturation(dimmed ? 0 : 1)
+            .opacity(dimmed ? 0.55 : 1)
+            .accessibilityHidden(true)
+    }
+
+    private var color: Color {
+        app == .whatsapp
+            ? Color(red: 0.15, green: 0.73, blue: 0.53)
+            : Color(red: 0.2, green: 0.78, blue: 0.35)
     }
 }
 
@@ -75,23 +125,23 @@ struct AppBadge: View {
     var body: some View {
         Text(label)
             .font(.caption2.weight(.medium))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1.5)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
             .background(Capsule().fill(.quaternary))
             .foregroundStyle(.secondary)
     }
 }
 
-/// Section title in the panel.
+/// Section title above a panel card.
 struct SectionHeader: View {
     let title: String
     var body: some View {
         Text(title)
-            .font(.caption.weight(.semibold))
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 4)
+            .padding(.horizontal, PanelMetrics.inset + 6)
+            .padding(.top, 12)
+            .padding(.bottom, 6)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -115,19 +165,19 @@ struct MenuRow<Trailing: View>: View {
                 Spacer(minLength: 8)
                 trailing()
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .contentShape(RoundedRectangle(cornerRadius: PanelMetrics.rowRadius, style: .continuous))
             .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(hovering && !disabled ? Color.primary.opacity(0.08) : .clear)
+                RoundedRectangle(cornerRadius: PanelMetrics.rowRadius, style: .continuous)
+                    .fill(hovering && !disabled ? Color.primary.opacity(0.09) : .clear)
             )
         }
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.5 : 1)
         .onHover { hovering = $0 }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, PanelMetrics.inset - 4)
     }
 }
 

@@ -57,8 +57,8 @@ struct LinkWhatsAppView: View {
             VStack(alignment: .leading, spacing: 12) {
                 InlineError(message: message)
                 buttons {
-                    Button("Close") { close() }
-                    Button("Try Again") { model.reset() }.keyboardShortcut(.defaultAction)
+                    Button("Close") { close() }.glassButtonStyle()
+                    Button("Try Again") { model.reset() }.keyboardShortcut(.defaultAction).glassButtonStyle(prominent: true)
                 }
             }
         }
@@ -74,9 +74,10 @@ struct LinkWhatsAppView: View {
             Toggle("I understand the risk", isOn: $model.acceptedRisk)
                 .toggleStyle(.checkbox)
             buttons {
-                Button("Cancel") { close() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { close() }.keyboardShortcut(.cancelAction).glassButtonStyle()
                 Button("Continue") { model.acknowledgeDisclosure() }
                     .keyboardShortcut(.defaultAction)
+                    .glassButtonStyle(prominent: true)
                     .disabled(!model.acceptedRisk)
             }
         }
@@ -119,9 +120,10 @@ struct LinkWhatsAppView: View {
             }
 
             buttons {
-                Button("Cancel") { close() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { close() }.keyboardShortcut(.cancelAction).glassButtonStyle()
                 Button(model.usePhoneNumber ? "Get Pairing Code" : "Show QR Code") { model.start() }
                     .keyboardShortcut(.defaultAction)
+                    .glassButtonStyle(prominent: true)
             }
         }
     }
@@ -137,7 +139,7 @@ struct LinkWhatsAppView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             buttons {
-                Button("Cancel") { model.cancel() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { model.cancel() }.keyboardShortcut(.cancelAction).glassButtonStyle()
             }
         }
     }
@@ -149,7 +151,7 @@ struct LinkWhatsAppView: View {
                 .textSelection(.enabled)
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity)
-                .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary.opacity(0.6)))
+                .panelCard()
                 .accessibilityLabel("Pairing code \(code.map(String.init).joined(separator: " "))")
             Text("On your phone, open WhatsApp › Settings › Linked Devices › Link a Device › Link with phone number instead, and enter this code.")
                 .font(.callout)
@@ -157,7 +159,7 @@ struct LinkWhatsAppView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             buttons {
-                Button("Cancel") { model.cancel() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { model.cancel() }.keyboardShortcut(.cancelAction).glassButtonStyle()
             }
         }
     }
@@ -172,7 +174,7 @@ struct LinkWhatsAppView: View {
                 Text(detail).font(.callout).foregroundStyle(.secondary)
             }
             buttons {
-                Button("Cancel") { model.cancel() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { model.cancel() }.keyboardShortcut(.cancelAction).glassButtonStyle()
             }
         }
         .accessibilityElement(children: .contain)
@@ -183,7 +185,7 @@ struct LinkWhatsAppView: View {
             Label("WhatsApp is linked. Pronto now answers your tags there.", systemImage: "checkmark.circle.fill")
                 .symbolRenderingMode(.multicolor)
             buttons {
-                Button("Done") { close() }.keyboardShortcut(.defaultAction)
+                Button("Done") { close() }.keyboardShortcut(.defaultAction).glassButtonStyle(prominent: true)
             }
         }
         .task {
@@ -217,7 +219,7 @@ struct QRCodeView: View {
                     .resizable()
                     .aspectRatio(1, contentMode: .fit)
                     .padding(10)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             } else {
                 Image(systemName: "qrcode").font(.largeTitle).foregroundStyle(.secondary)
             }

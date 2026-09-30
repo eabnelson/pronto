@@ -25,12 +25,14 @@ struct DiagnosticsView: View {
             HStack {
                 Spacer()
                 Button("Run Again") { model.run() }
+                    .glassButtonStyle()
                     .disabled(model.isRunning)
                 Button("Done") {
                     model.cancel()
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
+                .glassButtonStyle(prominent: true)
             }
         }
         .padding(20)
@@ -68,11 +70,13 @@ struct DiagnosticsView: View {
         case .finished:
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(model.checks) { check in
+                    ForEach(Array(model.checks.enumerated()), id: \.element.id) { index, check in
+                        if index > 0 { Divider().padding(.leading, 40) }
                         CheckRow(check: check)
-                        Divider()
                     }
                 }
+                .padding(.horizontal, 12)
+                .panelCard()
             }
             .frame(maxHeight: 360)
         case .failed(let message):
