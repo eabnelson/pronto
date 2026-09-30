@@ -90,7 +90,8 @@ IMCore bridge.
 Setup asks for:
 
 1. Which messaging apps to answer in, when both `imsg` and `wacli` are installed.
-   Both is the default.
+   Both is the default. Setup only offers apps whose tool is installed, so
+   install both first to use both.
 2. One or more comma-separated tags, with or without the leading `@`; the
    default is `@s4`. Each name must contain 1-32 letters, numbers, underscores,
    or hyphens. With both apps enabled, setup asks which apps each tag applies
@@ -101,7 +102,12 @@ Setup asks for:
    cleared or chmodded and must be confirmed before reuse.
 6. Explicit typed acceptance of the unrestricted trust model above, and for
    WhatsApp, of the [WhatsApp account risk](#whatsapp). Setup then links
-   WhatsApp by showing a QR code in the terminal.
+   WhatsApp by showing a QR code in the terminal, unless this Mac is already
+   linked. The Mac appears as **Pronto** in WhatsApp's linked devices.
+
+Re-running setup keeps your tags, working folder, and WhatsApp link as defaults.
+To add iMessage or WhatsApp to an existing installation, install its tool and
+re-run setup, choosing every app you want to keep.
 
 Setup then performs one temporary noninteractive file-tool probe per selected
 runtime. This uses the runtime's existing account, default model, user

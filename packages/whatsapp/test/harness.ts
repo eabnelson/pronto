@@ -19,6 +19,8 @@ export const FAST_TUNING: Partial<Tuning> = {
   backoffMaxMs: 200,
   closeGraceMs: 500,
   commandTimeoutMs: 15_000,
+  linkRetryDelayMs: 20,
+  logoutTimeoutMs: 15_000,
   presenceTimeoutMs: 2_000,
   readinessPollMs: 20,
   readinessTimeoutMs: 10_000,

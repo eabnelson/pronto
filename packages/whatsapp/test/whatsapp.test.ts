@@ -581,6 +581,23 @@ test("the device label names this Mac in WhatsApp's linked devices", async () =>
   expect(invocations.every((entry) => entry.deviceLabel === "Pronto")).toBe(true);
 });
 
+test("link retries when wacli auth exits before showing a code", async () => {
+  const early = { events: [], exitCode: 0 };
+  const h = await setup({
+    auth: { authenticated: false },
+    link: [early, { events: [{ afterMs: 10, data: { code: "2@RETRIED" }, event: "qr_code" }, { afterMs: 20, authenticate: true, event: "connected" }], exitCode: 0 }],
+  });
+  const steps: WhatsappLinkStep[] = [];
+  for await (const step of h.module.link()) steps.push(step);
+  expect(steps).toEqual([{ code: "2@RETRIED", type: "qr" }, { linkedJid: OWNER, type: "linked" }]);
+  expect((await h.invocations("auth")).filter((entry) => entry.command === "auth")).toHaveLength(2);
+
+  await h.writeScenario({ auth: { authenticated: false }, link: early });
+  const failed: WhatsappLinkStep[] = [];
+  for await (const step of h.module.link()) failed.push(step);
+  expect(failed).toEqual([{ reason: "WhatsApp didn't offer a link code. Wait a minute and try again.", type: "failed" }]);
+});
+
 test("link can be aborted", async () => {
   const h = await setup({
     auth: { authenticated: false },
@@ -605,4 +622,13 @@ test("unlink logs out and ends the subscription", async () => {
   await h.module.unlink();
   await subscription.terminated;
   expect(await h.module.qualify()).toMatchObject({ status: "needs_link" });
+});
+
+test("unlink succeeds when logout clears this Mac but WhatsApp never confirms", async () => {
+  const h = await setup({ auth: LINKED, logout: "clear-then-hang" }, {}, { logoutTimeoutMs: 300 });
+  await h.module.unlink();
+  expect(await h.module.qualify()).toMatchObject({ status: "needs_link" });
+
+  const stuck = await setup({ auth: LINKED, logout: "hang" }, {}, { logoutTimeoutMs: 300 });
+  await expect(stuck.module.unlink()).rejects.toThrow("wacli auth logout failed");
 });

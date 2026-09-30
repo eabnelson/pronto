@@ -7,7 +7,11 @@ export interface Tuning {
   readonly commandTimeoutMs: number;
   /** A child connected at least this long resets restart backoff. */
   readonly healthyResetMs: number;
+  /** Pause before retrying `wacli auth` when it exits before showing a code. */
+  readonly linkRetryDelayMs: number;
   readonly liveSweepIntervalMs: number;
+  /** `auth logout` tells WhatsApp's servers first, which can be slow. */
+  readonly logoutTimeoutMs: number;
   readonly negativeOwnerCacheMs: number;
   readonly presenceTimeoutMs: number;
   readonly readinessPollMs: number;
@@ -22,7 +26,9 @@ export const DEFAULT_TUNING: Tuning = {
   closeGraceMs: 5_000,
   commandTimeoutMs: 30_000,
   healthyResetMs: 60_000,
+  linkRetryDelayMs: 2_000,
   liveSweepIntervalMs: 5 * 60_000,
+  logoutTimeoutMs: 90_000,
   negativeOwnerCacheMs: 30_000,
   presenceTimeoutMs: 10_000,
   readinessPollMs: 100,

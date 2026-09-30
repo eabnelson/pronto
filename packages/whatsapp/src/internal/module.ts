@@ -281,6 +281,7 @@ class WhatsappModule implements ProntoWhatsapp {
     try {
       yield* linkSteps({
         closeGraceMs: this.#tuning.closeGraceMs,
+        retryDelayMs: this.#tuning.linkRetryDelayMs,
         env: this.#env,
         linkedJid: () => this.#authStatus(),
         ...(input.phone === undefined ? {} : { phone: input.phone }),
@@ -299,12 +300,16 @@ class WhatsappModule implements ProntoWhatsapp {
     const result = await runCommand(
       this.#wacliPath,
       ["--store", this.#storeDir, "auth", "logout"],
-      { env: this.#env, timeoutMs: this.#tuning.commandTimeoutMs },
+      { env: this.#env, timeoutMs: this.#tuning.logoutTimeoutMs },
     );
     this.#linkedJid = null;
     this.#linkedLidUser = null;
     this.#ownerCache.clear();
-    if (result.code !== 0) throw new Error(`wacli auth logout failed: ${describeFailure(result)}`);
+    if (result.code === 0) return;
+    // wacli clears the local session even when WhatsApp's servers are slow to confirm,
+    // so a failed or timed-out logout still counts when this Mac is no longer linked.
+    const stillLinked = await this.#authStatus().catch(() => "unknown");
+    if (stillLinked !== null) throw new Error(`wacli auth logout failed: ${describeFailure(result)}`);
   }
 
   async close(): Promise<void> {
