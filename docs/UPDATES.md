@@ -103,6 +103,12 @@ GitHub `release` environment:
 - `PRONTO_NOTARY_ISSUER_ID`
 - `PRONTO_RELEASE_ED25519_PRIVATE_KEY`
 
+npm publishing uses trusted publishing, so no npm token is stored. Each package
+(`pronto-imessage`, `pronto-whatsapp`) must list this repository's `release.yml`
+workflow and `release` environment as its trusted publisher on npmjs.com. npm
+only offers that setting for a package that already exists, so a new package
+needs its first version published by the owner before the workflow can publish it.
+
 The environment permits only `v*` tags and requires release-owner approval. The
 workflow checks out that immutable tag, runs all tests and live-evidence gates,
 imports the certificate into a temporary keychain on a GitHub-hosted macOS
@@ -111,8 +117,8 @@ designated requirement, submits both architectures to `notarytool`, and deletes
 all temporary signing material in an `always()` step.
 
 The publish job receives no Apple or manifest private key. It verifies checksums,
-creates GitHub artifact attestations, publishes `pronto-imessage` through npm
-OIDC with provenance, verifies registry propagation, and only then makes the
+creates GitHub artifact attestations, publishes `pronto-imessage` and
+`pronto-whatsapp` through npm OIDC with provenance, verifies registry propagation, and only then makes the
 immutable GitHub release public.
 
 ## Release qualification
