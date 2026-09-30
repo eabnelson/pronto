@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   ChannelActivation,
   ChatAddress,
+  OutboundAttachment,
   SendDisposition,
   TurnChannel,
 } from "../../packages/cli/src/channels/types";
+import { stageOutboundAttachment } from "../../packages/cli/src/core/outbound-attachment";
 import { FAILURE_NOTICE, TurnCoordinator, TurnProcessor } from "../../packages/cli/src/core/turn";
 import {
   formatImessageReplyText,
@@ -100,9 +102,32 @@ class FakeTransport implements TurnChannel {
       },
     ];
   }
-  async sendText(chat: ChatAddress, text: string): Promise<SendDisposition> {
+  async sendText(
+    chat: ChatAddress,
+    text: string,
+    _conversation?: unknown,
+    attachment?: OutboundAttachment,
+  ): Promise<SendDisposition> {
     this.sends.push({ chatId: Number(chat.id), text });
+    if (attachment !== undefined) {
+      this.attachments.push({
+        content: await readFile(attachment.filePath, "utf8"),
+        filePath: attachment.filePath,
+      });
+    }
     return this.disposition;
+  }
+  readonly attachments: Array<{ content: string; filePath: string }> = [];
+}
+
+/** A channel that can send files and acknowledges tagged messages, like WhatsApp. */
+class RichTransport extends FakeTransport {
+  readonly maxAttachmentBytes = 64;
+  readonly acknowledged: Array<{ chat: ChatAddress; conversation: unknown }> = [];
+  acknowledgment: () => Promise<void> = async () => undefined;
+  async acknowledge(chat: ChatAddress, conversation: unknown): Promise<void> {
+    this.acknowledged.push({ chat, conversation });
+    await this.acknowledgment();
   }
 }
 
@@ -129,14 +154,19 @@ const activation: ChannelActivation = {
   request: "Draft the launch note.",
 };
 
-async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
+async function harness<Transport extends FakeTransport = FakeTransport>(
+  primary: RuntimeAdapter,
+  fallback?: RuntimeAdapter,
+  options: { staging?: boolean; transport?: Transport } = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "pronto-turn-"));
   temporaryDirectories.push(directory);
   const database = openProntoDatabase(join(directory, "state.sqlite"));
   const journal = new DeliveryJournal(database);
   const memory = new MemoryStore(database);
   const workspaces = new WorkspaceStore(database);
-  const transport = new FakeTransport();
+  const transport = options.transport ?? new FakeTransport() as Transport;
+  const staging = join(directory, "support", "outbound");
   const broker = new ConversationBroker(source);
   const processor = new TurnProcessor({
     bridgeExecutablePath: "/Applications/pronto/bin/pronto",
@@ -147,6 +177,7 @@ async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
     runtimes: new RuntimeChain(primary, fallback),
     channels: new Map([["imessage", transport]]),
     defaultWorkingDirectory: directory,
+    ...(options.staging === true ? { outboundStagingDirectory: staging } : {}),
     workspaces,
   });
   const salt = "private-installation-salt";
@@ -158,6 +189,7 @@ async function harness(primary: RuntimeAdapter, fallback?: RuntimeAdapter) {
     journal,
     memory,
     salt,
+    staging,
     transport,
     workspaces,
     directory,
@@ -755,6 +787,211 @@ describe("turn lifecycle", () => {
       expect(primary.inputs).toHaveLength(0);
       expect(h.transport.sends).toEqual([]);
       expect(h.journal.state("IN-LEGACY-RECOVER")).toBe("failed");
+    } finally {
+      h.close();
+    }
+  });
+});
+
+describe("reply attachments", () => {
+  const replyWith = (attachmentPath: string) => new FakeAdapter("codex", {
+    output: { attachmentPath, reply: "Chart attached." },
+    status: "success",
+    toolActivity: "observed",
+  });
+  const attachmentKeys = (database: { query(sql: string): { all(): unknown[] } }) => {
+    return database.query("SELECT key FROM service_state WHERE key LIKE 'outbound_attachment:%'").all();
+  };
+
+  test("sends a private copy of the agent's file with the reply and deletes it once delivered", async () => {
+    const primary = replyWith("");
+    const h = await harness(primary, undefined, { staging: true, transport: new RichTransport() });
+    const chart = join(h.directory, "chart.png");
+    await writeFile(chart, "png bytes");
+    primary.result = { output: { attachmentPath: chart, reply: "Chart attached." }, status: "success", toolActivity: "observed" };
+    try {
+      h.coordinator.start();
+      h.coordinator.admit({ ...activation, providerGuid: "IN-FILE" });
+      await h.coordinator.idle();
+
+      expect(primary.inputs[0]!.prompt).toContain("return its absolute path in attachmentPath");
+      expect(primary.inputs[0]!.prompt).toContain("at most 64 bytes");
+      expect(h.transport.sends).toEqual([{ chatId: 42, text: "Helper\nChart attached." }]);
+      expect(h.transport.attachments).toHaveLength(1);
+      expect(h.transport.attachments[0]!.content).toBe("png bytes");
+      expect(h.transport.attachments[0]!.filePath.startsWith(`${h.staging}/reply-`)).toBeTrue();
+      expect(h.transport.attachments[0]!.filePath.endsWith("/chart.png")).toBeTrue();
+      expect(await readdir(h.staging)).toEqual([]);
+      expect(await readFile(chart, "utf8")).toBe("png bytes");
+      expect(h.journal.state("IN-FILE")).toBe("delivered");
+      expect(attachmentKeys(h.database)).toEqual([]);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("sends the text alone when the chosen file is unusable", async () => {
+    const primary = replyWith("");
+    const h = await harness(primary, undefined, { staging: true, transport: new RichTransport() });
+    const large = join(h.directory, "large.bin");
+    const real = join(h.directory, "real.txt");
+    await writeFile(large, "x".repeat(65));
+    await writeFile(real, "ok");
+    await symlink(real, join(h.directory, "link.txt"));
+    const candidates = ["real.txt", join(h.directory, "missing.txt"), join(h.directory, "link.txt"), large, h.directory];
+    try {
+      for (const [index, attachmentPath] of candidates.entries()) {
+        primary.result = { output: { attachmentPath, reply: "Here." }, status: "success", toolActivity: "observed" };
+        h.coordinator.admit({ ...activation, providerGuid: `IN-BAD-FILE-${index}` });
+        await h.coordinator.idle();
+        expect(h.journal.state(`IN-BAD-FILE-${index}`)).toBe("delivered");
+      }
+      expect(h.transport.sends).toHaveLength(candidates.length);
+      expect(h.transport.attachments).toEqual([]);
+      expect(await readdir(h.staging).catch(() => [])).toEqual([]);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("never retries an ambiguous file send and still deletes the staged copy", async () => {
+    const primary = replyWith("");
+    const h = await harness(primary, undefined, { staging: true, transport: new RichTransport() });
+    const chart = join(h.directory, "chart.png");
+    await writeFile(chart, "png bytes");
+    primary.result = { output: { attachmentPath: chart, reply: "Chart." }, status: "success", toolActivity: "observed" };
+    h.transport.disposition = { disposition: "ambiguous" };
+    try {
+      h.coordinator.admit({ ...activation, providerGuid: "IN-FILE-AMBIGUOUS" });
+      await h.coordinator.idle();
+      expect(h.journal.state("IN-FILE-AMBIGUOUS")).toBe("ambiguous");
+      expect(h.transport.attachments).toHaveLength(1);
+      expect(await readdir(h.staging)).toEqual([]);
+      expect(attachmentKeys(h.database)).toEqual([]);
+      h.coordinator.start();
+      await h.coordinator.idle();
+      expect(h.transport.sends).toHaveLength(1);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("resends a staged file accepted before a restart and sweeps orphaned copies", async () => {
+    const primary = new FakeAdapter("codex", { output: { reply: "must not run" }, status: "success", toolActivity: "none" });
+    const h = await harness(primary, undefined, { staging: true, transport: new RichTransport() });
+    const source = join(h.directory, "report.pdf");
+    await writeFile(source, "pdf bytes");
+    const staged = (await stageOutboundAttachment({ maxBytes: 64, sourcePath: source, stagingDirectory: h.staging }))!;
+    const orphan = (await stageOutboundAttachment({ maxBytes: 64, sourcePath: source, stagingDirectory: h.staging }))!;
+    try {
+      h.journal.admit({
+        activationTag: "@plan",
+        chat: activation.chat,
+        chatKey: chatKeyForId(42, h.salt),
+        conversation: activation.conversation,
+        providerGuid: "IN-FILE-RECOVER",
+        request: "send the report",
+      });
+      const lease = h.journal.lease("IN-FILE-RECOVER")!;
+      h.journal.accept("IN-FILE-RECOVER", lease, { attachmentPath: staged, reply: "Report attached." });
+
+      expect(h.coordinator.start()).toEqual({ ambiguous: 0, parked: 0, resumed: 1 });
+      await h.coordinator.idle();
+
+      expect(primary.inputs).toHaveLength(0);
+      expect(h.transport.attachments).toEqual([{ content: "pdf bytes", filePath: staged }]);
+      expect(h.journal.state("IN-FILE-RECOVER")).toBe("delivered");
+      expect(await readdir(h.staging)).toEqual([]);
+      expect(orphan).not.toBe(staged);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("offers no file to the agent when the app or install cannot stage one", async () => {
+    const primary = replyWith("");
+    const h = await harness(primary, undefined, { transport: new RichTransport() });
+    const chart = join(h.directory, "chart.png");
+    await writeFile(chart, "png bytes");
+    primary.result = { output: { attachmentPath: chart, reply: "Chart." }, status: "success", toolActivity: "observed" };
+    try {
+      h.coordinator.admit({ ...activation, providerGuid: "IN-NO-STAGING" });
+      await h.coordinator.idle();
+      expect(primary.inputs[0]!.prompt).not.toContain("attachmentPath");
+      expect(h.transport.sends).toHaveLength(1);
+      expect(h.transport.attachments).toEqual([]);
+    } finally {
+      h.close();
+    }
+
+    const plain = await harness(primary, undefined, { staging: true });
+    try {
+      plain.coordinator.admit({ ...activation, providerGuid: "IN-NO-FILES" });
+      await plain.coordinator.idle();
+      expect(primary.inputs[1]!.prompt).not.toContain("attachmentPath");
+      expect(plain.transport.attachments).toEqual([]);
+      expect(await readdir(plain.staging).catch(() => [])).toEqual([]);
+    } finally {
+      plain.close();
+    }
+  });
+});
+
+describe("turn acknowledgment", () => {
+  test("acknowledges the tagged message once when the runtime starts", async () => {
+    const primary = new FakeAdapter("codex", { output: { reply: "Done." }, status: "success", toolActivity: "none" });
+    const transport = new RichTransport();
+    const h = await harness(primary, undefined, { transport });
+    let acknowledgedBeforeRun = false;
+    primary.onRun = () => {
+      acknowledgedBeforeRun = transport.acknowledged.length === 1;
+    };
+    try {
+      h.coordinator.admit(activation);
+      await h.coordinator.idle();
+      expect(acknowledgedBeforeRun).toBeTrue();
+      expect(transport.acknowledged).toEqual([{ chat: activation.chat, conversation }]);
+      expect(transport.sends).toHaveLength(1);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("never blocks or fails a turn on a slow or failing acknowledgment", async () => {
+    const primary = new FakeAdapter("codex", { output: { reply: "Done." }, status: "success", toolActivity: "none" });
+    const transport = new RichTransport();
+    const h = await harness(primary, undefined, { transport });
+    try {
+      transport.acknowledgment = () => new Promise<void>(() => undefined);
+      h.coordinator.admit({ ...activation, providerGuid: "IN-SLOW-ACK" });
+      await h.coordinator.idle();
+      transport.acknowledgment = async () => {
+        throw new Error("reaction failed");
+      };
+      h.coordinator.admit({ ...activation, providerGuid: "IN-FAILED-ACK" });
+      await h.coordinator.idle();
+      expect(h.journal.state("IN-SLOW-ACK")).toBe("delivered");
+      expect(h.journal.state("IN-FAILED-ACK")).toBe("delivered");
+      expect(transport.acknowledged).toHaveLength(2);
+    } finally {
+      h.close();
+    }
+  });
+
+  test("does not acknowledge a request that never reaches the runtime", async () => {
+    const primary = new FakeAdapter("codex", { output: { reply: "Done." }, status: "success", toolActivity: "none" });
+    const transport = new RichTransport();
+    const h = await harness(primary, undefined, { transport });
+    promoteWorkspace(h.database, {
+      chatKey: chatKeyForId(42, h.salt),
+      now: Date.now(),
+      workingDirectory: join(h.directory, "deleted-project"),
+    });
+    try {
+      h.coordinator.admit({ ...activation, providerGuid: "IN-NO-FOLDER" });
+      await h.coordinator.idle();
+      expect(primary.inputs).toHaveLength(0);
+      expect(transport.acknowledged).toEqual([]);
     } finally {
       h.close();
     }

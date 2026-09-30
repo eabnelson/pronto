@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
-import type { MaterializedWhatsappAttachment } from "../types.js";
+import { basename, extname, isAbsolute, join } from "node:path";
+import { WhatsappAttachmentExpiredError, type MaterializedWhatsappAttachment } from "../types.js";
 import { describeFailure, runCommand } from "./process.js";
 
 /** wacli refuses media over 100 MiB; Pronto consumers usually ask for much less. */
 export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
-const MESSAGE_ID = /^[0-9A-Za-z._-]{1,128}$/;
+export const MESSAGE_ID = /^[0-9A-Za-z._-]{1,128}$/;
+/** whatsmeow's `DownloadHTTPError` text for media the CDN no longer serves. */
+const EXPIRED_MEDIA = /status code (?:403|404|410)\b/i;
 
 const MIME_TYPES: Record<string, string> = {
   ".aac": "audio/aac",
@@ -37,6 +39,24 @@ export function mimeTypeFor(name: string, declared: string | null): string {
   const bare = declared?.split(";")[0]?.trim();
   if (bare !== undefined && /^[a-z]+\/[0-9a-z.+-]+$/i.test(bare)) return bare.toLowerCase();
   return MIME_TYPES[extname(name).toLowerCase()] ?? "application/octet-stream";
+}
+
+/** Why wacli could not send this file, or null when it is a sendable regular file. */
+export async function unsendableFileReason(path: string): Promise<string | null> {
+  if (!isAbsolute(path)) return "File path must be absolute";
+  const stat = await lstat(path).catch(() => null);
+  if (stat === null || !stat.isFile()) return "File is not a regular file";
+  if (stat.size === 0) return "File is empty";
+  if (stat.size > MAX_ATTACHMENT_BYTES) return "File exceeds 100 MiB";
+  return null;
+}
+
+/**
+ * wacli's `--as` for a file. Audio bubbles drop captions, so audio goes as a document to keep the
+ * reply text; everything else keeps wacli's MIME-based choice of image, video, or document.
+ */
+export function sendFileKind(path: string): "auto" | "document" {
+  return mimeTypeFor(path, null).startsWith("audio/") ? "document" : "auto";
 }
 
 async function sha256File(path: string): Promise<string> {
@@ -79,7 +99,9 @@ export async function downloadAttachment(input: {
       { ...(input.env === undefined ? {} : { env: input.env }), timeoutMs: input.timeoutMs },
     );
     if (result.code !== 0) {
-      throw new Error(`WhatsApp attachment is unavailable: ${describeFailure(result)}`);
+      const failure = describeFailure(result);
+      if (EXPIRED_MEDIA.test(failure)) throw new WhatsappAttachmentExpiredError();
+      throw new Error(`WhatsApp attachment is unavailable: ${failure}`);
     }
     const entries = await readdir(directory);
     if (entries.length !== 1) throw new Error("WhatsApp attachment is unavailable");

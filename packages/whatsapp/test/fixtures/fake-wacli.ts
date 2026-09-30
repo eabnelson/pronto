@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 // Emulates the wacli 0.19 commands pronto-whatsapp uses, driven by <store>/scenario.json.
+// `send text`, `send file`, and `send react` share the `send` outcome.
 import { createHmac } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -44,7 +45,12 @@ export interface FakeScenario {
   readonly logout?: "clear-then-hang" | "hang";
   readonly listFails?: boolean;
   /** Downloadable media by message id: the file name wacli writes and its contents. */
-  readonly media?: Readonly<Record<string, { readonly content: string; readonly name: string }>>;
+  readonly media?: Readonly<Record<string, {
+    readonly content: string;
+    /** The CDN copy is gone: the download fails with whatsmeow's HTTP 403 error. */
+    readonly expired?: boolean;
+    readonly name: string;
+  }>>;
   readonly messages?: readonly Record<string, unknown>[];
   readonly send?: {
     readonly error?: string;
@@ -284,9 +290,15 @@ if (command === "version") {
       if (flags.get("read-only") !== true) fail("store is locked (another wacli is running?)");
       const media = scenario().media?.[String(flags.get("id"))];
       if (media === undefined) fail("message has no downloadable media");
+      if (media.expired === true) fail("download media: download failed with status code 403");
       writeFileSync(join(String(flags.get("output")), media.name), media.content);
       ok({ path: join(String(flags.get("output")), media.name) });
     }
+    case "send file":
+      if (!existsSync(String(flags.get("file")))) fail("open file: no such file or directory");
+      await send();
+      break;
+    case "send react":
     case "send text":
       await send();
       break;

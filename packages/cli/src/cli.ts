@@ -720,6 +720,9 @@ async function runWhatsapp(args: readonly string[]): Promise<number> {
       channels: {
         ...config.channels,
         whatsapp: {
+          ...(config.channels.whatsapp?.acknowledge === undefined
+            ? {}
+            : { acknowledge: config.channels.whatsapp.acknowledge }),
           enabled: true,
           riskConsentVersion: WHATSAPP_RISK_CONSENT_VERSION,
           tags: tags!,

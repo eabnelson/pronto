@@ -100,11 +100,16 @@ export class ImsgTransport {
     chatId: number,
     text: string,
     restoredConversation?: ConversationReference,
+    filePath?: string,
   ): Promise<SendDisposition> {
     const conversation = this.#conversations.get(chatId)?.reference ?? restoredConversation;
     if (conversation === undefined) throw new Error("Current conversation scope is unavailable");
     if (conversation.chatId !== chatId) throw new Error("Current conversation scope is unavailable");
-    const outcome = await this.messages.reply({ conversation, text });
+    const outcome = await this.messages.reply({
+      conversation,
+      ...(filePath === undefined ? {} : { filePath }),
+      text,
+    });
     if (outcome.status === "confirmed") {
       return { disposition: "confirmed", guid: outcome.providerMessageId };
     }

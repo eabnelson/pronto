@@ -110,6 +110,19 @@ export type WhatsappLinkStep =
   | { readonly linkedJid: string; readonly type: "linked" }
   | { readonly reason: string; readonly type: "failed" };
 
+/**
+ * WhatsApp's CDN no longer serves this media (HTTP 403, 404, or 410). Only the phone can re-upload
+ * it, through `wacli media retry`, which needs the store lock the running sync holds.
+ */
+export class WhatsappAttachmentExpiredError extends Error {
+  readonly code = "attachment-expired" as const;
+
+  constructor() {
+    super("WhatsApp no longer has this media on its servers");
+    this.name = "WhatsappAttachmentExpiredError";
+  }
+}
+
 export interface WhatsappSubscription {
   close(): Promise<void>;
   /** Settles when the subscription ends without `close()`, e.g. after WhatsApp unlinks the device. */
@@ -132,14 +145,31 @@ export interface ProntoWhatsapp {
     readonly conversation: WhatsappConversationReference;
     readonly limit: number;
   }): Promise<WhatsappEvent[]>;
+  /**
+   * Sends `text`, or with `filePath` one file captioned with `text`. The file must be an absolute
+   * path to a consumer-staged regular file of at most 100 MiB; the consumer deletes it afterwards.
+   */
   reply(input: {
     readonly conversation: WhatsappConversationReference;
+    readonly filePath?: string;
     readonly quote?: { readonly providerMessageId: string; readonly sender: string | null };
     readonly text: string;
   }): Promise<WhatsappDeliveryOutcome>;
   /**
+   * Reacts to one message through the running subscription; an empty `emoji` clears the reaction.
+   * `sender` is the message's sender and is required in groups. Fails retryably, without waiting,
+   * when the subscription is not connected.
+   */
+  react(input: {
+    readonly conversation: WhatsappConversationReference;
+    readonly emoji: string;
+    readonly providerMessageId: string;
+    readonly sender: string | null;
+  }): Promise<WhatsappDeliveryOutcome>;
+  /**
    * Downloads the media of one message in an observed conversation into a private directory.
-   * Throws when the message has no downloadable media or it exceeds `maxBytes`.
+   * Throws when the message has no downloadable media or it exceeds `maxBytes`, and
+   * `WhatsappAttachmentExpiredError` when WhatsApp's servers no longer have the media.
    */
   materializeAttachment(input: {
     readonly conversation: WhatsappConversationReference;

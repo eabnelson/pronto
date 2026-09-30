@@ -14,6 +14,8 @@ export interface ProntoPaths {
   logPath: string;
   /** The optional menu bar app, installed per user. */
   menubarAppPath: string;
+  /** Private copies of files agents send with replies, deleted once each send settles. */
+  outboundStagingDirectory: string;
   providerStatePath: string;
   updateBackupPath: string;
   updateDatabaseBackupPath: string;
@@ -53,6 +55,7 @@ function productPathsForHome(input: {
     logDirectory,
     logPath: join(logDirectory, "daemon.log"),
     menubarAppPath: join(input.homeDirectory, "Applications", "Pronto.app"),
+    outboundStagingDirectory: join(appSupportDirectory, "outbound"),
     providerStatePath: join(appSupportDirectory, "provider-state.json"),
     updateBackupPath: join(updateDirectory, "last-known-good"),
     updateDatabaseBackupPath: join(updateDirectory, "last-known-good-state.sqlite"),

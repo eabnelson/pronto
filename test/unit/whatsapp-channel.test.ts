@@ -3,17 +3,19 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessagesEvent } from "pronto-imessage";
-import type {
-  ProntoWhatsapp,
-  WhatsappConversationReference,
-  WhatsappDeliveryOutcome,
-  WhatsappEvent,
-  WhatsappHealth,
-  WhatsappMessageKind,
+import {
+  WhatsappAttachmentExpiredError,
+  type ProntoWhatsapp,
+  type WhatsappConversationReference,
+  type WhatsappDeliveryOutcome,
+  type WhatsappEvent,
+  type WhatsappHealth,
+  type WhatsappMessageKind,
 } from "pronto-whatsapp";
 import { activatedRequest } from "../../packages/cli/src/activation";
 import type { ChannelActivation, ChannelConnectionHealth } from "../../packages/cli/src/channels/types";
 import {
+  EXPIRED_ATTACHMENT_MESSAGE,
   WhatsappChannel,
   whatsappActivation,
   whatsappAttachmentId,
@@ -169,10 +171,19 @@ class FakeWhatsapp implements ProntoWhatsapp {
     this.replies.push(input);
     return this.outcome;
   }
+  reactions: Array<Parameters<ProntoWhatsapp["react"]>[0]> = [];
+  reactionFailure: Error | null = null;
+  async react(input: Parameters<ProntoWhatsapp["react"]>[0]) {
+    this.reactions.push(input);
+    if (this.reactionFailure !== null) throw this.reactionFailure;
+    return { providerMessageId: "3EB0REACT", status: "confirmed" as const };
+  }
   attachmentRequests: Array<Parameters<ProntoWhatsapp["materializeAttachment"]>[0]> = [];
+  attachmentFailure: Error | null = null;
   disposed = 0;
   async materializeAttachment(input: Parameters<ProntoWhatsapp["materializeAttachment"]>[0]) {
     this.attachmentRequests.push(input);
+    if (this.attachmentFailure !== null) throw this.attachmentFailure;
     const directory = await mkdtemp(join(tmpdir(), "pronto-wa-attachment-"));
     const path = join(directory, "photo.jpg");
     await writeFile(path, "jpeg bytes");
@@ -323,6 +334,73 @@ describe("WhatsApp channel", () => {
     }]);
     await channel.close();
     expect(whatsapp.disposed).toBe(1);
+  });
+
+  test("sends a staged file captioned with the reply and quoted", async () => {
+    const whatsapp = new FakeWhatsapp();
+    whatsapp.events = [whatsappEvent()];
+    const channel = new WhatsappChannel(whatsapp);
+    const activations: ChannelActivation[] = [];
+    await channel.watch({ onActivation: (activation) => { activations.push(activation); }, tags: () => ["@helper"] });
+    const activation = activations[0]!;
+    expect(channel.maxAttachmentBytes).toBe(20 * 1024 * 1024);
+    expect(await channel.sendText(activation.chat, "Chart attached.", activation.conversation, {
+      filePath: "/private/staging/reply-1/chart.png",
+    })).toEqual({ disposition: "confirmed", guid: "3EB0SENT" });
+    expect(whatsapp.replies).toEqual([{
+      conversation: reference,
+      filePath: "/private/staging/reply-1/chart.png",
+      quote: { providerMessageId: "3B0E917703046C6AAFD7", sender: CHAT },
+      text: "Chart attached.",
+    }]);
+  });
+
+  test("acknowledges the tagged message only when enabled, and never throws", async () => {
+    const whatsapp = new FakeWhatsapp();
+    whatsapp.events = [whatsappEvent()];
+    const activations: ChannelActivation[] = [];
+    const channel = new WhatsappChannel(whatsapp, { acknowledge: true });
+    await channel.watch({ onActivation: (activation) => { activations.push(activation); }, tags: () => ["@helper"] });
+    const activation = activations[0]!;
+
+    await channel.acknowledge(activation.chat, activation.conversation);
+    expect(whatsapp.reactions).toEqual([{
+      conversation: reference,
+      emoji: "👀",
+      providerMessageId: "3B0E917703046C6AAFD7",
+      sender: CHAT,
+    }]);
+    whatsapp.reactionFailure = new Error("wacli crashed");
+    await channel.acknowledge(activation.chat, activation.conversation);
+    await channel.acknowledge({ channel: "whatsapp", id: "other@s.whatsapp.net" }, activation.conversation);
+    await channel.acknowledge(activation.chat, reference);
+    expect(whatsapp.reactions).toHaveLength(2);
+
+    const quiet = new FakeWhatsapp();
+    await new WhatsappChannel(quiet).acknowledge(activation.chat, activation.conversation);
+    await new WhatsappChannel(quiet, { acknowledge: false }).acknowledge(activation.chat, activation.conversation);
+    expect(quiet.reactions).toEqual([]);
+  });
+
+  test("tells the agent when a photo expired off WhatsApp's servers", async () => {
+    const photo: WhatsappEvent = {
+      ...whatsappEvent({ id: "OLD" }),
+      message: {
+        ...whatsappEvent({ id: "OLD" }).message,
+        media: { caption: null, filename: null, mimeType: "image/jpeg", sizeBytes: null, type: "image" },
+      },
+    };
+    const whatsapp = new FakeWhatsapp();
+    whatsapp.events = [photo];
+    const channel = new WhatsappChannel(whatsapp);
+    await channel.watch({ onActivation: () => undefined, tags: () => ["@helper"] });
+    const chat = { channel: "whatsapp", id: CHAT } as const;
+    whatsapp.attachmentFailure = new WhatsappAttachmentExpiredError();
+    await expect(channel.currentChat.attachment(chat, "OLD", whatsappAttachmentId(CHAT, "OLD")))
+      .rejects.toThrow(EXPIRED_ATTACHMENT_MESSAGE);
+    whatsapp.attachmentFailure = new Error("WhatsApp attachment is unavailable: network");
+    await expect(channel.currentChat.attachment(chat, "OLD", whatsappAttachmentId(CHAT, "OLD")))
+      .rejects.toThrow("network");
   });
 
   test("formats a bold heading like the iMessage reply heading", () => {

@@ -46,14 +46,29 @@ export interface ChannelActivation {
   readonly request: string;
 }
 
+/** One Pronto-staged local file sent with a reply; the turn deletes it once the send settles. */
+export interface OutboundAttachment {
+  readonly filePath: string;
+}
+
 /** What a turn needs from the channel that the request arrived on. */
 export interface TurnChannel {
   /** Describes the conversation to the runtime, e.g. "iMessage or RCS". */
   readonly conversationLabel: string;
+  /** Largest file the app accepts with a reply; absent when it cannot send files. */
+  readonly maxAttachmentBytes?: number;
   formatReply(activationTag: string, text: string): string;
   replyBodyCharacterLimit(activationTag: string, maxCharacters: number): number;
   recentMessages(chat: ChatAddress, limit: number, conversation?: unknown): Promise<unknown[]>;
-  sendText(chat: ChatAddress, text: string, conversation?: unknown): Promise<SendDisposition>;
+  /** Sends the reply text, or with `attachment` one file carrying the text. */
+  sendText(
+    chat: ChatAddress,
+    text: string,
+    conversation?: unknown,
+    attachment?: OutboundAttachment,
+  ): Promise<SendDisposition>;
+  /** Best-effort acknowledgment on the tagged message when its turn starts; never throws. */
+  acknowledge?(chat: ChatAddress, conversation: unknown): Promise<void>;
   /** Best-effort typing indicator while a turn runs; never throws. */
   setTyping?(chat: ChatAddress, conversation: unknown, typing: boolean): Promise<void>;
 }

@@ -18,7 +18,7 @@ import {
   type WhatsappSubscription,
   type MaterializedWhatsappAttachment,
 } from "../types.js";
-import { downloadAttachment } from "./attachment.js";
+import { downloadAttachment, MESSAGE_ID, sendFileKind, unsendableFileReason } from "./attachment.js";
 import { linkSteps } from "./link.js";
 import {
   canonicalJid,
@@ -178,26 +178,70 @@ class WhatsappModule implements ProntoWhatsapp {
     if (input.text.length > MAX_REPLY_CHARS) {
       return { reason: "Reply text is too long", retryable: false, status: "failed" };
     }
+    const filePath = input.filePath;
+    if (filePath !== undefined) {
+      const unsendable = await unsendableFileReason(filePath);
+      if (unsendable !== null) return { reason: unsendable, retryable: false, status: "failed" };
+    }
     const readiness = await this.#awaitDelegate();
     if (readiness !== null) return readiness;
     await this.#ensureLinkedJid();
+    const timeoutMs = filePath === undefined ? this.#tuning.sendTimeoutMs : this.#tuning.attachmentTimeoutMs;
     const args = [
-      "--store", this.#storeDir, "--json", `--timeout=${Math.max(1, Math.floor(this.#tuning.sendTimeoutMs / 1000) - 5)}s`,
-      "send", "text", `--to=${chatJid}`, `--message=${input.text}`,
+      "--store", this.#storeDir, "--json", `--timeout=${Math.max(1, Math.floor(timeoutMs / 1000) - 5)}s`,
+      ...(filePath === undefined
+        ? ["send", "text", `--to=${chatJid}`, `--message=${input.text}`]
+        : [
+          "send", "file", `--to=${chatJid}`, `--file=${filePath}`, `--caption=${input.text}`,
+          `--as=${sendFileKind(filePath)}`,
+        ]),
     ];
-    if (this.isSelfChat(chatJid)) args.push("--allow-self");
+    // Only text sends reject the linked account itself; file sends have no such check.
+    if (filePath === undefined && this.isSelfChat(chatJid)) args.push("--allow-self");
     if (input.quote !== undefined) {
       args.push(`--reply-to=${input.quote.providerMessageId}`);
       const sender = input.quote.sender ?? null;
       if (sender !== null && sender.trim() !== "") args.push(`--reply-to-sender=${canonicalJid(sender)}`);
     }
-    const result = await runCommand(this.#wacliPath, args, { env: this.#env, timeoutMs: this.#tuning.sendTimeoutMs });
+    const result = await runCommand(this.#wacliPath, args, { env: this.#env, timeoutMs });
     const outcome = sendOutcome(result);
     if (outcome.status === "confirmed") {
       await this.#state.load().then(async () => {
         await this.#state.markDelivered(`${chatJid}|${outcome.providerMessageId}`, null);
         await this.#state.markDelivered(`sent|${outcome.providerMessageId}`, null);
       }).catch(() => undefined);
+    }
+    return outcome;
+  }
+
+  async react(input: Parameters<ProntoWhatsapp["react"]>[0]): Promise<WhatsappDeliveryOutcome> {
+    const chatJid = this.#signer.verify(input.conversation);
+    if (!MESSAGE_ID.test(input.providerMessageId)) {
+      return { reason: "WhatsApp message id is invalid", retryable: false, status: "failed" };
+    }
+    if (typeof input.emoji !== "string" || input.emoji.length > 32) {
+      return { reason: "Reaction is invalid", retryable: false, status: "failed" };
+    }
+    const sender = input.sender === null || input.sender.trim() === "" ? null : canonicalJid(input.sender);
+    if (sender === null && chatJid.endsWith("@g.us")) {
+      return { reason: "Group reactions need the message sender", retryable: false, status: "failed" };
+    }
+    const subscription = this.#subscription;
+    if (subscription === null || subscription.ended || await subscription.waitReady(0) !== "ready") {
+      return { reason: "WhatsApp is not connected", retryable: true, status: "failed" };
+    }
+    // Without `--sender`, wacli keys the reaction as the linked account's own message.
+    const result = await runCommand(this.#wacliPath, [
+      "--store", this.#storeDir, "--json",
+      `--timeout=${Math.max(1, Math.floor(this.#tuning.sendTimeoutMs / 1000) - 5)}s`,
+      "send", "react", `--to=${chatJid}`, `--id=${input.providerMessageId}`, `--reaction=${input.emoji}`,
+      ...(sender === null ? [] : [`--sender=${sender}`]),
+    ], { env: this.#env, timeoutMs: this.#tuning.sendTimeoutMs });
+    const outcome = sendOutcome(result);
+    if (outcome.status === "confirmed") {
+      await this.#state.load()
+        .then(async () => await this.#state.markDelivered(`sent|${outcome.providerMessageId}`, null))
+        .catch(() => undefined);
     }
     return outcome;
   }
