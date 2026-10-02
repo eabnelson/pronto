@@ -424,6 +424,44 @@ test("history returns oldest first with a clamped limit", async () => {
   expect(args).toContain(`--chat=${ALICE}`);
 });
 
+test("participants name a direct chat's two people and a group's stored members", async () => {
+  const newest = iso(10_000);
+  const h = await setup({
+    auth: LINKED,
+    groups: {
+      [GROUP]: [
+        { updated_at: iso(20_000), user_jid: ALICE },
+        { updated_at: newest, user_jid: "15550001111:3@s.whatsapp.net" },
+        { updated_at: newest, user_jid: "987654321@lid" },
+      ],
+      "120363000000000002@g.us": [{ updated_at: iso(5_000), user_jid: BOB }],
+    },
+  });
+  expect(await h.module.participants({ conversation: h.reference(ALICE) })).toMatchObject({
+    complete: true,
+    participants: [ALICE, OWNER],
+  });
+  expect((await h.module.participants({ conversation: h.reference(OWNER) })).participants).toEqual([OWNER]);
+  expect(await h.module.participants({ conversation: h.reference(GROUP) })).toEqual({
+    complete: true,
+    observedAt: newest,
+    participants: [ALICE, OWNER, "987654321@lid"],
+  });
+  // A list without this account cannot be the group this account is in.
+  expect((await h.module.participants({ conversation: h.reference("120363000000000002@g.us") })).complete)
+    .toBe(false);
+  expect(await h.module.participants({ conversation: h.reference("120363000000000003@g.us") })).toMatchObject({
+    complete: false,
+    participants: [],
+  });
+  await expect(h.module.participants({ conversation: h.reference("120363000000broken@g.us") }))
+    .rejects.toThrow(/group members are unavailable/);
+  const lookups = await h.invocations("groups participants list");
+  expect(lookups.every((entry) => entry.args.includes("--read-only"))).toBe(true);
+  await expect(h.module.participants({ conversation: { ...h.reference(GROUP), token: "forged" } }))
+    .rejects.toThrow(/scope/);
+});
+
 test("attachments download privately through the lock-free media path", async () => {
   const h = await setup({
     auth: LINKED,
