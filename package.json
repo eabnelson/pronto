@@ -35,7 +35,7 @@
     "release:validate": "bun test ./test/unit/runtime-adapters.test.ts ./test/unit/runtime-qualification.test.ts && bun ./scripts/release-validate.ts"
   },
   "devDependencies": {
-    "@types/bun": "1.3.14",
+    "@types/bun": "1.4.2",
     "@types/node": "26.2.0",
     "pronto-imessage": "workspace:*",
     "pronto-imessage-v0-2-0": "npm:pronto-imessage@0.2.0",
