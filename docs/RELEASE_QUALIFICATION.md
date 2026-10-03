@@ -3,6 +3,26 @@
 Public release requires every automated gate and an owner-run live smoke. This
 file records capability evidence, not private conversation data.
 
+## v0.5.1 scope
+
+v0.5.1 adds the read-only `pronto-whatsapp.participants()` API from PR #56.
+The other changes since v0.5.0 point setup and site links at the canonical Pronto
+page (PR #55). Activation, Messages transport, runtime invocation, outbound
+delivery, echo suppression and stored delivery fences are unchanged.
+
+On 2026-10-02, the release owner's designated WhatsApp group passed the new API's
+live smoke on omini using wacli 0.19.0 while its normal sync was running. The
+exact PR #56 source returned three members including the linked account,
+`complete: true`, and a valid stored observation timestamp. A self-chat roster
+returned one member with `complete: true`. The smoke used the package's own
+scoped-reference signer and an isolated temporary key/state path. It did not
+subscribe, send messages, or modify the live delivery state. No private member
+identifiers or conversation contents are recorded here.
+
+Signed candidate and fresh tagged self-chat qualification are pending. Prior
+v0.5.0 evidence below may be carried forward only for unchanged surfaces; no new
+remote-participant send is claimed.
+
 ## v0.5.0 scope
 
 v0.5.0 adds WhatsApp alongside iMessage through `pronto-whatsapp` and `wacli`, with
@@ -330,6 +350,25 @@ Only this qualification record and its review may differ from candidate.4 at
 the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
 ## Current matrix
+
+| Surface | Qualified version | Evidence | Status |
+| --- | --- | --- | --- |
+| macOS | 26.5.1 | Owner smoke of v0.5.0-candidate.4 on the owner's Mac (arm64) on 2026-09-30 | Pass |
+| Bun | 1.3.14 | 391 local tests passed; frozen install, typecheck, build and release validation passed; signed candidate CI 36746029798 | Pass |
+| Node.js | 22.23.1 | Clean packed import and public-interface smoke passed in signed candidate CI 36746029798 | Pass |
+| imsg | 0.15.9 | Candidate.4 launchd listener read Messages, completed catch-up and answered a tagged self-chat message once | Pass |
+| Codex CLI | 0.159.2 | Candidate.4 setup qualification passed; WhatsApp and iMessage turns ran with Codex as primary | Pass |
+| Claude Code | 2.1.285 | Candidate.4 setup qualification passed as fallback runtime | Pass |
+| Codex effective local probe | 0.159.2 | Candidate.4 setup noninteractive file-tool probe passed without an approval prompt | Pass |
+| Claude effective local probe | 2.1.285 | Candidate.4 setup noninteractive file-tool probe passed without an approval prompt | Pass |
+| Messages Automation | v0.5.0-candidate.4 | iMessage reply sent from the launchd listener and confirmed by the provider | Pass |
+| Self-chat mirror handling | v0.5.0-candidate.4 | Tagged self-chat iMessage produced exactly one reply and no turn in the following minute | Pass |
+| Full remote tagged flow | v0.5.1 | Unchanged processing surfaces reviewed; waiting for fresh exact-candidate self-chat evidence before carrying forward v0.5.0 and its recorded remote exception | Pending |
+| wacli | 0.19.0 | Candidate.4 kept its link through setup, reported ready, recovered after restarts and an offline period | Pass |
+| WhatsApp tagged flow | v0.5.0-candidate.4 | Self-chat text, photo and file request each got exactly one quoted reply; offline catch-up answered once; restarts answered nothing twice | Pass |
+| Menu bar app | v0.5.0-candidate.4 | Notarized, stapled Developer ID app verified the signed CLI and showed apps and tags; tag and listener controls exercised on candidate.2 | Pass |
+
+## Historical v0.5.0 matrix
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
