@@ -19,9 +19,25 @@ scoped-reference signer and an isolated temporary key/state path. It did not
 subscribe, send messages, or modify the live delivery state. No private member
 identifiers or conversation contents are recorded here.
 
-Signed candidate and fresh tagged self-chat qualification are pending. Prior
-v0.5.0 evidence below may be carried forward only for unchanged surfaces; no new
-remote-participant send is claimed.
+Candidate `v0.5.1-candidate.1` (source `310fd77386d776221d5e6bcc9a789d288c0c6d92`)
+passed signed CI `37085047206`, including both CLI architectures, notarization,
+the menu bar artifact, and package smoke checks. Downloaded checksums and the
+CLI's Developer ID requirement verified. The packed WhatsApp package repeated
+the group and self-chat roster smoke above successfully.
+
+The candidate was installed through the existing setup cutover using the owner's
+unchanged configuration. Both Codex and Claude effective runtime probes passed;
+the installed executable's digest matched the candidate; iMessage and WhatsApp
+reported ready. A fresh WhatsApp self-chat activation on 2026-10-03 at 01:19 UTC
+(October 2 locally) produced exactly one requested reply, confirmed by the provider
+in 13 seconds. The following minute produced no echo turn. The existing ambiguous
+and parked delivery records were unchanged. No message was sent to the group.
+
+The reviewed unchanged processing surfaces carry forward v0.5.0's tagged-flow,
+menu bar, and remote-participant evidence (including its documented owner
+exception). This is fresh exact-candidate self-chat and roster API evidence, not
+a fresh remote-participant or group-reply test. Final release source may differ
+from candidate.1 only in this qualification record, not runtime or build inputs.
 
 ## v0.5.0 scope
 
@@ -354,7 +370,7 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
 | macOS | 26.5.1 | Owner smoke of v0.5.0-candidate.4 on the owner's Mac (arm64) on 2026-09-30 | Pass |
-| Bun | 1.3.14 | 391 local tests passed; frozen install, typecheck, build and release validation passed; signed candidate CI 36746029798 | Pass |
+| Bun | 1.3.14 | 392 tests passed; frozen install, typecheck, build and release validation passed; signed candidate CI 37085047206 | Pass |
 | Node.js | 22.23.1 | Clean packed import and public-interface smoke passed in signed candidate CI 36746029798 | Pass |
 | imsg | 0.15.9 | Candidate.4 launchd listener read Messages, completed catch-up and answered a tagged self-chat message once | Pass |
 | Codex CLI | 0.159.2 | Candidate.4 setup qualification passed; WhatsApp and iMessage turns ran with Codex as primary | Pass |
@@ -363,9 +379,9 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 | Claude effective local probe | 2.1.285 | Candidate.4 setup noninteractive file-tool probe passed without an approval prompt | Pass |
 | Messages Automation | v0.5.0-candidate.4 | iMessage reply sent from the launchd listener and confirmed by the provider | Pass |
 | Self-chat mirror handling | v0.5.0-candidate.4 | Tagged self-chat iMessage produced exactly one reply and no turn in the following minute | Pass |
-| Full remote tagged flow | v0.5.1 | Unchanged processing surfaces reviewed; waiting for fresh exact-candidate self-chat evidence before carrying forward v0.5.0 and its recorded remote exception | Pending |
+| Full remote tagged flow | v0.5.1 | Unchanged processing surfaces reviewed; fresh candidate.1 self-chat reply confirmed once with no echo; carry forward v0.5.0 and its recorded remote exception | Pass |
 | wacli | 0.19.0 | Candidate.4 kept its link through setup, reported ready, recovered after restarts and an offline period | Pass |
-| WhatsApp tagged flow | v0.5.0-candidate.4 | Self-chat text, photo and file request each got exactly one quoted reply; offline catch-up answered once; restarts answered nothing twice | Pass |
+| WhatsApp tagged flow | v0.5.1-candidate.1 | Fresh self-chat reply confirmed once; no echo in the following minute. Photo/file/offline evidence carried from unchanged v0.5.0 code; packed roster API smoke passed for a real group and self-chat | Pass |
 | Menu bar app | v0.5.0-candidate.4 | Notarized, stapled Developer ID app verified the signed CLI and showed apps and tags; tag and listener controls exercised on candidate.2 | Pass |
 
 ## Historical v0.5.0 matrix
