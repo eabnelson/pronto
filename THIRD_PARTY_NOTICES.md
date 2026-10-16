@@ -61,3 +61,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Slack desktop helper
+
+The embedded helper includes the MIT-licensed LevelDB reader adapted from sttts/slagent (Copyright (c) 2026 Stefan Schimanski) and pinned BSD-licensed Go LevelDB, Snappy, and Gorilla WebSocket dependencies. Full licenses and provenance are retained in [the Slack package](packages/slack/THIRD_PARTY_NOTICES.md) and its `native/credential/LICENSE` and `native/licenses/` files.

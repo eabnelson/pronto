@@ -7,6 +7,7 @@ export const CONFIG_VERSION = 3 as const;
 export const UNRESTRICTED_TRUST_VERSION = 1 as const;
 /** Bumped when the WhatsApp disclosure changes materially, so setup asks again. */
 export const WHATSAPP_RISK_CONSENT_VERSION = 1 as const;
+export const SLACK_RISK_CONSENT_VERSION = 1 as const;
 export const TAG_PATTERN = /^@[A-Za-z0-9_-]{1,32}$/;
 
 export type RuntimeKind = "codex" | "claude";
@@ -26,10 +27,17 @@ export interface WhatsappChannelConfig {
   wacliPath: string;
 }
 
+export interface SlackChannelConfig {
+  enabled: boolean;
+  riskConsentVersion: typeof SLACK_RISK_CONSENT_VERSION;
+  tags: string[];
+}
+
 /** One entry per messaging app. Each app keeps its own trigger tags. */
 export interface ChannelsConfig {
   imessage?: ImessageChannelConfig;
   whatsapp?: WhatsappChannelConfig;
+  slack?: SlackChannelConfig;
 }
 
 export interface ProntoConfig {
@@ -50,6 +58,7 @@ export type ConfigInput = Omit<
   "channels" | "chatKeySalt" | "version"
 > & {
   channels: {
+    slack?: { enabled: boolean; riskConsentVersion: number; tags: readonly string[] };
     imessage?: Omit<ImessageChannelConfig, "tags"> & { tags: readonly string[] };
     whatsapp?: Omit<WhatsappChannelConfig, "riskConsentVersion" | "tags"> & {
       riskConsentVersion: number;
@@ -189,6 +198,11 @@ export function createConfig(input: ConfigInput): ProntoConfig {
       tags: normalizeTags(whatsapp.tags),
       wacliPath: whatsapp.wacliPath,
     };
+  }
+  if (input.channels.slack !== undefined) {
+    const slack = input.channels.slack;
+    if (slack.riskConsentVersion !== SLACK_RISK_CONSENT_VERSION) throw new Error("Slack risk consent is missing; run pronto slack link");
+    channels.slack = { enabled: slack.enabled, riskConsentVersion: SLACK_RISK_CONSENT_VERSION, tags: normalizeTags(slack.tags) };
   }
   if (enabledChannels({ channels }).length === 0) {
     throw new Error("Enable at least one messaging app");
@@ -344,6 +358,9 @@ function parseChannels(raw: unknown): ConfigInput["channels"] {
         tags,
         wacliPath: channel.wacliPath,
       };
+    } else if (kind === "slack") {
+      if (typeof channel.enabled !== "boolean" || typeof channel.riskConsentVersion !== "number" || tags === null) throw new Error("Invalid Slack configuration");
+      channels.slack = { enabled: channel.enabled, riskConsentVersion: channel.riskConsentVersion, tags };
     } else {
       throw new Error(`Unsupported messaging app in configuration: ${kind}`);
     }

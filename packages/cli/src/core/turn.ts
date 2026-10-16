@@ -269,7 +269,7 @@ export class TurnProcessor {
         capabilities.clear();
       };
       const inputForAttempt = (): RuntimeInput => {
-        const { token } = this.dependencies.broker.issue(event.chat);
+        const { token } = this.dependencies.broker.issue(event.chat, event.conversation);
         capabilities.add(token);
         return {
           bridgeExecutablePath: this.dependencies.bridgeExecutablePath,
@@ -308,7 +308,9 @@ export class TurnProcessor {
       if (result.status === "success") {
         const candidates = await this.#validCandidates(result.output.workspaceCandidates);
         const rendered = discoveryReply(
-          result.output.reply,
+          event.chat.channel === "slack" && result.output.attachmentPath !== undefined
+            ? `Slack file replies are not supported; no file was uploaded.\n\n${result.output.reply}`
+            : result.output.reply,
           candidates,
           event.activationTag === undefined
             ? MAX_RUNTIME_TEXT_CHARACTERS
@@ -437,7 +439,8 @@ export class TurnProcessor {
       this.dependencies.journal.beginSend(event.providerGuid, lease, event.chat, replyText);
       const disposition = await channel.sendText(event.chat, replyText, event.conversation, attachment);
       if (disposition.disposition === "confirmed") {
-        this.dependencies.journal.confirmDelivery(event.providerGuid, lease, disposition.guid);
+        const allowPromotion = channel.canCommit === undefined || await channel.canCommit(event.chat, event.conversation);
+        this.dependencies.journal.confirmDelivery(event.providerGuid, lease, disposition.guid, allowPromotion);
       } else if (disposition.disposition === "ambiguous") {
         this.dependencies.journal.markAmbiguous(event.providerGuid, lease);
       } else {

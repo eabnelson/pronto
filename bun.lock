@@ -10,6 +10,7 @@
         "pronto-imessage": "workspace:*",
         "pronto-imessage-v0-2-0": "npm:pronto-imessage@0.2.0",
         "pronto-imessage-v0-4-1": "npm:pronto-imessage@0.4.1",
+        "pronto-slack": "workspace:*",
         "pronto-whatsapp": "workspace:*",
         "typescript": "7.0.2",
       },
@@ -22,12 +23,17 @@
       },
       "dependencies": {
         "pronto-imessage": "workspace:*",
+        "pronto-slack": "workspace:*",
         "pronto-whatsapp": "workspace:*",
         "uqr": "0.1.3",
       },
     },
     "packages/messages": {
       "name": "pronto-imessage",
+      "version": "0.4.3",
+    },
+    "packages/slack": {
+      "name": "pronto-slack",
       "version": "0.4.3",
     },
     "packages/whatsapp": {
@@ -89,6 +95,8 @@
     "pronto-imessage-v0-2-0": ["pronto-imessage@0.2.0", "", {}, "sha512-m1yOa9/eXzGBaQqQGvgFpgFOvccRyOAY20iFpNoaWq/JZxeYKy5dNRh5kmrC6uUWL05drX6oatAgaH/zEGJyLQ=="],
 
     "pronto-imessage-v0-4-1": ["pronto-imessage@0.4.1", "", {}, "sha512-V9/oEC3Fy/6gHPYq7KLI9PRS6WCOxv/5GVBJ3dLT9uaB9HNnLU0owrR4uChbPIiUxXnXd9tC9ZNPQ5YFgtH0SQ=="],
+
+    "pronto-slack": ["pronto-slack@workspace:packages/slack"],
 
     "pronto-whatsapp": ["pronto-whatsapp@workspace:packages/whatsapp"],
 

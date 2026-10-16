@@ -84,7 +84,9 @@ function parseConversationReference(value: string, chat: ChatAddress): unknown {
   const reference = parsed as Record<string, unknown>;
   const addressed = chat.channel === "imessage"
     ? reference.chatId === imessageChatId(chat) && reference.provider === "apple-messages"
-    : reference.chatJid === chat.id && reference.provider === chat.channel;
+    : chat.channel === "slack"
+      ? reference.id === chat.id && reference.provider === "slack"
+      : reference.chatJid === chat.id && reference.provider === chat.channel;
   if (
     !addressed || reference.version !== 1 || typeof reference.expiresAt !== "string" ||
     typeof reference.token !== "string" || reference.token.length === 0
@@ -504,7 +506,7 @@ export class DeliveryJournal {
     );
   }
 
-  confirmDelivery(providerGuid: string, lease: string, outboundGuid: string): void {
+  confirmDelivery(providerGuid: string, lease: string, outboundGuid: string, allowPromotion = true): void {
     this.database.transaction(() => {
       const event = this.database
         .query(
@@ -525,7 +527,7 @@ export class DeliveryJournal {
           }
         | null;
       if (event === null) throw new Error("Cannot confirm delivery from the current state");
-      if (event.memory_eligible === 1) {
+      if (allowPromotion && event.memory_eligible === 1) {
         promoteMemory(this.database, {
           chatKey: event.chat_key,
           eventGuid: providerGuid,
@@ -541,7 +543,7 @@ export class DeliveryJournal {
           candidates = parsed.slice(0, MAX_WORKSPACE_CANDIDATES);
         }
       }
-      if (event.proposed_working_directory !== null || candidates !== undefined) {
+      if (allowPromotion && (event.proposed_working_directory !== null || candidates !== undefined)) {
         promoteWorkspace(this.database, {
           ...(candidates === undefined ? {} : { candidates }),
           chatKey: event.chat_key,

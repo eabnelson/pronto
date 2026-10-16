@@ -176,7 +176,7 @@ describe("setup discovery", () => {
     expect(TRUST_DISCLOSURE).toContain("bypass");
     expect(TRUST_DISCLOSURE).toContain("current or future");
     expect(TRUST_DISCLOSURE).toContain("hooks");
-    expect(TRUST_DISCLOSURE).toContain("iMessage, RCS, or WhatsApp");
+    expect(TRUST_DISCLOSURE).toContain("iMessage, RCS, WhatsApp, or selected Slack");
   });
 
   test("resolves and creates a home-relative workspace without changing an existing folder", async () => {
@@ -761,11 +761,10 @@ test("source builds replace Bun's embedded signature before installation", async
     {
       executable: Bun.which("bun") ?? "bun",
       args: [
-        "build",
-        "/Users/example/pronto/packages/cli/src/cli.ts",
-        "--compile",
-        "--outfile",
+        "/Users/example/pronto/scripts/compile-cli.ts",
         "/private/tmp/pronto",
+        `bun-darwin-${process.arch}`,
+        "Developer ID Application: Example",
       ],
     },
     {

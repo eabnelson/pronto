@@ -4,6 +4,7 @@ import { join } from "node:path";
 import packageJson from "../package.json" with { type: "json" };
 import messagesPackageJson from "../packages/messages/package.json" with { type: "json" };
 import whatsappPackageJson from "../packages/whatsapp/package.json" with { type: "json" };
+import slackPackageJson from "../packages/slack/package.json" with { type: "json" };
 import cliPackageJson from "../packages/cli/package.json" with { type: "json" };
 import { providerOwnershipViolations } from "./provider-ownership";
 import { releaseWorkflowViolations } from "./release-workflow-validation";
@@ -20,7 +21,7 @@ async function sourceFiles(directory: string): Promise<string[]> {
   const files: string[] = [];
 
   for (const entry of entries) {
-    if (entry.name === "node_modules") continue;
+    if (entry.name === "node_modules" || entry.name === "dist") continue;
     const relative = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...(await sourceFiles(relative)));
     else files.push(relative);
@@ -33,7 +34,8 @@ const failures: string[] = [];
 if (
   cliPackageJson.version !== packageJson.version ||
   messagesPackageJson.version !== packageJson.version ||
-  whatsappPackageJson.version !== packageJson.version
+  whatsappPackageJson.version !== packageJson.version ||
+  slackPackageJson.version !== packageJson.version
 ) {
   failures.push("workspace, CLI, Messages and WhatsApp package versions must agree");
 }
@@ -107,6 +109,9 @@ const requiredFiles = [
   "packages/whatsapp/README.md",
   "packages/whatsapp/dist/index.js",
   "packages/whatsapp/dist/index.d.ts",
+  "packages/slack/dist/index.js",
+  "packages/slack/dist/index.d.ts",
+  "packages/slack/THIRD_PARTY_NOTICES.md",
 ];
 const requiredFileChecks = await Promise.all(
   requiredFiles.map(async (path) => ({
@@ -155,6 +160,7 @@ for (const file of await sourceFiles("packages")) {
 for (const file of [
   ...await sourceFiles("packages/messages/src"),
   ...await sourceFiles("packages/whatsapp/src"),
+  ...await sourceFiles("packages/slack/src"),
 ]) {
   const source = await read(file);
   if (/\bBun\b/.test(source)) failures.push(`${file} uses a Bun global`);
@@ -277,6 +283,8 @@ await validatePackage({
   entryPoint: "createProntoWhatsapp",
   name: "pronto-whatsapp",
 });
+
+await validatePackage({ directory: "packages/slack", entryPoint: "createProntoSlack", name: "pronto-slack" });
 
 if (failures.length > 0) {
   for (const failure of failures) console.error(`release validation: ${failure}`);

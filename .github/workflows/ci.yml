@@ -27,6 +27,8 @@ jobs:
       - run: ./dist/pronto --help
       - run: node --input-type=module --eval 'import("./packages/messages/dist/index.js").then((module) => { if (typeof module.createProntoMessages !== "function") process.exit(1); })'
       - run: node --input-type=module --eval 'import("./packages/whatsapp/dist/index.js").then((module) => { if (typeof module.createProntoWhatsapp !== "function") process.exit(1); })'
+      - run: go test ./...
+        working-directory: packages/slack/native
       - run: bun run release:validate
       - run: swift test --package-path apps/menubar
       - run: apps/menubar/scripts/bundle.sh "$RUNNER_TEMP/menubar"

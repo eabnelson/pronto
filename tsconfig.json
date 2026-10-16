@@ -5,7 +5,8 @@
     "moduleResolution": "Bundler",
     "paths": {
       "pronto-imessage": ["./packages/messages/src/index.ts"],
-      "pronto-whatsapp": ["./packages/whatsapp/src/index.ts"]
+      "pronto-whatsapp": ["./packages/whatsapp/src/index.ts"],
+      "pronto-slack": ["./packages/slack/src/index.ts"]
     },
     "lib": ["ES2022"],
     "types": ["bun"],

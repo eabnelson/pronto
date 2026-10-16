@@ -48,7 +48,7 @@ export function parseAppFlags(args: readonly string[]): {
     if (arg === "--json") json = true;
     else if (arg === "--app") {
       const value = args[index + 1]?.toLowerCase();
-      if (!isChannelKind(value)) throw new Error("--app must be imessage or whatsapp");
+      if (!isChannelKind(value)) throw new Error("--app must be imessage, whatsapp, or slack");
       if (!apps.includes(value)) apps.push(value);
       index += 1;
     } else positional.push(arg);

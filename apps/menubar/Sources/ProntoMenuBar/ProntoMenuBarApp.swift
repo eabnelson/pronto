@@ -4,6 +4,7 @@ import SwiftUI
 
 enum WindowID {
     static let diagnostics = "diagnostics"
+    static let slack = "slack"
     static let linkWhatsApp = "link-whatsapp"
 }
 
@@ -28,6 +29,12 @@ struct ProntoMenuBarApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
+        Window("Slack", id: WindowID.slack) {
+            SlackSettingsView().environment(controller).environment(controller.model)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
         Window("Link WhatsApp", id: WindowID.linkWhatsApp) {
             LinkWhatsAppWindow()
                 .environment(controller)
@@ -47,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // SwiftUI may restore or auto-open a Window scene at launch; the app starts in the menu bar only.
         for window in NSApp.windows where window.identifier?.rawValue.hasPrefix(WindowID.diagnostics) == true
+            || window.identifier?.rawValue.hasPrefix(WindowID.slack) == true
             || window.identifier?.rawValue.hasPrefix(WindowID.linkWhatsApp) == true {
             window.close()
         }

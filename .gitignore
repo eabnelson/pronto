@@ -4,6 +4,9 @@ dist/
 *.log
 coverage/
 
+# Local specs and implementation tickets
+/.scratch/
+
 # Swift packages under apps/
 apps/**/.build/
 apps/**/.swiftpm/

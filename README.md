@@ -41,13 +41,14 @@ switch a chat into a repository you do not trust.
 
 ## Requirements
 
-- macOS 14 or newer with Messages signed in to iMessage
+- macOS 14 or newer; Messages must be signed in when using iMessage
 - For RCS, an iPhone and carrier configuration that makes the RCS conversation
   available in Messages on the Mac
 - [Bun 1.3.14](https://bun.sh/) only for development from source
 - For iMessage and RCS, [`imsg`](https://github.com/openclaw/imsg) 0.15.0
 - For WhatsApp, [`wacli`](https://github.com/openclaw/wacli) 0.19.0 or newer and
   the WhatsApp app on your phone (see [WhatsApp](#whatsapp) before enabling it)
+- For the Slack candidate, the direct-download Slack desktop app signed in to your chosen workspace; source builds also require Go 1.25.5 or newer and Xcode command line tools
 - At least one authenticated [Codex CLI](https://github.com/openai/codex) or
   [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/getting-started)
 
@@ -397,3 +398,11 @@ MIT. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 This project is not affiliated with Apple, Anthropic, or OpenAI. iMessage,
 Claude, and Codex are trademarks of their respective owners.
+
+### Slack desktop beta candidate
+
+Slack desktop support is implemented for supervised qualification and has not passed its installed/live release gates. It reuses the direct-download macOS desktop sign-in without a Slack developer app, browser, manual token, or hosted relay. Run `pronto setup` and choose Slack, or use `pronto slack discover --json` followed by explicit linking and conversation selection as documented in [the CLI contract](docs/CLI_JSON.md#slack-desktop-beta-candidate). The menu bar's Slack Manage window uses the same commands.
+
+Connect one workspace/member and explicitly select up to five trusted self DMs, DMs, group DMs, or ordinary public/private channels. Slack Connect, externally shared, archived, read-only/inaccessible destinations, App Store Slack, files, reactions, and typing indicators are excluded. Connecting selects none and sends no messages. Literal tags work like the other apps: after positive owner participation, any human participant can invoke the unrestricted local agent. Select conversations whose participants you trust.
+
+Replies come from your account. Channel requests and actual thread replies stay in their thread; ordinary DMs use the timeline. Memory and working folders are isolated by thread. Ambiguous sends are never automatically reposted. Sleep/restart recovery is bounded and reports incomplete coverage explicitly; [provider documentation](packages/slack/README.md) lists the limits. Use `pronto doctor` for credential-free-of-writes checks, reconnect explicitly if approval is needed, and remove a selection or unlink to revoke future scoped operations. [Qualification](docs/SLACK_QUALIFICATION.md) describes the remaining supervised tests and release blockers.

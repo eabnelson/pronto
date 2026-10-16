@@ -37,7 +37,7 @@ import { renderCompatibilityLauncher } from "../compatibility";
 import { CHANNEL_LABELS, type ChannelKind } from "../channels/types";
 import { inspectProntoExecutableIdentity } from "./release-identity";
 
-export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage, RCS, or WhatsApp conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider, and the agent can send a file from this Mac into the chat, so any participant who can use your tag can ask it for one. You are responsible for informing participants.`;
+export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage, RCS, WhatsApp, or selected Slack conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider, and the agent can send a file from this Mac into the chat, so any participant who can use your tag can ask it for one. You are responsible for informing participants.`;
 
 export interface WorkspaceSelection {
   exists: boolean;
@@ -422,6 +422,7 @@ export async function qualifyInstalledExecutable(
   runner: InstalledExecutableRunner = runCommand,
   suspendListener: () => Promise<() => Promise<void>> = async () => async () => undefined,
   wait: (milliseconds: number) => Promise<void> = Bun.sleep,
+  allowSlackSelectionRequired = false,
 ): Promise<void> {
   const restoreListener = await suspendListener();
   let result: ProcessResult;
@@ -437,8 +438,15 @@ export async function qualifyInstalledExecutable(
   }
   let status: ProcessResult | undefined;
   for (let attempt = 0; attempt < INSTALLED_STATUS_POLL_ATTEMPTS; attempt += 1) {
-    status = await runner(executablePath, ["status"]);
+    status = await runner(executablePath, allowSlackSelectionRequired ? ["status", "--json"] : ["status"]);
     if (status.exitCode === 0) return;
+    if (allowSlackSelectionRequired) {
+      try {
+        const value = JSON.parse(status.stdout);
+        const channels = Object.entries(value.channels ?? {}) as Array<[string, { state?: string; reason?: string }]>;
+        if (value.listener === "running" && channels.length > 0 && channels.every(([kind, channel]) => channel.state === "ready" || kind === "slack" && channel.state === "degraded" && channel.reason === "slack-selection-required")) return;
+      } catch { /* Keep waiting for the installed process to settle. */ }
+    }
     if (attempt < INSTALLED_STATUS_POLL_ATTEMPTS - 1) {
       await wait(INSTALLED_STATUS_POLL_INTERVAL_MS);
     }
@@ -616,6 +624,7 @@ export function prepareSetupConfig(input: {
   tagApps?: Readonly<Record<string, readonly ChannelKind[]>>;
   tags: readonly string[];
   whatsappRiskConsentVersion?: number;
+  slackRiskConsentVersion?: number;
   workingDirectory: string;
 }): ProntoConfig {
   const primaryRuntimePath = input.discovery.runtimes[input.primaryRuntime];
@@ -670,6 +679,7 @@ function setupChannels(input: Parameters<typeof prepareSetupConfig>[0]): ConfigI
       wacliPath: input.discovery.wacliPath,
     };
   }
+  if (apps.includes("slack")) channels.slack = { enabled: true, riskConsentVersion: input.slackRiskConsentVersion ?? 0, tags: tagsFor("slack") };
   return channels;
 }
 
@@ -748,11 +758,10 @@ export function sourceBuild(
 ): (outputPath: string) => Promise<void> {
   return async (outputPath) => {
     const result = await runner(Bun.which("bun") ?? "bun", [
-      "build",
-      join(repositoryRoot, "packages", "cli", "src", "cli.ts"),
-      "--compile",
-      "--outfile",
+      join(repositoryRoot, "scripts", "compile-cli.ts"),
       outputPath,
+      `bun-darwin-${process.arch}`,
+      signingIdentity,
     ]);
     if (result.exitCode !== 0) {
       throw new Error(`Unable to compile pronto: ${result.stderr.trim() || result.exitCode}`);

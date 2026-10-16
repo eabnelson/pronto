@@ -104,8 +104,8 @@ struct PanelView: View {
             SectionHeader(title: "Apps")
             ForEach(model.channelRows) { row in
                 ChannelRowView(row: row) {
-                    controller.prepareLink()
-                    openWindow(id: WindowID.linkWhatsApp)
+                    if row.app == .slack { openWindow(id: WindowID.slack) }
+                    else { controller.prepareLink(); openWindow(id: WindowID.linkWhatsApp) }
                     controller.bringToFront()
                 }
             }
@@ -184,7 +184,7 @@ struct ChannelRowView: View {
                 if model.busyAction == .channel(row.app) {
                     ProgressView().controlSize(.small)
                 } else if row.showsLinkButton {
-                    Text("Link…").foregroundStyle(.secondary)
+                    Text(row.app == .slack ? "Manage…" : "Link…").foregroundStyle(.secondary)
                 } else if offersSetupPrompt {
                     DisclosureChevron(expanded: showingSetup)
                 }

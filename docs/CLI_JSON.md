@@ -124,3 +124,19 @@ The updater quits and reopens the app when it replaces it.
 `{"status": "not_installed", "version": "0.5.1"}`. `pronto menubar install --json`
 installs or updates `~/Applications/Pronto.app` from the signed release and opens
 it; `pronto menubar uninstall --json` removes it.
+
+## Slack desktop (beta candidate)
+
+`slack discover --json` returns `{ "workspaces": [{ "handle": "<opaque>", "label": "Example", "profile": "direct" }] }`. Discovery is metadata-only. Handles expire after ten minutes and are local to this installation/link generation.
+
+`slack link --workspace <handle> --events --accept-risk [--tag <tag>]...` emits NDJSON: `approval_required`, then `linked` with `workspace`, `member`, and `selectionRequired: true`, or `error` with `reason` and `message`. Only this explicit operation may request interactive macOS credential approval. It sends no messages and selects no conversations. `pronto setup` supports Slack-only installation. For scripted fresh configuration, linking also accepts `--accept-trust --runtime <codex|claude> --working-directory <absolute-folder>`; normal installation still uses setup. Both trust disclosures apply.
+
+`slack conversations list --json` returns `{ "conversations": [{ "handle": "<opaque>", "label": "Example", "type": "self|dm|group|channel", "supported": true, "selected": false, "eligibility": "eligible|unknown" }], "truncated": false }`. Unsupported rows include a reason. This command reads no conversation history. A bounded participation miss remains unknown.
+
+`slack conversations select --conversation <handle> [--conversation <handle>]... --json` atomically replaces selection with at most five unique supported conversations. `--clear` replaces it with none. Response: `{ "selected": 1 }`. New/reselected conversations start from the current cutoff; previously selected conversations retain it. No conversations are implicitly selected. Empty selection is linked but degraded (`slack-selection-required`).
+
+`slack unlink --json` returns `{ "linked": false }`, revokes scopes and queued authority, and preserves Slack's desktop login and confirmed Pronto memory. The existing channels/tags/status/doctor/forget/start/stop commands support `slack`. Ordinary status and diagnostics omit Slack labels, provider IDs, scope tokens, credentials, and message text. Explicit onboarding returns labels; `status --chats` retains the existing opaque memory-key behavior.
+
+Replies are text-only, from the linked member. Channel roots open a response thread; actual replies keep their root; ordinary DMs use the timeline. Thread metadata on a root does not convert a DM timeline request into a thread request. Every thread has separate memory and working-folder state. Any human participant in an explicitly selected, positively eligible conversation can invoke configured tags; tags are not authentication. No test command sends automatically.
+
+`slack self-test --json` verifies the bundled helper without opening the Slack profile, accessing Keychain, connecting, migrating provider state, or sending. It returns `{ "helperProtocol": 1, "version": "1", "architecture": "arm64|x64", "signatureVerified": true }`. It may materialize the bundled helper in its private hash-specific directory. The daemon's private log records only aggregate Slack recovery costs and tagged-request latency (`component: "slack-monitor"`), with no workspace/member/conversation IDs, scope tokens, or message bodies.

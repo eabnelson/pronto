@@ -19,6 +19,7 @@ import {
   tagAssignments,
   type ProntoConfig,
   WHATSAPP_RISK_CONSENT_VERSION,
+  SLACK_RISK_CONSENT_VERSION,
 } from "./config";
 import {
   launchAgentStateForLabel,
@@ -56,6 +57,8 @@ import {
   standaloneWhatsapp,
   WHATSAPP_DISCLOSURE,
 } from "./whatsapp/standalone";
+import { runSlack } from "./slack/commands";
+import { standaloneSlack, slackHelperPath, SLACK_DISCLOSURE } from "./slack/standalone";
 import { qualifyRuntime } from "./runtimes/qualification";
 import { createRuntimeAdapter } from "./runtimes/factory";
 import { ImsgTransport } from "./imessage/transport";
@@ -89,6 +92,7 @@ Commands:
   tags        List, add, or remove trigger tags and the apps they apply to
   channels    List, enable, or disable messaging apps
   whatsapp    Link or unlink WhatsApp
+  slack       Connect Slack desktop and select trusted conversations
   menubar     Install, check, or remove the menu bar app
   update      Check for or install a verified Pronto update
   start       Start the installed listener
@@ -124,6 +128,7 @@ async function runSetup(): Promise<number> {
     const installedApps: ChannelKind[] = [
       ...(discovery.imsgPath === undefined ? [] : ["imessage" as const]),
       ...(discovery.wacliPath === undefined ? [] : ["whatsapp" as const]),
+      ...(existsSync(join(homedir(), "Library/Application Support/Slack")) ? ["slack" as const] : []),
     ];
     const appChoices = tagAppChoices(installedApps);
     let apps = appChoices[0]!.apps;
@@ -229,6 +234,10 @@ async function runSetup(): Promise<number> {
       }
     }
 
+    if (apps.includes("slack")) {
+      console.log(`\n${SLACK_DISCLOSURE}\n`);
+      if ((await prompt.question("Type yes to use Slack with this risk: ")).trim().toLowerCase() !== "yes") return 1;
+    }
     const workingDirectory = selection.exists
       ? selection.path
       : await createWorkspaceDirectory(selection.path);
@@ -242,9 +251,30 @@ async function runSetup(): Promise<number> {
       primaryRuntime: primaryAnswer,
       tagApps,
       tags,
+      ...(apps.includes("slack") ? { slackRiskConsentVersion: SLACK_RISK_CONSENT_VERSION } : {}),
       ...(apps.includes("whatsapp") ? { whatsappRiskConsentVersion: WHATSAPP_RISK_CONSENT_VERSION } : {}),
       workingDirectory,
     });
+    let slackSelectionRequired = false;
+    if (apps.includes("slack")) {
+      const slack = await standaloneSlack({ paths, chatKeySalt: config.chatKeySalt });
+      try {
+        const workspaces = (await slack.discover()).workspaces;
+        if (!workspaces.length) throw new Error("Sign in to the direct-download Slack desktop app first.");
+        workspaces.forEach((row, index) => console.log(`${index + 1}. ${row.label}`));
+        const number = Number(await prompt.question("Choose your Slack workspace: "));
+        if (!Number.isInteger(number) || !workspaces[number - 1]) throw new Error("Invalid workspace selection");
+        await slack.link(workspaces[number - 1]!.handle);
+        const conversations = (await slack.conversations()).conversations;
+        conversations.forEach((row, index) => console.log(`${index + 1}. ${row.label} (${row.type}; ${row.supported ? "available" : "unsupported"})`));
+        const answer = await prompt.question("Select up to five trusted conversations, comma-separated numbers (empty selects none): ");
+        const chosen = answer.trim() ? answer.split(",").map((value) => {
+          const row = conversations[Number(value.trim()) - 1]; if (!row) throw new Error("Invalid conversation selection"); return row.handle;
+        }) : [];
+        await slack.select(chosen);
+        slackSelectionRequired = chosen.length === 0;
+      } finally { await slack.close(); }
+    }
     const whatsappConfig = config.channels.whatsapp;
     if (whatsappConfig !== undefined) {
       const whatsapp = standaloneWhatsapp({
@@ -316,7 +346,7 @@ async function runSetup(): Promise<number> {
             label: LAUNCH_AGENT_LABEL,
             plistPath: paths.launchAgentPath,
           });
-        });
+        }, Bun.sleep, slackSelectionRequired);
       },
       removeProntoAgent: async () => {
         await stopLaunchAgentForLabel({ label: UPDATER_LAUNCH_AGENT_LABEL });
@@ -515,14 +545,14 @@ async function whatsappDoctorCheck(
 
 const CHANNELS_USAGE = "Usage: pronto channels [list | enable <app> | disable <app>] [--json]";
 
-const CHANNEL_TOOLS: Record<ChannelKind, "imsg" | "wacli"> = { imessage: "imsg", whatsapp: "wacli" };
+const CHANNEL_TOOLS: Record<ChannelKind, string> = { imessage: "imsg", whatsapp: "wacli", slack: "Pronto Slack helper" };
 
 function channelListing(config: ProntoConfig) {
   return CHANNEL_KINDS.map((app) => {
     const entry = config.channels[app];
     const configuredPath = entry === undefined
       ? undefined
-      : "imsgPath" in entry ? entry.imsgPath : entry.wacliPath;
+      : "imsgPath" in entry ? entry.imsgPath : "wacliPath" in entry ? entry.wacliPath : undefined;
     const path = configuredPath ?? Bun.which(CHANNEL_TOOLS[app]);
     return {
       app,
@@ -531,7 +561,7 @@ function channelListing(config: ProntoConfig) {
       label: CHANNEL_LABELS[app],
       tags: channelTags(config, app),
       tool: {
-        installed: path !== null && existsSync(path),
+        installed: app === "slack" ? existsSync("/Applications/Slack.app") : path !== null && existsSync(path),
         name: CHANNEL_TOOLS[app],
         path: path ?? null,
       },
@@ -563,7 +593,7 @@ async function runChannels(args: readonly string[]): Promise<number> {
   }
   const entry = config.channels[app];
   if (entry === undefined) {
-    return fail(json, app === "whatsapp"
+    return fail(json, app === "slack" ? "Slack is not set up. Run pronto slack discover --json, then pronto slack link." : app === "whatsapp"
       ? "WhatsApp is not set up. Run pronto whatsapp link."
       : "iMessage is not set up. Run pronto setup.", 2);
   }
@@ -868,6 +898,20 @@ async function runDoctor(json = false, offline = false): Promise<number> {
     if (imessage?.enabled === true) {
       report.checks.push(...await imessageDoctorChecks(imessage.imsgPath, imessage.tags));
     }
+    if (config.channels.slack?.enabled === true) {
+      if (offline) {
+        try { await slackHelperPath(paths); report.checks.push({ id: "slack-helper", status: "ok" }); }
+        catch { report.checks.push({ id: "slack-helper", status: "failed", remediation: "Rebuild or reinstall the signed Slack helper." }); }
+      } else {
+        let slack: Awaited<ReturnType<typeof standaloneSlack>> | undefined;
+        try {
+          slack = await standaloneSlack({ paths, chatKeySalt: config.chatKeySalt });
+          const result = await slack.qualify();
+          report.checks.push({ id: "slack-linked", status: result.status === "needs_link" ? "failed" : result.degraded.length ? "degraded" : "ok", remediation: "Use pronto slack link or select trusted conversations. No test message was sent." });
+        } catch { report.checks.push({ id: "slack-linked", status: "failed", remediation: "Reconnect Slack with pronto slack link." }); }
+        finally { await slack?.close(); }
+      }
+    }
     if (config.channels.whatsapp?.enabled === true) {
       report.checks.push(await whatsappDoctorCheck(config, paths));
     }
@@ -1132,6 +1176,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
   if (command === "doctor") return runDoctor(args.includes("--json"), args.includes("--offline"));
   if (command === "status") return runStatus(args.includes("--json"), args.includes("--chats"));
   if (command === "tags" || command === "tag") return runTags(args.slice(1));
+  if (command === "slack") return runSlack(args.slice(1));
   if (command === "whatsapp") return runWhatsapp(args.slice(1));
   if (command === "update") return runUpdate(args.slice(1));
   if (command === "stop" || command === "start") return runListener(command, args.includes("--json"));

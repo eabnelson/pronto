@@ -80,6 +80,7 @@ public enum ChannelRowBuilder {
                 row.tone = .warning
             }
 
+            if app == .slack { row.showsLinkButton = toolInstalled || configured }
             if row.showsToggle && enabled && enabledCount <= 1 {
                 row.toggleAllowed = false
                 row.toggleHelp = "At least one app must stay on."

@@ -3,6 +3,11 @@ import Foundation
 /// Every CLI invocation the menu bar app makes. `arguments` is the exact
 /// argument vector passed to the executable (never a shell string).
 public enum CLICommand: Hashable, Sendable {
+    case slackDiscover
+    case slackLink(workspace: String, tags: [String])
+    case slackConversations
+    case slackSelect([String])
+    case slackUnlink
     case status
     case channelsList
     case channelsEnable(AppID)
@@ -21,6 +26,11 @@ public enum CLICommand: Hashable, Sendable {
 
     public var arguments: [String] {
         switch self {
+        case .slackDiscover: return ["slack", "discover", "--json"]
+        case .slackLink(let workspace, let tags): return ["slack", "link", "--workspace", workspace, "--events", "--accept-risk"] + tags.flatMap { ["--tag", $0] }
+        case .slackConversations: return ["slack", "conversations", "list", "--json"]
+        case .slackSelect(let handles): return ["slack", "conversations", "select"] + (handles.isEmpty ? ["--clear"] : handles.flatMap { ["--conversation", $0] }) + ["--json"]
+        case .slackUnlink: return ["slack", "unlink", "--json"]
         case .status:
             return ["status", "--json"]
         case .channelsList:
@@ -58,6 +68,8 @@ public enum CLICommand: Hashable, Sendable {
         case .updateInstall: return 900
         case .updateCheck: return 90
         case .start, .stop: return 120
+        case .slackLink: return 75
+        case .slackConversations: return 180
         case .whatsappLink: return nil
         default: return 30
         }
@@ -66,7 +78,7 @@ public enum CLICommand: Hashable, Sendable {
     /// Commands that change state; the UI serializes these.
     public var isMutation: Bool {
         switch self {
-        case .channelsEnable, .channelsDisable, .tagsAdd, .tagsRemove, .start, .stop, .updateInstall, .whatsappLink:
+        case .channelsEnable, .channelsDisable, .tagsAdd, .tagsRemove, .start, .stop, .updateInstall, .whatsappLink, .slackLink, .slackSelect, .slackUnlink:
             return true
         default:
             return false

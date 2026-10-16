@@ -13,12 +13,14 @@ public struct AppID: RawRepresentable, Codable, Hashable, Sendable, Comparable, 
     public init(_ rawValue: String) { self.rawValue = rawValue }
 
     public static let imessage = AppID("imessage")
+    public static let slack = AppID("slack")
     public static let whatsapp = AppID("whatsapp")
 
     /// Human label used when the CLI did not provide one.
     public var defaultLabel: String {
         switch self {
         case .imessage: return "iMessage"
+        case .slack: return "Slack"
         case .whatsapp: return "WhatsApp"
         default: return rawValue.prefix(1).uppercased() + rawValue.dropFirst()
         }
