@@ -215,14 +215,9 @@ public final class MenuBarModel {
     private func perform(_ action: BusyAction, _ body: () async throws -> Void) async -> Bool {
         guard busyAction == nil else { return false }
         busyAction = action
-        let editsTags: Bool
-        switch action {
-        case .tag, .addTag: editsTags = true
-        default: editsTags = false
-        }
-        if editsTags { tagRevision &+= 1 }
+        tagRevision &+= 1
         defer {
-            if editsTags { tagRevision &+= 1 }
+            tagRevision &+= 1
             busyAction = nil
         }
         do {
@@ -246,6 +241,19 @@ public final class MenuBarModel {
         actionError = nil
         return await perform(.channel(app)) {
             self.channels = try await self.client.setChannel(app, enabled: enabled)
+            await self.refresh(full: false)
+        }
+    }
+
+    private struct WorkspaceRemoval: Decodable { let linked: Bool }
+    @discardableResult
+    public func removeSlackWorkspace(_ app: AppID) async -> Bool {
+        guard app.isSlack else { return false }
+        actionError = nil
+        return await perform(.channel(app)) {
+            _ = try await self.client.run(.slackRemoveWorkspace(app)).decode(WorkspaceRemoval.self)
+            self.channels = try await self.client.channels()
+            self.tags = try await self.client.tags()
             await self.refresh(full: false)
         }
     }

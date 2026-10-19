@@ -1,72 +1,87 @@
 import ProntoMenuBarKit
 import SwiftUI
 
+/// Add one desktop workspace; its tags are edited alongside the other apps.
 struct SlackSettingsView: View {
     @Environment(MenuBarModel.self) private var menu
+    @Environment(AppController.self) private var controller
+    @Environment(\.dismiss) private var dismiss
     @State private var settings: SlackModel?
+    private let usesProvidedSettings: Bool
+
+    init(settings: SlackModel? = nil) {
+        _settings = State(initialValue: settings)
+        usesProvidedSettings = settings != nil
+    }
+
     var body: some View {
         Group {
-            if let settings { contents(settings) } else { ProgressView().padding(40) }
+            if let settings { contents(settings) }
+            else { ProgressView("Finding Slack workspaces…").padding(24) }
         }
-        .frame(width: 480)
+        .frame(width: 360)
         .onDisappear { settings?.cancel() }
-        .task {
-            let model = SlackModel(client: menu.client); settings = model
-            let tags = menu.channels?.channel(.slack)?.tags ?? menu.tagEntries.map(\.tag)
-            if !tags.isEmpty { model.tags = tags.joined(separator: ", ") }
-            if menu.channels?.channel(.slack)?.configured == true { await model.loadConversations() }
+        .task(id: controller.slackWorkspaceToReconnect) {
+            guard !usesProvidedSettings else { return }
+            let model = SlackModel(client: menu.client)
+            if let app = controller.slackWorkspaceToReconnect, let info = menu.channels?.channel(app) {
+                model.reconnectWorkspaceKey = info.workspaceKey
+                model.tags = info.tags.joined(separator: ", ")
+            }
+            settings = model
             await model.discover()
         }
     }
+
     private func contents(_ model: SlackModel) -> some View {
         @Bindable var model = model
-        return ScrollView { VStack(alignment: .leading, spacing: 12) {
-            Text("Slack desktop").font(.title2.bold())
-            Text(SlackModel.disclosure).font(.callout).fixedSize(horizontal: false, vertical: true)
-            Toggle("I accept this trust and account risk", isOn: $model.acceptedRisk)
-            Picker("Workspace", selection: $model.selectedWorkspace) {
-                Text("Choose a workspace").tag("")
-                ForEach(model.workspaces) { Text($0.label).tag($0.handle) }
+        let reconnecting = controller.slackWorkspaceToReconnect != nil
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                MenuIcon(systemName: "message.fill", active: true,
+                         applicationBundleIdentifier: "com.tinyspeck.slackmacgap")
+                Text(reconnecting ? "Reconnect Slack Workspace" : "Add Slack Workspace")
+                    .font(.headline)
             }
-            TextField("Tags, separated by commas", text: $model.tags)
-            if let info = menu.channels?.channel(.slack), info.configured {
-                Button(info.enabled ? "Turn Slack off" : "Turn Slack on") {
-                    Task { await menu.setChannel(.slack, enabled: !info.enabled) }
+            Text("Pronto replies as you. People in conversations where you’ve participated can use this workspace’s tags to run your local agent.")
+                .fixedSize(horizontal: false, vertical: true)
+            if model.busy {
+                HStack { ProgressView().controlSize(.small); Text(model.message ?? "Finding workspaces…").font(.callout) }
+            } else if model.workspaces.isEmpty {
+                Text("Sign in to a new workspace in the Slack desktop app, then refresh.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !model.workspaces.isEmpty {
+                Picker("Workspace", selection: $model.selectedWorkspace) {
+                    Text("Choose a workspace").tag("")
+                    ForEach(model.workspaces) { Text($0.label).tag($0.handle) }
                 }
-                .disabled(model.busy || info.enabled && (menu.channels?.enabledApps.count ?? 0) <= 1)
+                TextField("First tag, e.g. @pronto", text: $model.tags)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Workspace tags")
+                Text("Add more tags from this workspace’s row in the menu bar.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Text("Text replies only. Each thread has separate memory and a working folder. Turning Slack off preserves selection for catch-up; clearing selection or disconnecting revokes it.").font(.caption).foregroundStyle(.secondary)
+            DisclosureGroup("How it works") {
+                Text(SlackModel.disclosure).font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let error = model.error { InlineError(message: error) }
             HStack {
-                Button("Connect") { Task { await model.link(); await menu.refresh(full: true) } }
-                    .disabled(!model.acceptedRisk || model.selectedWorkspace.isEmpty || model.busy)
-                Button("Refresh workspaces") { Task { await model.discover() } }.disabled(model.busy)
-                Button("Disconnect") { Task { await model.unlink(); await menu.refresh(full: true) } }.disabled(model.busy)
-            }
-            Text("Slack Connect, externally shared, archived and read-only conversations are unsupported. If participation is unknown, send an ordinary message yourself to establish it.").font(.caption).foregroundStyle(.secondary)
-            if !model.conversations.isEmpty {
-                Divider()
-                Text("Trusted conversations (\(model.selected.count)/5)").font(.headline)
-                ScrollView {
-                    VStack(alignment: .leading) {
-                        ForEach(model.conversations) { row in
-                            Toggle(isOn: Binding(get: { model.selected.contains(row.handle) }, set: { on in
-                                if on { model.selected.insert(row.handle) } else { model.selected.remove(row.handle) }
-                            })) { Text("\(row.label) · \(row.type) · \(row.supported ? row.eligibility : "unsupported")") }
-                            .disabled(!row.supported || model.busy || (!model.selected.contains(row.handle) && model.selected.count >= 5))
-                        }
+                Button("Refresh") { Task { await model.discover() } }.disabled(model.busy)
+                Spacer()
+                Button("Cancel") { model.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
+                Button(reconnecting ? "Reconnect" : "Add Workspace") {
+                    Task {
+                        model.acceptedRisk = true
+                        if await model.link() { await menu.refresh(full: true); dismiss() }
                     }
-                }.frame(maxHeight: 220)
-                if model.truncated { Text("The list reached its metadata limit. Refresh to continue setup with the CLI.").font(.caption) }
-                HStack {
-                    Button("Save selection") { Task { await model.save(); await menu.refresh(full: true) } }.disabled(!model.canSave)
-                    Button("Refresh conversations") { Task { await model.loadConversations() } }.disabled(model.busy)
-                    Button("Clear all") { model.selected = [] }.disabled(model.busy)
                 }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.busy || model.supportsWorkspaceApps == false || model.selectedWorkspace.isEmpty || model.tags.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            if let message = model.message { Text(message).font(.callout).textSelection(.enabled) }
-            if let error = model.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-            if model.busy { HStack { ProgressView().controlSize(.small); Button("Cancel") { model.cancel() } } }
         }
-        .padding(20) }.frame(height: 680)
+        .padding(20)
     }
 }

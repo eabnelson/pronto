@@ -102,12 +102,22 @@ struct PanelView: View {
     private var appsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeader(title: "Apps")
-            ForEach(model.channelRows) { row in
+            ForEach(model.channelRows.filter { !$0.app.isSlack || $0.configured }) { row in
                 ChannelRowView(row: row) {
-                    if row.app == .slack { openWindow(id: WindowID.slack) }
+                    if row.app.isSlack {
+                        controller.slackWorkspaceToReconnect = row.app
+                        openWindow(id: WindowID.slack)
+                    }
                     else { controller.prepareLink(); openWindow(id: WindowID.linkWhatsApp) }
                     controller.bringToFront()
                 }
+            }
+            MenuItem(action: {
+                controller.slackWorkspaceToReconnect = nil
+                openWindow(id: WindowID.slack)
+                controller.bringToFront()
+            }, disabled: model.busyAction != nil) {
+                IconRow(icon: MenuIcon(systemName: "plus"), title: "Add Slack Workspace…")
             }
         }
     }
@@ -156,6 +166,12 @@ struct ChannelRowView: View {
     let onLink: () -> Void
     @Environment(MenuBarModel.self) private var model
     @State private var showingSetup = false
+    @State private var showingWorkspaceOptions = false
+
+    init(row: ChannelRow, workspaceExpanded: Bool = false, onLink: @escaping () -> Void) {
+        self.row = row; self.onLink = onLink
+        _showingWorkspaceOptions = State(initialValue: workspaceExpanded)
+    }
 
     /// Apps that aren't set up and can't be linked from here show a prompt for the owner's agent.
     private var offersSetupPrompt: Bool { !row.configured && !row.showsLinkButton }
@@ -163,6 +179,9 @@ struct ChannelRowView: View {
     var body: some View {
         VStack(spacing: 0) {
             item
+            if row.app.isSlack, showingWorkspaceOptions {
+                SlackWorkspaceOptions(row: row)
+            }
             if offersSetupPrompt && showingSetup {
                 ExpandedGroup {
                     CopyablePrompt(prompt: SetupPrompt.add(row.app, labels: model.appLabels,
@@ -177,7 +196,7 @@ struct ChannelRowView: View {
             IconRow(
                 icon: MenuIcon(systemName: row.app == .whatsapp ? "phone.fill" : "message.fill",
                                active: row.enabled && row.configured,
-                               applicationBundleIdentifier: row.app == .slack ? "com.tinyspeck.slackmacgap" : nil),
+                               applicationBundleIdentifier: row.app.isSlack ? "com.tinyspeck.slackmacgap" : nil),
                 title: row.label,
                 subtitle: row.detail.map { "\(row.statusText) · \($0)" } ?? row.statusText,
                 subtitleColor: subtitleColor
@@ -185,7 +204,9 @@ struct ChannelRowView: View {
                 if model.busyAction == .channel(row.app) {
                     ProgressView().controlSize(.small)
                 } else if row.showsLinkButton {
-                    Text(row.app == .slack ? "Manage…" : "Link…").foregroundStyle(.secondary)
+                    Text(row.app.isSlack ? "Reconnect…" : "Link…").foregroundStyle(.secondary)
+                } else if row.app.isSlack {
+                    DisclosureChevron(expanded: showingWorkspaceOptions)
                 } else if offersSetupPrompt {
                     DisclosureChevron(expanded: showingSetup)
                 }
@@ -199,6 +220,9 @@ struct ChannelRowView: View {
 
     private var action: (() -> Void)? {
         if row.showsLinkButton { return onLink }
+        if row.app.isSlack, row.configured {
+            return { withAnimation(.snappy(duration: 0.2)) { showingWorkspaceOptions.toggle() } }
+        }
         if offersSetupPrompt {
             return { withAnimation(.snappy(duration: 0.2)) { showingSetup.toggle() } }
         }
@@ -208,7 +232,8 @@ struct ChannelRowView: View {
     }
 
     private var hint: String? {
-        if row.showsLinkButton { return "Link \(row.label)" }
+        if row.showsLinkButton { return "Reconnect \(row.label)" }
+        if row.app.isSlack { return "Manage workspace tags and turn replies on or off" }
         if offersSetupPrompt { return "Get a prompt that has your agent set up \(row.label)" }
         guard row.showsToggle else { return nil }
         if !row.toggleAllowed { return row.toggleHelp }

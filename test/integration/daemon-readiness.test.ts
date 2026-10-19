@@ -77,7 +77,7 @@ test.each([false, true])("restart waits for subscription and preserves recovery 
   }
 });
 
-test("a broken WhatsApp install degrades only WhatsApp while iMessage serves", async () => {
+test.each([false, true])("a broken app degrades only itself while another app serves (broken first: %s)", async (brokenFirst) => {
   const directory = await mkdtemp(join(tmpdir(), "pronto-isolation-"));
   const paths = pathsForHome(directory);
   const provider = join(directory, "imsg-fixture");
@@ -104,11 +104,10 @@ test("a broken WhatsApp install degrades only WhatsApp while iMessage serves", a
     }
   `, { mode: 0o700 });
   await writeFile(wacli, "#!/bin/sh\necho 'wacli fixture is broken' >&2\nexit 1\n", { mode: 0o700 });
+  const imessage = { enabled: true, imsgPath: provider, tags: ["@test"] };
+  const whatsapp = { enabled: true, riskConsentVersion: 1 as const, tags: ["@test"], wacliPath: wacli };
   const daemon = new ProntoDaemon(createConfig({
-    channels: {
-      imessage: { enabled: true, imsgPath: provider, tags: ["@test"] },
-      whatsapp: { enabled: true, riskConsentVersion: 1, tags: ["@test"], wacliPath: wacli },
-    },
+    channels: brokenFirst ? { whatsapp, imessage } : { imessage, whatsapp },
     primaryRuntime: "codex", primaryRuntimePath: process.execPath,
     unrestrictedTrustVersion: 1, workingDirectory: directory,
   }), paths);

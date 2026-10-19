@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
-import type { ChannelKind } from "./channels/types";
+import { isSlackChannel, type ChannelKind } from "./channels/types";
 
 export const CONFIG_VERSION = 3 as const;
 export const UNRESTRICTED_TRUST_VERSION = 1 as const;
@@ -31,6 +31,8 @@ export interface SlackChannelConfig {
   enabled: boolean;
   riskConsentVersion: typeof SLACK_RISK_CONSENT_VERSION;
   tags: string[];
+  workspaceLabel?: string;
+  workspaceKey?: string;
 }
 
 /** One entry per messaging app. Each app keeps its own trigger tags. */
@@ -38,6 +40,7 @@ export interface ChannelsConfig {
   imessage?: ImessageChannelConfig;
   whatsapp?: WhatsappChannelConfig;
   slack?: SlackChannelConfig;
+  [workspace: `slack:${string}`]: SlackChannelConfig | undefined;
 }
 
 export interface RuntimeSelection {
@@ -63,7 +66,8 @@ export type ConfigInput = Omit<
   "channels" | "chatKeySalt" | "version"
 > & {
   channels: {
-    slack?: { enabled: boolean; riskConsentVersion: number; tags: readonly string[] };
+    slack?: Omit<SlackChannelConfig, "tags" | "riskConsentVersion"> & { riskConsentVersion: number; tags: readonly string[] };
+    [workspace: `slack:${string}`]: (Omit<SlackChannelConfig, "tags" | "riskConsentVersion"> & { riskConsentVersion: number; tags: readonly string[] }) | undefined;
     imessage?: Omit<ImessageChannelConfig, "tags"> & { tags: readonly string[] };
     whatsapp?: Omit<WhatsappChannelConfig, "riskConsentVersion" | "tags"> & {
       riskConsentVersion: number;
@@ -234,10 +238,17 @@ export function createConfig(input: ConfigInput): ProntoConfig {
       wacliPath: whatsapp.wacliPath,
     };
   }
-  if (input.channels.slack !== undefined) {
-    const slack = input.channels.slack;
+  for (const [kind, entry] of Object.entries(input.channels)) {
+    if (!isSlackChannel(kind) || entry === undefined) continue;
+    const slack = entry as SlackChannelConfig;
     if (slack.riskConsentVersion !== SLACK_RISK_CONSENT_VERSION) throw new Error("Slack risk consent is missing; run pronto slack link");
-    channels.slack = { enabled: slack.enabled, riskConsentVersion: SLACK_RISK_CONSENT_VERSION, tags: normalizeTags(slack.tags) };
+    if (slack.workspaceKey !== undefined && !/^[a-f0-9]{32}$/.test(slack.workspaceKey)) throw new Error("Invalid Slack workspace key");
+    if (kind !== "slack" && slack.workspaceKey !== undefined && kind !== `slack:${slack.workspaceKey}`) throw new Error("Slack workspace key does not match its app");
+    channels[kind] = {
+      enabled: slack.enabled, riskConsentVersion: SLACK_RISK_CONSENT_VERSION, tags: normalizeTags(slack.tags),
+      ...(slack.workspaceLabel === undefined ? {} : { workspaceLabel: slack.workspaceLabel }),
+      ...(slack.workspaceKey === undefined ? {} : { workspaceKey: slack.workspaceKey }),
+    };
   }
   if (enabledChannels({ channels }).length === 0) {
     throw new Error("Enable at least one messaging app");
@@ -428,9 +439,14 @@ function parseChannels(raw: unknown): ConfigInput["channels"] {
         tags,
         wacliPath: channel.wacliPath,
       };
-    } else if (kind === "slack") {
+    } else if (isSlackChannel(kind)) {
       if (typeof channel.enabled !== "boolean" || typeof channel.riskConsentVersion !== "number" || tags === null) throw new Error("Invalid Slack configuration");
-      channels.slack = { enabled: channel.enabled, riskConsentVersion: channel.riskConsentVersion, tags };
+      if (channel.workspaceLabel !== undefined && typeof channel.workspaceLabel !== "string" || channel.workspaceKey !== undefined && typeof channel.workspaceKey !== "string") throw new Error("Invalid Slack workspace configuration");
+      channels[kind] = {
+        enabled: channel.enabled, riskConsentVersion: channel.riskConsentVersion as typeof SLACK_RISK_CONSENT_VERSION, tags,
+        ...(typeof channel.workspaceLabel === "string" ? { workspaceLabel: channel.workspaceLabel } : {}),
+        ...(typeof channel.workspaceKey === "string" ? { workspaceKey: channel.workspaceKey } : {}),
+      };
     } else {
       throw new Error(`Unsupported messaging app in configuration: ${kind}`);
     }

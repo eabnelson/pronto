@@ -85,6 +85,7 @@ type helper struct {
 	mu                     sync.Mutex
 	session                *session
 	selected               map[string]bool
+	observeUnselected      bool
 	socket                 *websocket.Conn
 	watchCancel            context.CancelFunc
 	rateMu                 sync.Mutex
@@ -342,11 +343,12 @@ func (h *helper) execute(ctx context.Context, op string, input map[string]json.R
 		return h.connect(ctx, str(input, "team"), str(input, "owner"), string(input["interactive"]) == "true")
 	case "select":
 		var ids []string
-		if json.Unmarshal(input["conversations"], &ids) != nil || len(ids) > 5 {
+		if json.Unmarshal(input["conversations"], &ids) != nil || len(ids) > 500 {
 			return nil, errors.New("slack-selection-limit")
 		}
 		h.mu.Lock()
 		h.selected = map[string]bool{}
+		h.observeUnselected = string(input["observeUnselected"]) == "true"
 		for _, id := range ids {
 			h.selected[id] = true
 		}
@@ -358,6 +360,7 @@ func (h *helper) execute(ctx context.Context, op string, input map[string]json.R
 			h.mu.Lock()
 			h.session = nil
 			h.selected = map[string]bool{}
+			h.observeUnselected = false
 			h.mu.Unlock()
 		}
 		return map[string]any{}, nil
@@ -385,7 +388,7 @@ func (h *helper) execute(ctx context.Context, op string, input map[string]json.R
 			// Selection still independently checks conversations.info.
 			c.IsMember = true
 			row := c.normalized(s)
-			if c.IsIM && c.User != "" && c.User != s.owner {
+			if c.IsIM && c.User != "" && c.User != s.owner && string(input["labels"]) != "false" {
 				user, e := h.call(ctx, s, "users.info", map[string]any{"user": c.User})
 				if e == nil {
 					var u struct {
@@ -603,7 +606,7 @@ func (h *helper) socketLoop(ctx context.Context, s *session) {
 						continue
 					}
 					h.mu.Lock()
-					selected := h.selected[raw.Channel]
+					selected := h.selected[raw.Channel] || h.observeUnselected
 					h.mu.Unlock()
 					if !selected {
 						continue

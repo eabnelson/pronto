@@ -13,6 +13,7 @@ import {
   saveConfig,
   type RuntimeKind,
   type ProntoConfig,
+  type ChannelsConfig,
   UNRESTRICTED_TRUST_VERSION,
 } from "../config";
 import {
@@ -35,10 +36,10 @@ import {
   type ProntoPaths,
 } from "./paths";
 import { renderCompatibilityLauncher } from "../compatibility";
-import { CHANNEL_LABELS, type ChannelKind } from "../channels/types";
+import { CHANNEL_LABELS, isSlackChannel, type ChannelKind } from "../channels/types";
 import { inspectProntoExecutableIdentity } from "./release-identity";
 
-export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage, RCS, WhatsApp, or selected Slack conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider, and the agent can send a file from this Mac into the chat, so any participant who can use your tag can ask it for one. You are responsible for informing participants.`;
+export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage, RCS, WhatsApp, or Slack conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider, and the agent can send a file from this Mac into the chat, so any participant who can use your tag can ask it for one. You are responsible for informing participants.`;
 
 export interface WorkspaceSelection {
   exists: boolean;
@@ -49,6 +50,7 @@ export interface ExistingSetupDefaults {
   chatKeySalt: string;
   tags: string[];
   tagRuntimes?: ProntoConfig["tagRuntimes"];
+  slackWorkspaces?: ChannelsConfig;
   workingDirectory: string;
 }
 
@@ -71,7 +73,7 @@ export function setupCompletionMessage(
   ];
   const configured = Object.entries(tagsByApp).length > 1
     ? Object.entries(tagsByApp)
-      .map(([app, tags]) => `${CHANNEL_LABELS[app as ChannelKind]}: ${tags.join(", ")}`)
+      .map(([app, tags]) => `${CHANNEL_LABELS[app as ChannelKind] ?? "Slack"}: ${tags?.join(", ") ?? ""}`)
       .join("; ")
     : Object.values(tagsByApp)[0]?.join(", ") ?? "";
   return `Pronto installed and qualified.
@@ -134,6 +136,8 @@ export async function loadExistingSetupDefaults(
       chatKeySalt: value.chatKeySalt,
       tags,
       ...(value.tagRuntimes === undefined ? {} : { tagRuntimes: (await loadConfig(configPath)).tagRuntimes }),
+      ...(value.version === 3 && value.channels !== null && typeof value.channels === "object" && Object.entries(value.channels).some(([kind, entry]) => kind.startsWith("slack:") || kind === "slack" && entry !== null && typeof entry === "object" && "workspaceKey" in entry)
+        ? { slackWorkspaces: Object.fromEntries(Object.entries((await loadConfig(configPath)).channels).filter(([kind]) => isSlackChannel(kind))) } : {}),
       workingDirectory: value.workingDirectory,
     };
   } catch (error) {

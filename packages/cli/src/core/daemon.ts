@@ -1,6 +1,7 @@
 import { routeCurrentChat } from "../channels/current-chat";
 import {
   ChannelNeedsLinkError,
+  isSlackChannel,
   type Channel,
   type ChannelKind,
   type ChannelWatch,
@@ -182,7 +183,7 @@ export class ProntoDaemon {
           updateHealth();
         },
         onRecovery: (outcome) => {
-          if (kind === "slack" && outcome.status === "recovered") degraded.set(kind, []);
+          if (isSlackChannel(kind) && outcome.status === "recovered") degraded.set(kind, []);
           if (outcome.status === "degraded") recoveryReasons.set(kind, outcome.reason);
           else recoveryReasons.delete(kind);
           settle(kind);
@@ -210,7 +211,8 @@ export class ProntoDaemon {
     try {
       let firstFailure: unknown;
       for (const kind of enabledChannels(this.#config)) {
-        firstFailure ??= await qualifyChannel(kind);
+        const failure = await qualifyChannel(kind);
+        firstFailure ??= failure;
       }
       if (channels.size === 0) throw firstFailure ?? new Error("No messaging app is enabled");
       brokerServer = broker.listen();
@@ -315,10 +317,11 @@ export class ProntoDaemon {
         },
       );
     }
-    if (kind === "slack") {
+    if (isSlackChannel(kind)) {
       return new SlackChannel(
-        await standaloneSlack({ paths: this.paths, chatKeySalt: this.#config.chatKeySalt }),
+        await standaloneSlack({ paths: this.paths, chatKeySalt: this.#config.chatKeySalt, workspace: kind }),
         (sample) => console.log(JSON.stringify({ component: "slack-monitor", ...sample })),
+        kind,
       );
     }
     const whatsapp = this.#config.channels.whatsapp;

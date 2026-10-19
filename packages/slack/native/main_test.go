@@ -15,6 +15,23 @@ import (
 
 type roundTrip func(*http.Request) (*http.Response, error)
 
+func TestWorkspaceObservationDoesNotGrantReadOrSendAuthority(t *testing.T) {
+	h := newHelper()
+	h.session = &session{team: "TFIXTURE", owner: "UFIXTURE", token: "synthetic", cookie: "synthetic"}
+	_, err := h.execute(context.Background(), "select", map[string]json.RawMessage{
+		"conversations": json.RawMessage(`["CVERIFIED"]`), "observeUnselected": json.RawMessage(`true`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.bound("CUNKNOWN", false); err == nil {
+		t.Fatal("observing a workspace granted unverified conversation access")
+	}
+	if _, err := h.bound("CVERIFIED", false); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func TestSocketOrigins(t *testing.T) {
 	for _, address := range []string{"wss://wss-primary.slack.com/path?secret=synthetic", "wss://slack.com/"} {

@@ -8,6 +8,7 @@ public enum CLICommand: Hashable, Sendable {
     case slackConversations
     case slackSelect([String])
     case slackUnlink
+    case slackRemoveWorkspace(AppID)
     case status
     case channelsList
     case channelsEnable(AppID)
@@ -33,6 +34,7 @@ public enum CLICommand: Hashable, Sendable {
         case .slackConversations: return ["slack", "conversations", "list", "--json"]
         case .slackSelect(let handles): return ["slack", "conversations", "select"] + (handles.isEmpty ? ["--clear"] : handles.flatMap { ["--conversation", $0] }) + ["--json"]
         case .slackUnlink: return ["slack", "unlink", "--json"]
+        case .slackRemoveWorkspace(let app): return ["slack", "unlink", "--app", app.rawValue, "--json"]
         case .status:
             return ["status", "--json"]
         case .channelsList:
@@ -84,7 +86,7 @@ public enum CLICommand: Hashable, Sendable {
     /// Commands that change state; the UI serializes these.
     public var isMutation: Bool {
         switch self {
-        case .channelsEnable, .channelsDisable, .tagsAdd, .tagsRemove, .tagsAgents, .tagsAgentsReset, .start, .stop, .updateInstall, .whatsappLink, .slackLink, .slackSelect, .slackUnlink:
+        case .channelsEnable, .channelsDisable, .tagsAdd, .tagsRemove, .tagsAgents, .tagsAgentsReset, .start, .stop, .updateInstall, .whatsappLink, .slackLink, .slackSelect, .slackUnlink, .slackRemoveWorkspace:
             return true
         default:
             return false

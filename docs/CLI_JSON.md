@@ -153,18 +153,62 @@ The updater quits and reopens the app when it replaces it.
 installs or updates `~/Applications/Pronto.app` from the signed release and opens
 it; `pronto menubar uninstall --json` removes it.
 
-## Slack desktop (beta candidate)
+## Slack workspaces (beta candidate)
 
-`slack discover --json` returns `{ "workspaces": [{ "handle": "<opaque>", "label": "Example", "profile": "direct" }] }`. Discovery is metadata-only. Handles expire after ten minutes and are local to this installation/link generation.
+Each connected Slack workspace is a separate app in `channels list`, with its
+own label, tags, enabled state, and health. The original connection keeps the
+app ID `slack` and its existing memory. Additional workspace IDs use
+`slack:<32 lowercase hexadecimal characters>`. These are opaque identities,
+not Slack provider IDs. `channels enable/disable <app>` and
+`tags add/remove --app <app>` accept these IDs, including tag edits while a
+workspace is off.
 
-`slack link --workspace <handle> --events --accept-risk [--tag <tag>]...` emits NDJSON: `approval_required`, then `linked` with `workspace`, `member`, and `selectionRequired: true`, or `error` with `reason` and `message`. Only this explicit operation may request interactive macOS credential approval. It sends no messages and selects no conversations. `pronto setup` supports Slack-only installation. For scripted fresh configuration, linking also accepts `--accept-trust --runtime <codex|claude> --working-directory <absolute-folder>`; normal installation still uses setup. Both trust disclosures apply.
+`slack discover --json` returns `workspaceApps: true` and workspace choices
+with `handle`, `id` (opaque workspace key), `label`, `profile`, and `connected`.
+Handles expire after ten minutes. Discovery sends no messages and does not
+choose a workspace. The add picker excludes already-added workspaces.
 
-`slack conversations list --json` returns `{ "conversations": [{ "handle": "<opaque>", "label": "Example", "type": "self|dm|group|channel", "supported": true, "selected": false, "eligibility": "eligible|unknown" }], "truncated": false }`. Unsupported rows include a reason. This command reads no conversation history. A bounded participation miss remains unknown.
+`slack link --workspace <handle> --events --accept-risk [--tag <tag>]...` adds
+the chosen workspace without replacing another connection. It streams
+`approval_required`, then `linked` with `workspace`, `member`, `app`, and
+`selectionRequired: false`, or an `error` event with a safe reason and message.
+macOS credential approval occurs only during this explicit operation.
+Workspace tags apply in supported conversations where positive owner
+participation has been observed. Connecting sends no message; requests before
+the connection cutoff cannot activate.
 
-`slack conversations select --conversation <handle> [--conversation <handle>]... --json` atomically replaces selection with at most five unique supported conversations. `--clear` replaces it with none. Response: `{ "selected": 1 }`. New/reselected conversations start from the current cutoff; previously selected conversations retain it. No conversations are implicitly selected. Empty selection is linked but degraded (`slack-selection-required`).
+Existing manually selected connections retain their policy until explicitly
+reconnected or migrated with
+`slack scope --all-participated [--app <app>] --json`. This returns `app` and
+`coverage: participated`. The menu bar has no conversation-selection step.
+Advanced consumers can still use
+`slack conversations list [--app <app>] --json` and
+`slack conversations select (--conversation <handle>... | --clear) [--app <app>] --json`
+to opt into the original selection policy.
 
-`slack unlink --json` returns `{ "linked": false }`, revokes scopes and queued authority, and preserves Slack's desktop login and confirmed Pronto memory. The existing channels/tags/status/doctor/forget/start/stop commands support `slack`. Ordinary status and diagnostics omit Slack labels, provider IDs, scope tokens, credentials, and message text. Explicit onboarding returns labels; `status --chats` retains the existing opaque memory-key behavior.
+`slack unlink [--app <app>] --json` removes that workspace's app and tag
+assignments and returns `linked: false`. It revokes only that workspace's
+scopes, preserves other workspaces and their settings, and leaves Slack's
+desktop sign-in unchanged. At least one enabled app must remain. Turning a
+workspace off preserves catch-up state. Removing a tag's final app assignment
+also removes its per-tag agent override.
 
-Replies are text-only, from the linked member. Channel roots open a response thread; actual replies keep their root; ordinary DMs use the timeline. Thread metadata on a root does not convert a DM timeline request into a thread request. Every thread has separate memory and working-folder state. Any human participant in an explicitly selected, positively eligible conversation can invoke configured tags; tags are not authentication. No test command sends automatically.
+Workspace discovery is bounded to 500 conversations and 20 metadata pages per
+refresh. Recovery rotates its starting conversation when its budget is
+exhausted, reports gaps as degraded, and never treats missing participation
+evidence as permission. Slack Connect, externally shared, archived, and
+read-only conversations remain unsupported. Reconnecting rotates authority;
+workspace, member, conversation, and thread isolation remain enforced.
 
-`slack self-test --json` verifies the bundled helper without opening the Slack profile, accessing Keychain, connecting, migrating provider state, or sending. It returns `{ "helperProtocol": 1, "version": "1", "architecture": "arm64|x64", "signatureVerified": true }`. It may materialize the bundled helper in its private hash-specific directory. The daemon's private log records only aggregate Slack recovery costs and tagged-request latency (`component: "slack-monitor"`), with no workspace/member/conversation IDs, scope tokens, or message bodies.
+Replies are text-only and come from the connected member. Channel roots open
+a response thread; actual replies retain their root; ordinary DMs use the
+timeline. Each thread has separate memory and a working folder. Any human
+participant in an eligible conversation can invoke the workspace's tags.
+No test command sends automatically.
+
+`slack self-test --json` verifies the bundled helper without opening the Slack
+profile, accessing Keychain, connecting, migrating provider state, or sending.
+It returns `helperProtocol`, `version`, `architecture`, and `signatureVerified`.
+Private monitor logs contain only recovery costs and latency, never credentials,
+provider IDs, scope tokens, or message bodies. Added workspace app IDs require
+a CLI supporting workspace apps; older executables cannot load those entries.

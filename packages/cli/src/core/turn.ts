@@ -1,4 +1,4 @@
-import type { ChannelActivation, ChannelKind, TurnChannel } from "../channels/types";
+import { isSlackChannel, type ChannelActivation, type ChannelKind, type TurnChannel } from "../channels/types";
 import { assembleContext, type ContextEnvelope, type RecentMessage } from "../context/assemble";
 import { parseCurrentChatMessage } from "../imessage/event-adapter";
 import type { ChainedRuntimeResult, RuntimeChain } from "../runtimes/chain";
@@ -311,7 +311,7 @@ export class TurnProcessor {
       if (result.status === "success") {
         const candidates = await this.#validCandidates(result.output.workspaceCandidates);
         const rendered = discoveryReply(
-          event.chat.channel === "slack" && result.output.attachmentPath !== undefined
+          isSlackChannel(event.chat.channel) && result.output.attachmentPath !== undefined
             ? `Slack file replies are not supported; no file was uploaded.\n\n${result.output.reply}`
             : result.output.reply,
           candidates,

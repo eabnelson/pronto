@@ -15,6 +15,7 @@ public struct AppID: RawRepresentable, Codable, Hashable, Sendable, Comparable, 
     public static let imessage = AppID("imessage")
     public static let slack = AppID("slack")
     public static let whatsapp = AppID("whatsapp")
+    public var isSlack: Bool { self == .slack || rawValue.hasPrefix("slack:") }
 
     /// Human label used when the CLI did not provide one.
     public var defaultLabel: String {
@@ -22,7 +23,7 @@ public struct AppID: RawRepresentable, Codable, Hashable, Sendable, Comparable, 
         case .imessage: return "iMessage"
         case .slack: return "Slack"
         case .whatsapp: return "WhatsApp"
-        default: return rawValue.prefix(1).uppercased() + rawValue.dropFirst()
+        default: return isSlack ? "Slack" : rawValue.prefix(1).uppercased() + rawValue.dropFirst()
         }
     }
 
@@ -170,16 +171,18 @@ public struct ChannelInfo: Codable, Hashable, Sendable, Identifiable {
     public var enabled: Bool
     public var tags: [String]
     public var tool: ChannelTool?
+    public var workspaceKey: String?
 
     public var id: AppID { app }
 
-    public init(app: AppID, label: String? = nil, configured: Bool, enabled: Bool, tags: [String] = [], tool: ChannelTool? = nil) {
+    public init(app: AppID, label: String? = nil, configured: Bool, enabled: Bool, tags: [String] = [], tool: ChannelTool? = nil, workspaceKey: String? = nil) {
         self.app = app
         self.label = label ?? app.defaultLabel
         self.configured = configured
         self.enabled = enabled
         self.tags = tags
         self.tool = tool
+        self.workspaceKey = workspaceKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -190,6 +193,7 @@ public struct ChannelInfo: Codable, Hashable, Sendable, Identifiable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         tool = try c.decodeIfPresent(ChannelTool.self, forKey: .tool)
+        workspaceKey = try c.decodeIfPresent(String.self, forKey: .workspaceKey)
     }
 }
 

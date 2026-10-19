@@ -1,11 +1,18 @@
 import type { CurrentChatSource } from "../tools/broker";
 
 export const CHANNEL_KINDS = ["imessage", "whatsapp", "slack"] as const;
-export type ChannelKind = (typeof CHANNEL_KINDS)[number];
+export type SlackChannelKind = "slack" | `slack:${string}`;
+export type ChannelKind = (typeof CHANNEL_KINDS)[number] | SlackChannelKind;
+
+export function isSlackChannel(value: unknown): value is SlackChannelKind {
+  return value === "slack" || typeof value === "string" && /^slack:[a-f0-9]{32}$/.test(value);
+}
 
 export function isChannelKind(value: unknown): value is ChannelKind {
-  return CHANNEL_KINDS.includes(value as ChannelKind);
+  return CHANNEL_KINDS.includes(value as typeof CHANNEL_KINDS[number]) || isSlackChannel(value);
 }
+
+export function channelLabel(kind: ChannelKind): string { return isSlackChannel(kind) ? "Slack" : CHANNEL_LABELS[kind]; }
 
 export const CHANNEL_LABELS: Record<ChannelKind, string> = {
   imessage: "iMessage",

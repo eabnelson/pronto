@@ -71,6 +71,14 @@ public enum ChannelRowBuilder {
             } else if let live {
                 (row.statusText, row.tone) = describe(live.state)
                 row.detail = live.reason
+                if app.isSlack {
+                    switch live.reason {
+                    case "slack-recovery-incomplete": row.detail = "Catching up on conversations."
+                    case "slack-discovery-incomplete": row.detail = "Some conversations could not be monitored."
+                    case "slack-selection-required": row.detail = "Reconnect to finish workspace setup."
+                    default: break
+                    }
+                }
                 row.showsLinkButton = app == .whatsapp && live.state == .needsLink
             } else if status == nil {
                 row.statusText = "Checking…"
@@ -80,7 +88,7 @@ public enum ChannelRowBuilder {
                 row.tone = .warning
             }
 
-            if app == .slack { row.showsLinkButton = toolInstalled || configured }
+            if app.isSlack { row.showsLinkButton = configured && live?.state == .needsLink }
             if row.showsToggle && enabled && enabledCount <= 1 {
                 row.toggleAllowed = false
                 row.toggleHelp = "At least one app must stay on."

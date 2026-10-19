@@ -2,7 +2,7 @@
 
 A native SwiftUI menu bar app (`Pronto.app`, bundle id `dev.pronto.menubar`) for
 checking and controlling the local Pronto listener: app status, tags, pause and
-resume, updates, diagnostics, and WhatsApp linking.
+resume, updates, diagnostics, WhatsApp linking, and separate Slack workspace apps.
 
 The app talks to Pronto **only** through the machine-readable CLI contract in
 [`docs/CLI_JSON.md`](../../docs/CLI_JSON.md). It runs the installed executable
@@ -101,6 +101,7 @@ Tests/Fixtures/             JSON/NDJSON fixtures and the fake-pronto script
 | Updates | `update --check --json` (at most every 6 h, or on demand), `update --json` |
 | Diagnostics | `doctor --json` |
 | Link WhatsApp | `whatsapp link --events --accept-risk [--phone …] [--tag …]` |
+| Slack workspaces | `slack discover --json`, `slack link --workspace … --events --accept-risk`, `slack unlink --app … --json` |
 
 Menu bar icon: normal when the listener is running and every enabled app is
 ready; attention (orange) when something is degraded or starting, or an update

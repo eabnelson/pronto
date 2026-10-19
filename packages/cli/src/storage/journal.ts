@@ -5,7 +5,7 @@ import { isAbsolute } from "node:path";
 import { validSummary } from "../context/compact";
 import type { RuntimeKind } from "../config";
 import type { RuntimeAttemptResult, ToolActivity } from "../runtimes/types";
-import { isChannelKind, type ChannelKind, type ChatAddress } from "../channels/types";
+import { isChannelKind, isSlackChannel, type ChannelKind, type ChatAddress } from "../channels/types";
 import { imessageChatId } from "./chat-key";
 import { migrateDatabase, MULTI_APP_SCHEMA_VERSION } from "./migrations";
 import { promoteMemory } from "./memory";
@@ -84,7 +84,7 @@ function parseConversationReference(value: string, chat: ChatAddress): unknown {
   const reference = parsed as Record<string, unknown>;
   const addressed = chat.channel === "imessage"
     ? reference.chatId === imessageChatId(chat) && reference.provider === "apple-messages"
-    : chat.channel === "slack"
+    : isSlackChannel(chat.channel)
       ? reference.id === chat.id && reference.provider === "slack"
       : reference.chatJid === chat.id && reference.provider === chat.channel;
   if (

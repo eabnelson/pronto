@@ -72,6 +72,16 @@
       "id": "update-and-rollback",
       "status": "pending",
       "evidence": ""
+    },
+    {
+      "id": "workspace-app-isolation",
+      "status": "pending",
+      "evidence": ""
+    },
+    {
+      "id": "participation-based-workspace-coverage",
+      "status": "pending",
+      "evidence": ""
     }
   ]
 }
