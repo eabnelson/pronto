@@ -18,7 +18,7 @@ public struct SlackConversation: Decodable, Identifiable, Sendable {
     public let eligibility: String
     public var id: String { handle }
 }
-private struct SlackDiscovery: Decodable { let workspaces: [SlackWorkspace]; let workspaceApps: Bool? }
+private struct SlackDiscovery: Decodable { let workspaces: [SlackWorkspace]; let workspaceApps: Bool?; let deferredTags: Bool? }
 private struct SlackConversations: Decodable { let conversations: [SlackConversation]; let truncated: Bool }
 public struct SlackLinkProgress: Decodable, Sendable { public let event: String; public let message: String?; public let member: String?; public let workspace: String? }
 private struct SlackSelectionResult: Decodable { let selected: Int }
@@ -32,12 +32,13 @@ public final class SlackModel {
     public var selected = Set<String>()
     public var acceptedRisk = false
     public var reconnectWorkspaceKey: String?
-    public var tags = "@pronto"
+    public var tags = ""
     public private(set) var busy = false
     public private(set) var message: String?
     public private(set) var error: String?
     public private(set) var truncated = false
     public private(set) var supportsWorkspaceApps: Bool?
+    public private(set) var supportsDeferredTags: Bool?
     private let client: CLIClient
     private var revision = 0
     private var activeTask: Task<Bool, Never>?
@@ -49,12 +50,13 @@ public final class SlackModel {
             let result = try await self.client.run(.slackDiscover).decode(SlackDiscovery.self)
             try Task.checkCancellation()
             self.supportsWorkspaceApps = result.workspaceApps == true
+            self.supportsDeferredTags = result.deferredTags == true
             self.workspaces = result.workspaces.filter {
                 if let key = self.reconnectWorkspaceKey { return $0.workspaceKey == key }
                 return $0.connected != true
             }
             self.selectedWorkspace = ""
-            if self.supportsWorkspaceApps == false { self.error = "Update Pronto to add Slack workspaces from the menu bar." }
+            if self.supportsWorkspaceApps == false || self.supportsDeferredTags == false { self.error = "Update Pronto to add Slack workspaces from the menu bar." }
         }
     }
     public func loadConversations() async {
@@ -69,7 +71,7 @@ public final class SlackModel {
     }
     @discardableResult public func link() async -> Bool {
         guard acceptedRisk, !selectedWorkspace.isEmpty else { return false }
-        guard supportsWorkspaceApps != false else { error = "Update Pronto to add Slack workspaces from the menu bar."; return false }
+        guard supportsWorkspaceApps != false, supportsDeferredTags != false else { error = "Update Pronto to add Slack workspaces from the menu bar."; return false }
         let workspace = selectedWorkspace
         let tags = tags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         return await perform {
@@ -81,7 +83,7 @@ public final class SlackModel {
                 if result.event == "approval_required" { self.message = result.message }
                 if result.event == "linked" {
                     linked = true
-                    self.message = "\(result.workspace ?? "Slack workspace") added. You can manage its tags in the menu bar."
+                    self.message = "\(result.workspace ?? "Slack workspace") added. Use Tags in the menu bar to assign tags."
                 }
             }
             guard linked else { throw CLIError.decoding("Slack link ended before completion") }

@@ -26,7 +26,6 @@ struct SlackSettingsView: View {
             let model = SlackModel(client: menu.client)
             if let app = controller.slackWorkspaceToReconnect, let info = menu.channels?.channel(app) {
                 model.reconnectWorkspaceKey = info.workspaceKey
-                model.tags = info.tags.joined(separator: ", ")
             }
             settings = model
             await model.discover()
@@ -57,11 +56,9 @@ struct SlackSettingsView: View {
                     Text("Choose a workspace").tag("")
                     ForEach(model.workspaces) { Text($0.label).tag($0.handle) }
                 }
-                TextField("First tag, e.g. @pronto", text: $model.tags)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Workspace tags")
-                Text("Add more tags from this workspace’s row in the menu bar.")
+                Text(reconnecting ? "Your tags will stay unchanged." : "After adding the workspace, use Add Tag in the menu bar to choose which tags it answers.")
                     .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             DisclosureGroup("How it works") {
                 Text(SlackModel.disclosure).font(.caption)
@@ -79,7 +76,7 @@ struct SlackSettingsView: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(model.busy || model.supportsWorkspaceApps == false || model.selectedWorkspace.isEmpty || model.tags.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(model.busy || model.supportsWorkspaceApps == false || model.supportsDeferredTags == false || model.selectedWorkspace.isEmpty)
             }
         }
         .padding(20)

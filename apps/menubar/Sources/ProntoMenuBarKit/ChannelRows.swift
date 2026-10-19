@@ -89,6 +89,11 @@ public enum ChannelRowBuilder {
             }
 
             if app.isSlack { row.showsLinkButton = configured && live?.state == .needsLink }
+            if app.isSlack, configured, enabled, info?.tags.isEmpty == true, !row.showsLinkButton, row.tone != .error {
+                row.statusText = "No tags"
+                row.detail = "Add a tag below to start answering."
+                row.tone = .inactive
+            }
             if row.showsToggle && enabled && enabledCount <= 1 {
                 row.toggleAllowed = false
                 row.toggleHelp = "At least one app must stay on."

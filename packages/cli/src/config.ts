@@ -159,7 +159,7 @@ export function addTagToApps(
   );
 }
 
-/** Removes a tag from each app in `apps` that has it; refuses to leave an app with no tags. */
+/** Slack workspaces can wait for tag assignment; the other apps keep at least one tag. */
 export function removeTagFromApps(
   config: ProntoConfig,
   value: string,
@@ -169,7 +169,9 @@ export function removeTagFromApps(
   const holders = apps.filter((kind) => channelTags(config, kind).includes(tag));
   if (holders.length === 0) throw new Error(`Tag is not configured: ${tag}`);
   const next = holders.reduce(
-    (next, kind) => withChannelTags(next, kind, removeTag(channelTags(next, kind), tag)),
+    (next, kind) => withChannelTags(next, kind, isSlackChannel(kind)
+      ? channelTags(next, kind).filter((candidate) => candidate !== tag)
+      : removeTag(channelTags(next, kind), tag)),
     config,
   );
   if (!tagAssignments(next).some((entry) => entry.tag === tag) && next.tagRuntimes?.[tag] !== undefined) {
@@ -245,7 +247,7 @@ export function createConfig(input: ConfigInput): ProntoConfig {
     if (slack.workspaceKey !== undefined && !/^[a-f0-9]{32}$/.test(slack.workspaceKey)) throw new Error("Invalid Slack workspace key");
     if (kind !== "slack" && slack.workspaceKey !== undefined && kind !== `slack:${slack.workspaceKey}`) throw new Error("Slack workspace key does not match its app");
     channels[kind] = {
-      enabled: slack.enabled, riskConsentVersion: SLACK_RISK_CONSENT_VERSION, tags: normalizeTags(slack.tags),
+      enabled: slack.enabled, riskConsentVersion: SLACK_RISK_CONSENT_VERSION, tags: slack.tags.length ? normalizeTags(slack.tags) : [],
       ...(slack.workspaceLabel === undefined ? {} : { workspaceLabel: slack.workspaceLabel }),
       ...(slack.workspaceKey === undefined ? {} : { workspaceKey: slack.workspaceKey }),
     };

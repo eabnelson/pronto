@@ -30,7 +30,7 @@ public enum CLICommand: Hashable, Sendable {
     public var arguments: [String] {
         switch self {
         case .slackDiscover: return ["slack", "discover", "--json"]
-        case .slackLink(let workspace, let tags): return ["slack", "link", "--workspace", workspace, "--events", "--accept-risk"] + tags.flatMap { ["--tag", $0] }
+        case .slackLink(let workspace, let tags): return ["slack", "link", "--workspace", workspace, "--events", "--accept-risk"] + (tags.isEmpty ? ["--defer-tags"] : tags.flatMap { ["--tag", $0] })
         case .slackConversations: return ["slack", "conversations", "list", "--json"]
         case .slackSelect(let handles): return ["slack", "conversations", "select"] + (handles.isEmpty ? ["--clear"] : handles.flatMap { ["--conversation", $0] }) + ["--json"]
         case .slackUnlink: return ["slack", "unlink", "--json"]

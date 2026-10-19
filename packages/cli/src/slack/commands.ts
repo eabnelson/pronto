@@ -6,7 +6,7 @@ import { reloadLaunchAgent } from "../macos/launch-agent";
 import { discoverCommands, TRUST_DISCLOSURE } from "../macos/setup";
 import { standaloneSlack, slackHelperPath, slackProviderDirectory, SLACK_DISCLOSURE } from "./standalone";
 
-const usage = "pronto slack discover --json | link --workspace <handle> --events --accept-risk [--tag <tag>]... | conversations list [--app slack:<workspace>] --json | conversations select (--conversation <handle>... | --clear) [--app <app>] --json | scope --all-participated [--app <app>] --json | unlink [--app <app>] --json";
+const usage = "pronto slack discover --json | link --workspace <handle> --events --accept-risk [--defer-tags | --tag <tag>...] | conversations list [--app slack:<workspace>] --json | conversations select (--conversation <handle>... | --clear) [--app <app>] --json | scope --all-participated [--app <app>] --json | unlink [--app <app>] --json";
 
 function pruneAgents(config: ProntoConfig): ProntoConfig {
   if (config.tagRuntimes === undefined) return config;
@@ -26,13 +26,14 @@ export async function runSlack(args: readonly string[]): Promise<number> {
     const start = action === "conversations" ? 2 : 1;
     for (let index = start; index < args.length; index++) {
       const flag = args[index]!;
-      if (["--json", "--events", "--accept-risk", "--accept-trust", "--clear", "--all-participated"].includes(flag)) flags.add(flag);
+      if (["--json", "--events", "--accept-risk", "--accept-trust", "--clear", "--all-participated", "--defer-tags"].includes(flag)) flags.add(flag);
       else if (["--workspace", "--app", "--conversation", "--tag", "--runtime", "--working-directory"].includes(flag)) {
         const value = args[++index]; if (!value || value.startsWith("--")) throw new Error(usage);
         values.set(flag, [...values.get(flag) ?? [], value]);
       } else throw new Error(usage);
     }
     if (!(["discover", "link", "unlink", "scope", "self-test"].includes(action ?? "") || action === "conversations" && ["list", "select"].includes(subaction ?? ""))) throw new Error(usage);
+    if (flags.has("--defer-tags") && (action !== "link" || values.has("--tag"))) throw new Error(usage);
     if (action === "self-test") {
       await slackHelperPath(paths); emit({ helperProtocol: 1, version: "1", architecture: process.arch, signatureVerified: true }); return 0;
     }
@@ -44,7 +45,7 @@ export async function runSlack(args: readonly string[]): Promise<number> {
       if ((runtime !== "codex" && runtime !== "claude") || !directory) throw new Error("slack-setup-required: Specify --runtime and --working-directory.");
       const runtimePath = discoverCommands().runtimes[runtime];
       if (!runtimePath) throw new Error("slack-runtime-missing");
-      config = createConfig({ channels: { slack: { enabled: true, riskConsentVersion: SLACK_RISK_CONSENT_VERSION, tags: values.get("--tag") ?? ["@pronto"] } }, primaryRuntime: runtime, primaryRuntimePath: runtimePath, workingDirectory: directory, unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION });
+      config = createConfig({ channels: { slack: { enabled: true, riskConsentVersion: SLACK_RISK_CONSENT_VERSION, tags: flags.has("--defer-tags") ? [] : values.get("--tag") ?? ["@pronto"] } }, primaryRuntime: runtime, primaryRuntimePath: runtimePath, workingDirectory: directory, unrestrictedTrustVersion: UNRESTRICTED_TRUST_VERSION });
     }
     if (config === null && action !== "discover") throw new Error("slack-setup-required: Run pronto setup and choose Slack.");
     const app = values.get("--app")?.[0] ?? "slack";
@@ -54,7 +55,7 @@ export async function runSlack(args: readonly string[]): Promise<number> {
       const discovery = await provider.discover();
       const legacy = await provider.connection();
       const added = new Set(Object.entries(config?.channels ?? {}).flatMap(([kind, entry]) => isSlackChannel(kind) && entry !== undefined ? [(entry as SlackChannelConfig).workspaceKey ?? (kind === "slack" ? legacy?.id : undefined)] : []));
-      emit({ workspaceApps: true, workspaces: discovery.workspaces.map((row) => ({ ...row, connected: added.has(row.id) })) }); return 0;
+      emit({ workspaceApps: true, deferredTags: true, workspaces: discovery.workspaces.map((row) => ({ ...row, connected: added.has(row.id) })) }); return 0;
     }
     if (action === "link") {
       if (!flags.has("--accept-risk")) throw new Error(`slack-consent-required: ${SLACK_DISCLOSURE}`);
@@ -66,7 +67,7 @@ export async function runSlack(args: readonly string[]): Promise<number> {
         : config!.channels.slack === undefined || !legacy && config!.channels.slack.workspaceKey === undefined ? "slack" : `slack:${identity.id}`;
       if (values.has("--app") && app !== target) throw new Error("slack-identity-mismatch");
       const previous = config!.channels[target];
-      const tags = normalizeTags(values.get("--tag") ?? previous?.tags ?? ["@pronto"]);
+      const explicitTags = values.has("--tag") ? normalizeTags(values.get("--tag")!) : undefined;
       if (events) emit({ event: "approval_required", message: "Approve Pronto in macOS if requested." });
       let linked: { workspace: string; member: string };
       if (target === "slack") {
@@ -77,6 +78,7 @@ export async function runSlack(args: readonly string[]): Promise<number> {
       }
       // Credential approval can take time. Merge into the latest settings.
       const latest = await loadConfig(paths.configPath).catch((error) => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return config!; throw error; });
+      const tags = explicitTags ?? latest.channels[target]?.tags ?? previous?.tags ?? (flags.has("--defer-tags") ? [] : ["@pronto"]);
       const next = createConfig(pruneAgents({ ...latest, channels: { ...latest.channels, [target]: { enabled: true, riskConsentVersion: SLACK_RISK_CONSENT_VERSION, tags, workspaceKey: identity.id, workspaceLabel: linked.workspace } } }));
       await saveConfig(paths.configPath, next);
       await reloadLaunchAgent().catch(() => undefined);

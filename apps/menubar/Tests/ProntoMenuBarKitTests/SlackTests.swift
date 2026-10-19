@@ -29,7 +29,7 @@ struct SlackTests {
         #expect(model.message?.contains("accept no requests") == true)
     }
     @Test func failedLinkRetainsActionableReason() async {
-        let client = FakeCLIClient(responses: [.slackLink(workspace: "opaque", tags: ["@pronto"]): #"{"event":"error","reason":"slack-needs-link","message":"Approve the helper and reconnect."}"#])
+        let client = FakeCLIClient(responses: [.slackLink(workspace: "opaque", tags: []): #"{"event":"error","reason":"slack-needs-link","message":"Approve the helper and reconnect."}"#])
         let model = SlackModel(client: client)
         model.acceptedRisk = true; model.selectedWorkspace = "opaque"
         await model.link()

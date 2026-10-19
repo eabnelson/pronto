@@ -70,7 +70,9 @@ enabled. Changes apply to the running listener without restarting it.
 `pronto tags add <tag> --app <app> [--app <app>] --json` and
 `pronto tags remove <tag> [--app <app>]... --json` print the same shape. Without
 `--app`, `add` applies to every enabled app and `remove` removes the tag from
-every app. Every enabled app must keep at least one tag. Changes apply to the
+every app. iMessage and WhatsApp must keep at least one tag. Slack workspaces
+can have no tags while waiting for assignment from the Tags section; they
+accept no tagged requests in that state. Changes apply to the
 running listener without restarting it.
 
 `pronto tags agents <tag> --primary codex|claude --backup codex|claude|none --json`
@@ -163,12 +165,12 @@ not Slack provider IDs. `channels enable/disable <app>` and
 `tags add/remove --app <app>` accept these IDs, including tag edits while a
 workspace is off.
 
-`slack discover --json` returns `workspaceApps: true` and workspace choices
+`slack discover --json` returns `workspaceApps: true`, `deferredTags: true` and workspace choices
 with `handle`, `id` (opaque workspace key), `label`, `profile`, and `connected`.
 Handles expire after ten minutes. Discovery sends no messages and does not
 choose a workspace. The add picker excludes already-added workspaces.
 
-`slack link --workspace <handle> --events --accept-risk [--tag <tag>]...` adds
+`slack link --workspace <handle> --events --accept-risk [--defer-tags | --tag <tag>...]` adds
 the chosen workspace without replacing another connection. It streams
 `approval_required`, then `linked` with `workspace`, `member`, `app`, and
 `selectionRequired: false`, or an `error` event with a safe reason and message.
@@ -176,6 +178,12 @@ macOS credential approval occurs only during this explicit operation.
 Workspace tags apply in supported conversations where positive owner
 participation has been observed. Connecting sends no message; requests before
 the connection cutoff cannot activate.
+
+The menu bar uses `--defer-tags`: a new workspace starts with no tags, and
+reconnecting preserves its latest existing tag assignments. Tag creation and
+assignment happen only under Tags in the menu bar. `--defer-tags` cannot be
+combined with `--tag`. Without either flag, existing tags are preserved and a
+new connection defaults to `@pronto` for CLI compatibility.
 
 Existing manually selected connections retain their policy until explicitly
 reconnected or migrated with

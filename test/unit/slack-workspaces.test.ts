@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProntoSlack, type SlackBridge } from "../../packages/slack/src/index";
-import { addTagToApps, createConfig, loadConfig, saveConfig, tagAssignments } from "../../packages/cli/src/config";
+import { addTagToApps, createConfig, loadConfig, saveConfig, tagAssignments, removeTagFromApps, setTagRuntimes } from "../../packages/cli/src/config";
 import { isChannelKind, type SlackChannelKind } from "../../packages/cli/src/channels/types";
 import { SlackChannel, slackActivation } from "../../packages/cli/src/slack/channel";
 import { chatKeyForAddress } from "../../packages/cli/src/storage/chat-key";
@@ -193,4 +193,18 @@ test("the CLI lists workspace apps and edits tags while a workspace is off", asy
   expect(edited.channels.slack?.tags).toEqual(["@one"]);
   await run(["channels", "enable", kind]);
   expect((await loadConfig(path)).channels[kind]?.enabled).toBeTrue();
+});
+
+test("a Slack workspace can wait for a centrally assigned tag and return to having none", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pronto-workspace-empty-tags-")); directories.push(directory);
+  const config = createConfig({ channels: { slack: { enabled: true, tags: [], riskConsentVersion: 1, workspaceLabel: "One" } },
+    primaryRuntime: "codex", workingDirectory: directory, unrestrictedTrustVersion: 1 });
+  await saveConfig(join(directory, "config.json"), config);
+  expect((await loadConfig(join(directory, "config.json"))).channels.slack?.tags).toEqual([]);
+  expect(tagAssignments(config)).toEqual([]);
+  const tagged = setTagRuntimes(addTagToApps(config, "@central", ["slack"]), "@central", { primaryRuntime: "codex" });
+  const removed = removeTagFromApps(tagged, "@central", ["slack"]);
+  expect(removed.channels.slack?.tags).toEqual([]);
+  expect(removed.tagRuntimes?.["@central"]).toBeUndefined();
+  expect(() => createConfig({ ...config, channels: { imessage: { enabled: true, tags: [], imsgPath: "/synthetic/imsg" } } })).toThrow("at least one tag");
 });

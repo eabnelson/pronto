@@ -5,7 +5,7 @@ import Testing
 @Suite("Slack workspace apps") @MainActor
 struct SlackWorkspaceTests {
     let second = AppID("slack:" + String(repeating: "a", count: 32))
-    let discovery = #"{"workspaceApps":true,"workspaces":[{"handle":"one","id":"key-one","label":"One","connected":true},{"handle":"two","id":"key-two","label":"Two","connected":false}]}"#
+    let discovery = #"{"workspaceApps":true,"deferredTags":true,"workspaces":[{"handle":"one","id":"key-one","label":"One","connected":true},{"handle":"two","id":"key-two","label":"Two","connected":false}]}"#
 
     @Test func newWorkspacePickerExcludesAddedWorkspacesAndReconnectStaysBound() async {
         let fake = FakeCLIClient(responses: [.slackDiscover: discovery])
@@ -20,14 +20,15 @@ struct SlackWorkspaceTests {
     }
 
     @Test func addingWorkspaceFinishesWithoutConversationSelection() async {
-        let command = CLICommand.slackLink(workspace: "two", tags: ["@work"])
+        let command = CLICommand.slackLink(workspace: "two", tags: [])
         let fake = FakeCLIClient(responses: [.slackDiscover: discovery, command: #"{"event":"linked","workspace":"Two","member":"Owner","selectionRequired":false}"#])
         let model = SlackModel(client: fake)
         await model.discover()
-        model.tags = "@work"; model.selectedWorkspace = "two"; model.acceptedRisk = true
+        model.selectedWorkspace = "two"; model.acceptedRisk = true
         #expect(await model.link())
         #expect(fake.invocations == [.slackDiscover, command])
-        #expect(model.message == "Two added. You can manage its tags in the menu bar.")
+        #expect(model.message == "Two added. Use Tags in the menu bar to assign tags.")
+        #expect(command.arguments == ["slack", "link", "--workspace", "two", "--events", "--accept-risk", "--defer-tags"])
         #expect(model.conversations.isEmpty)
     }
 
@@ -39,6 +40,23 @@ struct SlackWorkspaceTests {
         #expect(!(await model.link()))
         #expect(fake.invocations == [.slackDiscover])
         #expect(model.error?.contains("Update Pronto") == true)
+    }
+
+    @Test func workspaceCLIWithoutDeferredTagsRequestsAnUpdate() async {
+        let fake = FakeCLIClient(responses: [.slackDiscover: #"{"workspaceApps":true,"workspaces":[{"handle":"old","label":"One"}]}"#])
+        let model = SlackModel(client: fake)
+        await model.discover()
+        model.selectedWorkspace = "old"; model.acceptedRisk = true
+        #expect(!(await model.link()))
+        #expect(fake.invocations == [.slackDiscover])
+        #expect(model.error?.contains("Update Pronto") == true)
+    }
+
+    @Test func workspaceWithoutTagsWaitsForTheTagsSection() {
+        let channels = ChannelsResponse(channels: [ChannelInfo(app: .slack, label: "One", configured: true, enabled: true)])
+        let row = ChannelRowBuilder.rows(status: nil, channels: channels).first!
+        #expect(row.statusText == "No tags")
+        #expect(row.detail == "Add a tag below to start answering.")
     }
 
     @Test func workspaceRowsHaveIndependentIdentityAndTagsUseTheWorkspaceArgument() throws {
