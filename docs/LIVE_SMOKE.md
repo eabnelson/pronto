@@ -77,8 +77,10 @@ README, and chats whose participants know the test is happening.
    "Message yourself", a one-to-one chat, and a group where the owner has spoken.
    Confirm each gets exactly one reply from the owner's account, quoting the tagged
    message, with the bold tag heading, and that the chat shows typing meanwhile.
+   Confirm the tagged message gets a 👀 reaction when the turn starts.
 4. Send a photo with the caption `<tag> describe this photo in one sentence` and
-   confirm the reply describes it, then do the same with a PDF document.
+   confirm the reply describes it, then do the same with a PDF document. Send
+   `<tag> send me a small text file` and confirm the reply arrives with the file.
 5. Have another participant send a tagged message in the group and confirm it runs
    once. Confirm a WhatsApp-only tag does not activate in iMessage and an
    iMessage-only tag does not activate in WhatsApp.
@@ -88,6 +90,19 @@ README, and chats whose participants know the test is happening.
 8. Log the device out from the phone (Linked devices). Confirm `pronto status`
    reports `whatsapp needs_link`, iMessage still answers, and
    `pronto whatsapp link` restores WhatsApp.
+
+## Menu bar app
+
+1. Let setup install the menu bar app, or run `pronto menubar install`. Confirm
+   `~/Applications/Pronto.app` opens, shows an @ in the menu bar, and passes
+   `codesign --verify --strict` with the `dev.pronto.menubar` identifier.
+2. Open the menu and confirm each app's status matches `pronto status`.
+3. Add a tag from the menu, confirm `pronto tags` lists it, and use it in a chat
+   straight away without restarting. Remove it from the menu.
+4. Turn Pronto off with the header switch, confirm `pronto status` reports the
+   listener stopped, then turn it back on.
+5. On a single-app install, click the app that isn't set up and confirm Copy
+   Setup Prompt copies a prompt naming the app.
 
 ## Recovery and inspection
 

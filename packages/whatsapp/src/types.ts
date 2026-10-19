@@ -24,6 +24,20 @@ export interface WhatsappConversationFacts {
   readonly selfChat: boolean;
 }
 
+/**
+ * The members of an observed conversation. For a group this is wacli's
+ * stored member list, which wacli refreshes from WhatsApp whenever it stores
+ * a message from that group.
+ */
+export interface WhatsappRoster {
+  /** Canonical member JIDs, the linked account included. A member whose number is hidden stays a LID. */
+  readonly participants: readonly string[];
+  /** The list is non-empty and includes the linked account. */
+  readonly complete: boolean;
+  /** When wacli last stored the list; for a direct chat, when it was read. */
+  readonly observedAt: string;
+}
+
 export type WhatsappMessageKind =
   | "message"
   | "reaction"
@@ -140,6 +154,15 @@ export interface ProntoWhatsapp {
     readonly onHealth?: (health: WhatsappHealth) => void | Promise<void>;
     readonly onRecovery?: (outcome: WhatsappRecoveryOutcome) => void | Promise<void>;
   }): Promise<WhatsappSubscription>;
+  /**
+   * Who is in an observed conversation: a direct chat's peer and the linked
+   * account, or a group's stored member list. Read-only; it works while the
+   * subscription runs. A consumer that discloses to a group should require
+   * `complete` and recheck the list before it replies.
+   */
+  participants(input: {
+    readonly conversation: WhatsappConversationReference;
+  }): Promise<WhatsappRoster>;
   /** Recent messages in an observed conversation, oldest first. */
   history(input: {
     readonly conversation: WhatsappConversationReference;

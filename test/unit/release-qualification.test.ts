@@ -13,6 +13,9 @@ const surfaces = [
   "Messages Automation",
   "Self-chat mirror handling",
   "Full remote tagged flow",
+  "wacli",
+  "WhatsApp tagged flow",
+  "Menu bar app",
 ] as const;
 
 function matrix(

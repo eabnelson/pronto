@@ -15,6 +15,7 @@ import {
   type WhatsappPresence,
   type WhatsappQualification,
   type WhatsappRecoveryOutcome,
+  type WhatsappRoster,
   type WhatsappSubscription,
   type MaterializedWhatsappAttachment,
 } from "../types.js";
@@ -170,6 +171,56 @@ class WhatsappModule implements ProntoWhatsapp {
     }, conversation));
   }
 
+  async participants(input: Parameters<ProntoWhatsapp["participants"]>[0]): Promise<WhatsappRoster> {
+    const chatJid = this.#signer.verify(input.conversation);
+    await this.#ensureLinkedJid();
+    const linkedJid = this.#linkedJid;
+    if (!chatJid.endsWith("@g.us")) {
+      // A direct chat is its peer and this account; "Message yourself" is this account alone.
+      const self = this.isSelfChat(chatJid);
+      return {
+        complete: linkedJid !== null,
+        observedAt: new Date().toISOString(),
+        participants: linkedJid === null ? [chatJid] : self ? [linkedJid] : [chatJid, linkedJid],
+      };
+    }
+    const result = await runCommand(
+      this.#wacliPath,
+      ["--store", this.#storeDir, "--read-only", "--json", "groups", "participants", "list", `--jid=${chatJid}`],
+      { env: this.#env, timeoutMs: this.#tuning.commandTimeoutMs },
+    );
+    const envelope = parseEnvelope(result);
+    if (result.code !== 0 || envelope === null || !envelope.success) {
+      throw new Error(`WhatsApp group members are unavailable: ${describeFailure(result)}`);
+    }
+    const rows = Array.isArray(envelope.data) ? envelope.data : [];
+    const participants: string[] = [];
+    let observedAtMs = 0;
+    for (const row of rows) {
+      if (!isRecord(row) || row.group_jid !== chatJid || typeof row.user_jid !== "string" || row.user_jid === "") {
+        continue;
+      }
+      participants.push(canonicalJid(row.user_jid));
+      const updated = typeof row.updated_at === "string" ? Date.parse(row.updated_at) : Number.NaN;
+      if (Number.isFinite(updated)) observedAtMs = Math.max(observedAtMs, updated);
+    }
+    const unique = [...new Set(participants)];
+    return {
+      complete: unique.length > 0 && observedAtMs > 0 && linkedJid !== null && this.#isLinkedAccount(unique),
+      observedAt: new Date(observedAtMs).toISOString(),
+      participants: unique,
+    };
+  }
+
+  /** The linked account appears in a member list by its number or, in LID-addressed groups, its LID. */
+  #isLinkedAccount(members: readonly string[]): boolean {
+    return members.some((member) => {
+      const user = jidUser(member);
+      return (this.#linkedJid !== null && member === this.#linkedJid) ||
+        (member.endsWith("@lid") && this.#linkedLidUser !== null && user === this.#linkedLidUser);
+    });
+  }
+
   async reply(input: Parameters<ProntoWhatsapp["reply"]>[0]): Promise<WhatsappDeliveryOutcome> {
     const chatJid = this.#signer.verify(input.conversation);
     if (typeof input.text !== "string" || input.text.trim() === "") {
@@ -196,8 +247,10 @@ class WhatsappModule implements ProntoWhatsapp {
           `--as=${sendFileKind(filePath)}`,
         ]),
     ];
-    // Only text sends reject the linked account itself; file sends have no such check.
-    if (filePath === undefined && this.isSelfChat(chatJid)) args.push("--allow-self");
+    // wacli refuses text to the linked account unless --allow-self, which only skips that check.
+    // Pronto can't always tell a self-chat addressed by LID (its LID is learned from live
+    // messages and lost on restart), so every text send passes it. File sends have no such check.
+    if (filePath === undefined) args.push("--allow-self");
     if (input.quote !== undefined) {
       args.push(`--reply-to=${input.quote.providerMessageId}`);
       const sender = input.quote.sender ?? null;
@@ -207,7 +260,7 @@ class WhatsappModule implements ProntoWhatsapp {
     const outcome = sendOutcome(result);
     if (outcome.status === "confirmed") {
       await this.#state.load().then(async () => {
-        await this.#state.markDelivered(`${chatJid}|${outcome.providerMessageId}`, null);
+        await this.#state.markDelivered(deliveryKey({ id: outcome.providerMessageId, kind: "message", text: null }), null);
         await this.#state.markDelivered(`sent|${outcome.providerMessageId}`, null);
       }).catch(() => undefined);
     }

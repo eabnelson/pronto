@@ -163,6 +163,10 @@ class FakeWhatsapp implements ProntoWhatsapp {
     for (const event of this.events) await input.onEvent(event);
     return { close: async () => undefined, terminated: this.#terminated.promise };
   }
+  async participants() {
+    return { complete: true, observedAt: new Date().toISOString(), participants: [] };
+  }
+
   async history(input: Parameters<ProntoWhatsapp["history"]>[0]) {
     this.historyInput = input;
     return [whatsappEvent({ id: "EARLIER", text: "context" })];

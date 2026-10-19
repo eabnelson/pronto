@@ -180,6 +180,47 @@ test("stale live messages are suppressed and delivered by the post-backlog recov
   expect(sweep.some((arg) => arg.startsWith("--after="))).toBe(true);
 });
 
+test("a message filed under another address after a restart is not delivered again", async () => {
+  // wacli can move a chat between its phone-number JID and its LID, e.g. when it restarts.
+  const aliceLid = "84444000000001@lid";
+  const h = await setup({
+    auth: LINKED,
+    syncRuns: [{ webhooks: [{ afterMs: 30, payload: webhook({ chat: aliceLid, id: "MOVED", sender: aliceLid, ts: iso(2_000) }) }] }],
+  });
+  const first = collector();
+  const subscription = await h.module.subscribe(first.input);
+  await waitFor(() => first.events.length === 1);
+  await waitFor(() => first.recovery.length === 1);
+  await subscription.close();
+
+  // Place the re-filed row inside the next sweep's window, as a restart's recovery sweep sees it.
+  const state = JSON.parse(await readFile(h.statePath, "utf8")) as { watermark: string };
+  await h.writeScenario({
+    auth: LINKED,
+    messages: [row({ chat: ALICE, id: "MOVED", ts: new Date(Date.parse(state.watermark) + 1_500).toISOString() })],
+    syncRuns: [{}],
+  });
+  const second = collector();
+  await h.newModule().subscribe(second.input);
+  await waitFor(() => second.recovery.length === 1);
+  expect(second.events).toEqual([]);
+});
+
+test("delivered keys saved with a chat address still suppress the message", async () => {
+  const h = await setup({ auth: LINKED, syncRuns: [{}] });
+  const watermark = new Date(Date.now() - 60_000).toISOString();
+  await seedState(h.statePath, watermark, [`${ALICE}|OLDKEY`, `${ALICE}|OLDEDIT|edit|abc`, "sent|MINE"]);
+  await h.writeScenario({
+    auth: LINKED,
+    messages: [row({ chat: "84444000000001@lid", id: "OLDKEY", ts: new Date(Date.parse(watermark) + 1_500).toISOString() })],
+    syncRuns: [{}],
+  });
+  const c = collector();
+  await h.newModule().subscribe(c.input);
+  await waitFor(() => c.recovery.length === 1);
+  expect(c.events).toEqual([]);
+});
+
 test("first subscribe does not replay history; watermark survives a new instance", async () => {
   const h = await setup({
     auth: LINKED,
@@ -194,7 +235,7 @@ test("first subscribe does not replay history; watermark survives a new instance
   await subscription.close();
 
   const state = JSON.parse(await readFile(h.statePath, "utf8")) as { delivered: string[]; watermark: string };
-  expect(state.delivered).toContain(`${ALICE}|LIVE1`);
+  expect(state.delivered).toContain("id|LIVE1");
   expect(Date.parse(state.watermark)).toBeGreaterThan(Date.now() - 10_000);
   expect((await stat(h.statePath)).mode & 0o777).toBe(0o600);
 
@@ -237,7 +278,7 @@ test("recovery sweeps report limits and failures", async () => {
   expect(f.recovery[0]).toEqual({ messages: 0, reason: "sweep-failed", status: "degraded" });
 });
 
-test("reply waits for the delegate socket and passes self-chat and quote flags", async () => {
+test("reply waits for the delegate socket and passes the self and quote flags", async () => {
   const h = await setup({ auth: LINKED, send: { id: "3EB0SENT", mode: "ok" }, syncRuns: [{ socketDelayMs: 400 }] });
   await h.module.subscribe(collector().input);
   const started = Date.now();
@@ -257,8 +298,23 @@ test("reply waits for the delegate socket and passes self-chat and quote flags",
 
   await h.module.reply({ conversation: h.reference(ALICE), text: "hi" });
   const second = (await h.invocations("send"))[1]!.args;
-  expect(second).not.toContain("--allow-self");
   expect(second.some((arg) => arg.startsWith("--reply-to"))).toBe(false);
+});
+
+test("text replies reach a self-chat addressed by LID before its LID is learned", async () => {
+  // After a restart Pronto hasn't seen a live self-chat message, so it can't recognise the LID chat.
+  const selfLid = "211128126849043@lid";
+  const h = await setup({ auth: LINKED, send: { id: "3EB0SELF", mode: "ok" }, syncRuns: [{}] });
+  await h.module.subscribe(collector().input);
+  const outcome = await h.module.reply({
+    conversation: h.reference(selfLid),
+    quote: { providerMessageId: "PHOTO", sender: OWNER },
+    text: "It's a red circle.",
+  });
+  expect(outcome).toEqual({ providerMessageId: "3EB0SELF", status: "confirmed" });
+  const args = (await h.invocations("send"))[0]!.args;
+  expect(args).toContain(`--to=${selfLid}`);
+  expect(args).toContain("--allow-self");
 });
 
 test("reply fails retryably when the delegate never becomes ready", async () => {
@@ -366,6 +422,44 @@ test("history returns oldest first with a clamped limit", async () => {
   const args = (await h.invocations("messages list"))[0]!.args;
   expect(args).toContain("--limit=100");
   expect(args).toContain(`--chat=${ALICE}`);
+});
+
+test("participants name a direct chat's two people and a group's stored members", async () => {
+  const newest = iso(10_000);
+  const h = await setup({
+    auth: LINKED,
+    groups: {
+      [GROUP]: [
+        { updated_at: iso(20_000), user_jid: ALICE },
+        { updated_at: newest, user_jid: "15550001111:3@s.whatsapp.net" },
+        { updated_at: newest, user_jid: "987654321@lid" },
+      ],
+      "120363000000000002@g.us": [{ updated_at: iso(5_000), user_jid: BOB }],
+    },
+  });
+  expect(await h.module.participants({ conversation: h.reference(ALICE) })).toMatchObject({
+    complete: true,
+    participants: [ALICE, OWNER],
+  });
+  expect((await h.module.participants({ conversation: h.reference(OWNER) })).participants).toEqual([OWNER]);
+  expect(await h.module.participants({ conversation: h.reference(GROUP) })).toEqual({
+    complete: true,
+    observedAt: newest,
+    participants: [ALICE, OWNER, "987654321@lid"],
+  });
+  // A list without this account cannot be the group this account is in.
+  expect((await h.module.participants({ conversation: h.reference("120363000000000002@g.us") })).complete)
+    .toBe(false);
+  expect(await h.module.participants({ conversation: h.reference("120363000000000003@g.us") })).toMatchObject({
+    complete: false,
+    participants: [],
+  });
+  await expect(h.module.participants({ conversation: h.reference("120363000000broken@g.us") }))
+    .rejects.toThrow(/group members are unavailable/);
+  const lookups = await h.invocations("groups participants list");
+  expect(lookups.every((entry) => entry.args.includes("--read-only"))).toBe(true);
+  await expect(h.module.participants({ conversation: { ...h.reference(GROUP), token: "forged" } }))
+    .rejects.toThrow(/scope/);
 });
 
 test("attachments download privately through the lock-free media path", async () => {

@@ -104,10 +104,11 @@ GitHub `release` environment:
 - `PRONTO_RELEASE_ED25519_PRIVATE_KEY`
 
 npm publishing uses trusted publishing, so no npm token is stored. Each package
-(`pronto-imessage`, `pronto-whatsapp`) must list this repository's `release.yml`
-workflow and `release` environment as its trusted publisher on npmjs.com. npm
-only offers that setting for a package that already exists, so a new package
-needs its first version published by the owner before the workflow can publish it.
+(`pronto-imessage`, `pronto-whatsapp`) lists this repository's `release.yml`
+workflow as its trusted publisher on npmjs.com, without an environment, because
+the publish job does not run in the `release` environment. npm only offers that
+setting for a package that already exists, so `pronto-whatsapp@0.0.0` was
+published by the owner to reserve the name before the workflow published 0.5.0.
 
 The environment permits only `v*` tags and requires release-owner approval. The
 workflow checks out that immutable tag, runs all tests and live-evidence gates,

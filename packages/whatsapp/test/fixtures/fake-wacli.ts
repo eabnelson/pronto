@@ -52,6 +52,8 @@ export interface FakeScenario {
     readonly name: string;
   }>>;
   readonly messages?: readonly Record<string, unknown>[];
+  /** Stored group member lists by group JID, as `groups participants list` reports them. */
+  readonly groups?: Readonly<Record<string, readonly { readonly user_jid: string; readonly updated_at: string }[]>>;
   readonly send?: {
     readonly error?: string;
     readonly id?: string;
@@ -305,6 +307,12 @@ if (command === "version") {
     case "presence typing":
     case "presence paused":
       ok({ sent: true });
+    case "groups participants list": {
+      const jid = String(flags.get("jid"));
+      const members = scenario().groups?.[jid];
+      if (members === undefined && jid.endsWith("broken@g.us")) fail("database is locked");
+      ok((members ?? []).map((member) => ({ group_jid: jid, role: "member", ...member })));
+    }
     default:
       fail(`unknown command: ${command}`);
   }
