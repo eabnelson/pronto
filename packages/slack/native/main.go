@@ -101,7 +101,7 @@ func str(v map[string]json.RawMessage, key string) string {
 	return s
 }
 func (h *helper) call(ctx context.Context, s *session, method string, params map[string]any) (map[string]json.RawMessage, error) {
-	allowed := map[string]bool{"auth.test": true, "rtm.connect": true, "conversations.list": true, "conversations.info": true, "users.info": true, "conversations.history": true, "conversations.replies": true, "chat.postMessage": true}
+	allowed := map[string]bool{"auth.test": true, "rtm.connect": true, "users.conversations": true, "conversations.info": true, "users.info": true, "conversations.history": true, "conversations.replies": true, "chat.postMessage": true}
 	if !allowed[method] {
 		return nil, errors.New("slack-operation-rejected")
 	}
@@ -369,7 +369,7 @@ func (h *helper) execute(ctx context.Context, op string, input map[string]json.R
 	}
 	switch op {
 	case "list":
-		result, err := h.call(ctx, s, "conversations.list", map[string]any{"types": "public_channel,private_channel,im,mpim", "exclude_archived": true, "limit": 25, "cursor": str(input, "cursor")})
+		result, err := h.call(ctx, s, "users.conversations", map[string]any{"user": s.owner, "types": "public_channel,private_channel,im,mpim", "exclude_archived": true, "limit": 25, "cursor": str(input, "cursor")})
 		if err != nil {
 			return nil, err
 		}
@@ -379,6 +379,9 @@ func (h *helper) execute(ctx context.Context, op string, input map[string]json.R
 		}
 		rows := []any{}
 		for _, c := range channels {
+			// users.conversations guarantees owner membership but omits is_member.
+			// Selection still independently checks conversations.info.
+			c.IsMember = true
 			row := c.normalized(s)
 			if c.IsIM && c.User != "" && c.User != s.owner {
 				user, e := h.call(ctx, s, "users.info", map[string]any{"user": c.User})

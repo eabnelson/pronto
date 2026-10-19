@@ -37,6 +37,34 @@ func TestUnsupportedDestinations(t *testing.T) {
 		t.Fatal("self DM missing")
 	}
 }
+func TestPickerFindsOwnerSelfDMWithoutScanningUnjoinedWorkspaceChannels(t *testing.T) {
+	h := newHelper()
+	h.session = &session{team: "TFIXTURE", owner: "UFIXTURE", token: "synthetic", cookie: "synthetic"}
+	h.client = &http.Client{Transport: roundTrip(func(req *http.Request) (*http.Response, error) {
+		body := `{"ok":true,"channels":[{"id":"CUNJOINED","name":"unjoined"}],"response_metadata":{"next_cursor":"more-workspace-channels"}}`
+		if req.URL.Path == "/api/users.conversations" {
+			query := req.URL.Query()
+			if query.Get("user") != "UFIXTURE" || query.Get("cursor") != "owner-first" || query.Get("types") != "public_channel,private_channel,im,mpim" {
+				t.Fatal("picker did not bind pagination to the verified owner")
+			}
+			// This endpoint guarantees membership but omits is_member.
+			body = `{"ok":true,"channels":[{"id":"DSELF","is_im":true,"user":"UFIXTURE"},{"id":"CJOINED","name":"joined"}],"response_metadata":{"next_cursor":"owner-next"}}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	result, err := h.execute(context.Background(), "list", map[string]json.RawMessage{"cursor": json.RawMessage(`"owner-first"`), "user": json.RawMessage(`"UOTHER"`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := result.(map[string]any)
+	rows := page["conversations"].([]any)
+	if len(rows) != 2 || rows[0].(map[string]any)["type"] != "self" || rows[0].(map[string]any)["supported"] != true {
+		t.Fatal("owner self DM hidden behind unrelated workspace channels")
+	}
+	if rows[1].(map[string]any)["supported"] != true || page["nextCursor"] != "owner-next" {
+		t.Fatal("owner membership or pagination was lost")
+	}
+}
 func TestSendNeverRetriesUncertainWrites(t *testing.T) {
 	for _, status := range []int{200, 400, 408, 429, 500, 503, 0, -1} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
