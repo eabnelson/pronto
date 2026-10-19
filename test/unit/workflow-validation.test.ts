@@ -2,6 +2,21 @@ import { describe, expect, test } from "bun:test";
 import { mutableActionReferences } from "../../scripts/workflow-validation";
 
 describe("workflow action validation", () => {
+  test("build workflows install the helper's Go toolchain before compiling", async () => {
+    for (const name of ["ci", "release", "pages"]) {
+      const workflow = await Bun.file(new URL(`../../.github/workflows/${name}.yml`, import.meta.url)).text();
+      const setup = workflow.indexOf("uses: actions/setup-go@");
+      const build = workflow.indexOf("run: bun run build");
+      expect(setup).toBeGreaterThan(-1);
+      expect(setup).toBeLessThan(build);
+      expect(workflow.slice(0, build)).toContain("runs-on: macos-15");
+      const configuration = workflow.slice(setup, workflow.indexOf("\n      - ", setup));
+      expect(configuration).toContain("go-version-file: packages/slack/native/go.mod");
+      expect(configuration).toContain("cache-dependency-path: packages/slack/native/go.sum");
+      expect(mutableActionReferences(workflow)).toEqual([]);
+    }
+  });
+
   test("rejects mutable actions in list-item and id-prefixed steps", () => {
     const workflow = `
 steps:
