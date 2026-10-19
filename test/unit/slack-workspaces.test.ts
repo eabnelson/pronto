@@ -185,7 +185,7 @@ test("the CLI lists workspace apps and edits tags while a workspace is off", asy
     return JSON.parse(output);
   };
   const listed = await run(["channels", "list"]);
-  expect(listed.channels.filter((row: { app: string }) => row.app.startsWith("slack")).map((row: { label: string }) => row.label)).toEqual(["Slack · One", "Slack · Two"]);
+  expect(listed.channels.filter((row: { app: string }) => row.app.startsWith("slack")).map((row: { label: string }) => row.label)).toEqual(["One", "Two"]);
   await run(["tags", "add", "@new", "--app", kind]);
   const edited = await loadConfig(path);
   expect(edited.channels[kind]?.tags).toEqual(["@two", "@new"]);

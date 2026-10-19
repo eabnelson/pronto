@@ -43,12 +43,12 @@ struct SlackWorkspaceTests {
 
     @Test func workspaceRowsHaveIndependentIdentityAndTagsUseTheWorkspaceArgument() throws {
         let channels = ChannelsResponse(channels: [
-            ChannelInfo(app: .slack, label: "Slack · One", configured: true, enabled: true, tags: ["@one"]),
-            ChannelInfo(app: second, label: "Slack · Two", configured: true, enabled: false, tags: ["@two"]),
+            ChannelInfo(app: .slack, label: "One", configured: true, enabled: true, tags: ["@one"]),
+            ChannelInfo(app: second, label: "Two", configured: true, enabled: false, tags: ["@two"]),
         ])
         let rows = ChannelRowBuilder.rows(status: nil, channels: channels)
         #expect(rows.map(\.app) == [.slack, second])
-        #expect(rows[1].label == "Slack · Two" && rows[1].statusText == "Off")
+        #expect(rows[1].label == "Two" && rows[1].statusText == "Off")
         #expect(rows.allSatisfy { $0.app.isSlack })
         #expect(CLICommand.tagsAdd(tag: "@new", apps: [second]).arguments == ["tags", "add", "@new", "--app", second.rawValue, "--json"])
         #expect(CLICommand.slackRemoveWorkspace(second).arguments == ["slack", "unlink", "--app", second.rawValue, "--json"])
@@ -57,7 +57,7 @@ struct SlackWorkspaceTests {
     @Test func removingOneWorkspaceRefreshesItsAppAndTagAssignments() async {
         let fake = FakeCLIClient(responses: [
             .slackRemoveWorkspace(second): #"{"linked":false}"#,
-            .channelsList: #"{"channels":[{"app":"slack","label":"Slack · One","configured":true,"enabled":true,"tags":["@one"]}]}"#,
+            .channelsList: #"{"channels":[{"app":"slack","label":"One","configured":true,"enabled":true,"tags":["@one"]}]}"#,
             .tagsList: #"{"tags":[{"tag":"@one","apps":["slack"]}]}"#,
             .status: #"{"version":"0.5.1","listener":"running","daemon":"ready","channels":{"slack":{"state":"ready","tags":["@one"]}}}"#,
         ])

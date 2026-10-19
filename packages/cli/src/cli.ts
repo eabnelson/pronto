@@ -569,7 +569,7 @@ async function channelListing(config: ProntoConfig) {
       app,
       configured: entry !== undefined,
       enabled: entry?.enabled === true,
-      label: workspaceLabel === undefined ? channelLabel(app) : `Slack · ${workspaceLabel}`,
+      label: workspaceLabel ?? channelLabel(app),
       ...(workspace === undefined ? {} : { workspaceKey: workspace.workspaceKey ?? (app === "slack" ? legacyWorkspace?.id : undefined) }),
       tags: channelTags(config, app),
       tool: {
