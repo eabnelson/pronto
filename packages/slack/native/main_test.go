@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type roundTrip func(*http.Request) (*http.Response, error)
@@ -24,6 +26,32 @@ func TestSocketOrigins(t *testing.T) {
 		if validSocket(address) {
 			t.Fatal("unsafe origin accepted")
 		}
+	}
+}
+func TestSocketHandshakeUsesDesktopSessionAfterOriginValidation(t *testing.T) {
+	for _, address := range []string{"wss://wss-primary.slack.com/fixture", "wss://slack.com.evil.invalid/fixture"} {
+		t.Run(address, func(t *testing.T) {
+			h := newHelper()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			h.client = &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+				body := `{"ok":true,"url":"` + address + `"}`
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			calls := 0
+			h.dial = func(_ context.Context, _ string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+				calls++
+				cancel()
+				if headers.Get("Cookie") != "d=synthetic-cookie" || headers.Get("Origin") != "https://app.slack.com" {
+					t.Error("desktop session missing from WebSocket handshake")
+				}
+				return nil, nil, errors.New("fixture dial stopped")
+			}
+			h.socketLoop(ctx, &session{cookie: "synthetic-cookie"})
+			if validSocket(address) && calls != 1 || !validSocket(address) && calls != 0 {
+				t.Fatal("socket origin was not checked before sending session headers")
+			}
+		})
 	}
 }
 func TestUnsupportedDestinations(t *testing.T) {

@@ -90,10 +90,12 @@ type helper struct {
 	rateMu                 sync.Mutex
 	lastCall, blockedUntil time.Time
 	client                 *http.Client
+	dial                   func(context.Context, string, http.Header) (*websocket.Conn, *http.Response, error)
 }
 
 func newHelper() *helper {
-	return &helper{selected: map[string]bool{}, client: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("slack-redirect-rejected") }}}
+	dialer := &websocket.Dialer{HandshakeTimeout: 15 * time.Second}
+	return &helper{selected: map[string]bool{}, client: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("slack-redirect-rejected") }}, dial: dialer.DialContext}
 }
 func str(v map[string]json.RawMessage, key string) string {
 	var s string
@@ -549,8 +551,8 @@ func (h *helper) socketLoop(ctx context.Context, s *session) {
 				health("needs_link", "slack-socket-origin")
 				return
 			}
-			dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second}
-			socket, _, e := dialer.DialContext(ctx, address, nil)
+			headers := http.Header{"Cookie": []string{"d=" + s.cookie}, "Origin": []string{"https://app.slack.com"}}
+			socket, _, e := h.dial(ctx, address, headers)
 			err = e
 			if err == nil {
 				h.mu.Lock()
