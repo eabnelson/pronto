@@ -176,7 +176,8 @@ struct ChannelRowView: View {
         MenuItem(action: action, disabled: model.busyAction != nil) {
             IconRow(
                 icon: MenuIcon(systemName: row.app == .whatsapp ? "phone.fill" : "message.fill",
-                               active: row.enabled && row.configured),
+                               active: row.enabled && row.configured,
+                               applicationBundleIdentifier: row.app == .slack ? "com.tinyspeck.slackmacgap" : nil),
                 title: row.label,
                 subtitle: row.detail.map { "\(row.statusText) · \($0)" } ?? row.statusText,
                 subtitleColor: subtitleColor

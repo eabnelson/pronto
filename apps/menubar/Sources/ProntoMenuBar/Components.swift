@@ -108,20 +108,37 @@ struct SectionHeader: View {
     }
 }
 
-/// A round symbol like the device icons in the Sound and Bluetooth menus:
-/// accent-filled when active, a quiet gray otherwise.
+/// An installed app's icon, or a round system symbol. Inactive icons are subdued.
 struct MenuIcon: View {
     let systemName: String
     var active = false
     var tint: Color = .accentColor
+    var applicationBundleIdentifier: String?
 
     var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(active ? AnyShapeStyle(.white) : AnyShapeStyle(.primary.opacity(0.85)))
-            .frame(width: PanelMetrics.iconSize, height: PanelMetrics.iconSize)
-            .background(Circle().fill(active ? AnyShapeStyle(tint) : AnyShapeStyle(.primary.opacity(0.1))))
-            .accessibilityHidden(true)
+        Group {
+            if let applicationIcon {
+                Image(nsImage: applicationIcon)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: PanelMetrics.iconSize, height: PanelMetrics.iconSize)
+                    .saturation(active ? 1 : 0)
+                    .opacity(active ? 1 : 0.55)
+            } else {
+                Image(systemName: systemName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(active ? AnyShapeStyle(.white) : AnyShapeStyle(.primary.opacity(0.85)))
+                    .frame(width: PanelMetrics.iconSize, height: PanelMetrics.iconSize)
+                    .background(Circle().fill(active ? AnyShapeStyle(tint) : AnyShapeStyle(.primary.opacity(0.1))))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var applicationIcon: NSImage? {
+        guard let applicationBundleIdentifier,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: applicationBundleIdentifier) else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
     }
 }
 
@@ -339,6 +356,10 @@ struct PanelChrome: NSViewRepresentable {
 
         private func fit() {
             guard let window, let content = window.contentView else { return }
+            // Clipping the views doesn't clip the window's own backing fill.
+            // It must be transparent too, or it peeks out around the rounder corners.
+            window.isOpaque = false
+            window.backgroundColor = .clear
             let size = bounds.size
             if size.width > 0, size.height > 0,
                abs(content.frame.width - size.width) > 0.5 || abs(content.frame.height - size.height) > 0.5 {
