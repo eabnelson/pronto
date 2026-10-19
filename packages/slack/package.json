@@ -1,6 +1,6 @@
 {
   "name": "pronto-slack",
-  "version": "0.4.3",
+  "version": "0.5.1",
   "description": "Local Slack desktop transport with scoped reads and conservative delivery",
   "type": "module",
   "license": "MIT",

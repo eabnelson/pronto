@@ -37,7 +37,7 @@ if (
   whatsappPackageJson.version !== packageJson.version ||
   slackPackageJson.version !== packageJson.version
 ) {
-  failures.push("workspace, CLI, Messages and WhatsApp package versions must agree");
+  failures.push("workspace, CLI, Messages, WhatsApp and Slack package versions must agree");
 }
 const workflowPaths = [
   ".github/workflows/ci.yml",
