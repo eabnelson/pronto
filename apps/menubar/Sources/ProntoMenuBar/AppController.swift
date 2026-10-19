@@ -42,6 +42,11 @@ final class AppController {
         let base = url.path
         await model.pollOnce(full: true)
         snapshot(PanelView().environment(self).environment(model), to: "\(base)-panel")
+        if let entry = model.tagEntries.first, let agents = entry.agents,
+           let options = model.tags?.availableAgents {
+            snapshot(TagAgentEditor(tag: entry.tag, agents: agents, options: options)
+                .environment(model).frame(width: PanelMetrics.width), to: "\(base)-tag-agents")
+        }
 
         diagnostics.run()
         await diagnostics.waitUntilFinished()

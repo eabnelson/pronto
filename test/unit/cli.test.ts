@@ -173,10 +173,10 @@ describe("Pronto CLI", () => {
       "@work        WhatsApp",
     ]);
     const json = await run(["tags", "list", "--json"]);
-    expect(JSON.parse(json.stdout)).toEqual({
+    expect(JSON.parse(json.stdout)).toMatchObject({
       tags: [
-        { apps: ["imessage", "whatsapp"], tag: "@s4" },
-        { apps: ["whatsapp"], tag: "@work" },
+        { apps: ["imessage", "whatsapp"], tag: "@s4", agents: { primary: "codex", backup: null, inherited: true } },
+        { apps: ["whatsapp"], tag: "@work", agents: { primary: "codex", backup: null, inherited: true } },
       ],
     });
 

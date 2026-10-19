@@ -56,13 +56,41 @@ enabled. Changes apply to the running listener without restarting it.
 
 ## Tags
 
-`pronto tags list --json` prints `{"tags": [{"tag": "@s4", "apps": ["imessage", "whatsapp"]}]}`.
+`pronto tags list --json` prints:
+
+```json
+{
+  "tags": [{"tag": "@s4", "apps": ["imessage", "whatsapp"],
+            "agents": {"primary": "codex", "backup": "claude", "inherited": true}}],
+  "availableAgents": [{"id": "codex", "label": "Codex", "available": true},
+                      {"id": "claude", "label": "Claude Code", "available": true}]
+}
+```
 
 `pronto tags add <tag> --app <app> [--app <app>] --json` and
 `pronto tags remove <tag> [--app <app>]... --json` print the same shape. Without
 `--app`, `add` applies to every enabled app and `remove` removes the tag from
 every app. Every enabled app must keep at least one tag. Changes apply to the
 running listener without restarting it.
+
+`pronto tags agents <tag> --primary codex|claude --backup codex|claude|none --json`
+saves a complete agent pair for one existing tag and returns the same shape.
+`pronto tags agents <tag> --reset --json` removes the override and restores the
+global setup defaults. The pair applies to that tag in every messaging app;
+other tags and global defaults remain unchanged. The default and backup must
+differ, and selected executables must be installed. `backup: null` disables
+backup for that tag, even when setup has a global backup.
+
+Existing configurations inherit the global pair. Overrides persist across
+restarts, updates, and setup for tags retained by setup. Removing a tag's final
+app assignment also removes its override. Choices are captured when each turn
+starts; an active turn retains its original pair. Backup still runs only after
+an operational failure with no tool activity. This preserves the existing
+protection against repeating work with uncertain side effects.
+
+The extra JSON fields are additive. Older menu bar versions ignore them;
+newer menu bar versions can read the old shape but require an updated CLI to
+edit agent choices.
 
 ## WhatsApp linking
 

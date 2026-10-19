@@ -204,20 +204,50 @@ public struct ChannelsResponse: Codable, Hashable, Sendable {
 
 // MARK: - tags list/add/remove --json
 
+public struct AgentID: RawRepresentable, Codable, Hashable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let codex = AgentID(rawValue: "codex")
+    public static let claude = AgentID(rawValue: "claude")
+}
+
+public struct AgentOption: Codable, Hashable, Sendable, Identifiable {
+    public var id: AgentID
+    public var label: String
+    public var available: Bool
+    public init(id: AgentID, label: String, available: Bool) {
+        self.id = id; self.label = label; self.available = available
+    }
+}
+
+public struct TagAgents: Codable, Hashable, Sendable {
+    public var primary: AgentID
+    public var backup: AgentID?
+    public var inherited: Bool
+    public init(primary: AgentID, backup: AgentID? = nil, inherited: Bool) {
+        self.primary = primary; self.backup = backup; self.inherited = inherited
+    }
+}
+
 public struct TagEntry: Codable, Hashable, Sendable, Identifiable {
     public var tag: String
     public var apps: [AppID]
+    public var agents: TagAgents?
     public var id: String { tag }
 
-    public init(tag: String, apps: [AppID]) {
+    public init(tag: String, apps: [AppID], agents: TagAgents? = nil) {
         self.tag = tag
         self.apps = apps
+        self.agents = agents
     }
 }
 
 public struct TagsResponse: Codable, Hashable, Sendable {
     public var tags: [TagEntry]
-    public init(tags: [TagEntry]) { self.tags = tags }
+    public var availableAgents: [AgentOption]?
+    public init(tags: [TagEntry], availableAgents: [AgentOption]? = nil) {
+        self.tags = tags; self.availableAgents = availableAgents
+    }
 }
 
 // MARK: - start/stop --json

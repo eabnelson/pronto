@@ -17,6 +17,8 @@ public enum CLICommand: Hashable, Sendable {
     case tagsAdd(tag: String, apps: [AppID])
     /// `tags remove <tag> [--app <app>]... --json`. Empty `apps` means "every app".
     case tagsRemove(tag: String, apps: [AppID])
+    case tagsAgents(tag: String, primary: AgentID, backup: AgentID?)
+    case tagsAgentsReset(tag: String)
     case start
     case stop
     case doctor
@@ -45,6 +47,10 @@ public enum CLICommand: Hashable, Sendable {
             return ["tags", "add", tag] + Self.appFlags(apps) + ["--json"]
         case .tagsRemove(let tag, let apps):
             return ["tags", "remove", tag] + Self.appFlags(apps) + ["--json"]
+        case .tagsAgents(let tag, let primary, let backup):
+            return ["tags", "agents", tag, "--primary", primary.rawValue, "--backup", backup?.rawValue ?? "none", "--json"]
+        case .tagsAgentsReset(let tag):
+            return ["tags", "agents", tag, "--reset", "--json"]
         case .start:
             return ["start", "--json"]
         case .stop:
@@ -78,7 +84,7 @@ public enum CLICommand: Hashable, Sendable {
     /// Commands that change state; the UI serializes these.
     public var isMutation: Bool {
         switch self {
-        case .channelsEnable, .channelsDisable, .tagsAdd, .tagsRemove, .start, .stop, .updateInstall, .whatsappLink, .slackLink, .slackSelect, .slackUnlink:
+        case .channelsEnable, .channelsDisable, .tagsAdd, .tagsRemove, .tagsAgents, .tagsAgentsReset, .start, .stop, .updateInstall, .whatsappLink, .slackLink, .slackSelect, .slackUnlink:
             return true
         default:
             return false

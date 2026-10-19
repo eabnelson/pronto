@@ -21,6 +21,7 @@ import {
   atomicWritePrivate,
   ensurePrivateDirectory,
   loadConfig,
+  runtimeExecutables,
   saveConfig,
   type ProntoConfig,
 } from "./config";
@@ -137,10 +138,7 @@ const defaultDependencies: ProntoUpdateDependencies = {
     plist: renderLaunchAgent({
       executablePath: paths.executablePath,
       logPath: paths.logPath,
-      runtimeExecutablePaths: [
-        config.primaryRuntimePath,
-        config.fallbackRuntimePath,
-      ].filter((path): path is string => path !== undefined),
+      runtimeExecutablePaths: runtimeExecutables(config).map(([, path]) => path),
     }),
     plistPath: paths.launchAgentPath,
   }),

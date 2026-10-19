@@ -9,6 +9,7 @@ import {
   ensurePrivateDirectory,
   loadConfig,
   normalizeTags,
+  runtimeExecutables,
   saveConfig,
   type RuntimeKind,
   type ProntoConfig,
@@ -47,6 +48,7 @@ export interface WorkspaceSelection {
 export interface ExistingSetupDefaults {
   chatKeySalt: string;
   tags: string[];
+  tagRuntimes?: ProntoConfig["tagRuntimes"];
   workingDirectory: string;
 }
 
@@ -131,6 +133,7 @@ export async function loadExistingSetupDefaults(
     return {
       chatKeySalt: value.chatKeySalt,
       tags,
+      ...(value.tagRuntimes === undefined ? {} : { tagRuntimes: (await loadConfig(configPath)).tagRuntimes }),
       workingDirectory: value.workingDirectory,
     };
   } catch (error) {
@@ -825,10 +828,7 @@ export async function installSetup(input: {
       plist: renderLaunchAgent({
         executablePath: input.paths.executablePath,
         logPath: input.paths.logPath,
-        runtimeExecutablePaths: [
-          input.config.primaryRuntimePath,
-          input.config.fallbackRuntimePath,
-        ].filter((path): path is string => path !== undefined),
+        runtimeExecutablePaths: runtimeExecutables(input.config).map(([, path]) => path),
       }),
       plistPath: input.paths.launchAgentPath,
     });
@@ -938,6 +938,9 @@ export async function inspectInstallation(
     ["wacli-command", config.channels.whatsapp?.enabled === true ? config.channels.whatsapp.wacliPath : undefined],
     ["primary-runtime", config.primaryRuntimePath],
     ["fallback-runtime", config.fallbackRuntimePath],
+    ...runtimeExecutables(config)
+      .filter(([, path]) => path !== config.primaryRuntimePath && path !== config.fallbackRuntimePath)
+      .map(([kind, path]) => [`tag-runtime-${kind}`, path] as const),
   ] as const) {
     if (executable === undefined) continue;
     if (!(await executableCheck(executable))) {

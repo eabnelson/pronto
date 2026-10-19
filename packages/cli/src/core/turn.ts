@@ -183,6 +183,7 @@ export class TurnProcessor {
       journal: DeliveryJournal;
       memory: MemoryStore;
       runtimes: RuntimeChain;
+      runtimesForTag?: (tag: string | undefined) => RuntimeChain;
       channels: ReadonlyMap<ChannelKind, TurnChannel>;
       defaultWorkingDirectory: string;
       /** Private directory for files sent with replies; without it replies carry text only. */
@@ -223,6 +224,8 @@ export class TurnProcessor {
     let consumePendingCandidates = false;
     let runtimeStarted = false;
     try {
+      // Pin the pair for this turn, so a reload cannot change its backup mid-attempt.
+      const runtimes = this.dependencies.runtimesForTag?.(event.activationTag) ?? this.dependencies.runtimes;
       const channel = this.#channel(event.chat.channel);
       const workspaceState = this.dependencies.workspaces.get(event.chatKey);
       const pendingCandidates = workspaceState.pendingCandidates;
@@ -285,7 +288,7 @@ export class TurnProcessor {
       void channel.acknowledge?.(event.chat, event.conversation).catch(() => undefined);
       const stopTyping = showTyping(channel, event);
       try {
-        result = await this.dependencies.runtimes.run(inputForAttempt(), {
+        result = await runtimes.run(inputForAttempt(), {
           fallbackInput: inputForAttempt,
           onAttemptStart: () => {
             this.dependencies.journal.beginRuntimeAttempt(event.providerGuid, lease);

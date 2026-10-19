@@ -96,6 +96,7 @@ Tests/Fixtures/             JSON/NDJSON fixtures and the fake-pronto script
 | Status, icon, app rows | `status --json` (5 s while the panel is open, 60 s otherwise), `channels list --json` |
 | Enable or disable an app | `channels enable <app> --json`, `channels disable <app> --json` |
 | Tags | `tags list --json`, `tags add <tag> --app … --json`, `tags remove <tag> [--app …] --json` |
+| Per-tag agents | `tags agents <tag> --primary codex\|claude --backup codex\|claude\|none --json`, `tags agents <tag> --reset --json` |
 | Pause and resume | `stop --json`, `start --json` |
 | Updates | `update --check --json` (at most every 6 h, or on demand), `update --json` |
 | Diagnostics | `doctor --json` |

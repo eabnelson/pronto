@@ -157,7 +157,7 @@ const activation: ChannelActivation = {
 async function harness<Transport extends FakeTransport = FakeTransport>(
   primary: RuntimeAdapter,
   fallback?: RuntimeAdapter,
-  options: { staging?: boolean; transport?: Transport } = {},
+  options: { staging?: boolean; transport?: Transport; runtimesForTag?: (tag: string | undefined) => RuntimeChain } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "pronto-turn-"));
   temporaryDirectories.push(directory);
@@ -175,6 +175,7 @@ async function harness<Transport extends FakeTransport = FakeTransport>(
     journal,
     memory,
     runtimes: new RuntimeChain(primary, fallback),
+    ...(options.runtimesForTag === undefined ? {} : { runtimesForTag: options.runtimesForTag }),
     channels: new Map([["imessage", transport]]),
     defaultWorkingDirectory: directory,
     ...(options.staging === true ? { outboundStagingDirectory: staging } : {}),
@@ -197,6 +198,33 @@ async function harness<Transport extends FakeTransport = FakeTransport>(
 }
 
 describe("turn lifecycle", () => {
+  test("routes each tag independently and keeps an active turn's backup during an agent change", async () => {
+    const started = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const codex = new FakeAdapter("codex", { status: "success", toolActivity: "none", output: { reply: "Codex reply" } });
+    const claude = new FakeAdapter("claude", { status: "operational-failure", toolActivity: "none", reason: "unavailable" });
+    const originalRun = claude.run.bind(claude);
+    claude.run = async (input) => { started.resolve(); await resume.promise; return originalRun(input); };
+    let custom = new RuntimeChain(claude, codex);
+    const h = await harness(codex, undefined, { runtimesForTag: (tag) => tag === "@work" ? custom : new RuntimeChain(codex) });
+    try {
+      h.coordinator.admit({ ...activation, activationTag: "@work", providerGuid: "AGENT-1" });
+      await started.promise;
+      custom = new RuntimeChain(codex); // A hot reload while Claude is running.
+      resume.resolve();
+      await h.coordinator.idle();
+      expect(claude.inputs).toHaveLength(1);
+      expect(codex.inputs).toHaveLength(1); // The pinned backup completed the first turn.
+      h.coordinator.admit({ ...activation, activationTag: "@work", providerGuid: "AGENT-2" });
+      await h.coordinator.idle();
+      h.coordinator.admit({ ...activation, providerGuid: "AGENT-3" });
+      await h.coordinator.idle();
+      expect(claude.inputs).toHaveLength(1);
+      expect(codex.inputs).toHaveLength(3);
+      expect(h.transport.sends).toHaveLength(3);
+    } finally { resume.resolve(); await h.coordinator.idle(); h.close(); }
+  });
+
   test("quiescing drains the active turn but preserves unstarted work for restart", async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();

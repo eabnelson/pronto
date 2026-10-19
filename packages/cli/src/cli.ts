@@ -15,6 +15,7 @@ import {
   normalizeTag,
   normalizeTags,
   removeTagFromApps,
+  runtimeExecutables,
   saveConfig,
   tagAssignments,
   type ProntoConfig,
@@ -78,6 +79,7 @@ import {
   PRONTO_BROKER_URL_ENV,
 } from "./tools/contract";
 import { ProntoUpdater } from "./update";
+import { editTagAgents, tagsResponse } from "./tag-agents";
 import { MenubarInstaller } from "./menubar";
 
 const HELP = `pronto ${packageJson.version}
@@ -255,6 +257,10 @@ async function runSetup(): Promise<number> {
       ...(apps.includes("whatsapp") ? { whatsappRiskConsentVersion: WHATSAPP_RISK_CONSENT_VERSION } : {}),
       workingDirectory,
     });
+    if (existing?.tagRuntimes !== undefined) {
+      const configuredTags = new Set(tagAssignments(config).map((entry) => entry.tag));
+      config.tagRuntimes = Object.fromEntries(Object.entries(existing.tagRuntimes).filter(([tag]) => configuredTags.has(tag)));
+    }
     let slackSelectionRequired = false;
     if (apps.includes("slack")) {
       const slack = await standaloneSlack({ paths, chatKeySalt: config.chatKeySalt });
@@ -313,11 +319,7 @@ async function runSetup(): Promise<number> {
         const imessage = config.channels.imessage;
         if (imessage !== undefined) await imessagePreflight(imessage.imsgPath, imessage.tags);
         console.log("Qualifying each selected runtime with one temporary, noninteractive file-tool probe...");
-        for (const [kind, executablePath] of [
-          [config.primaryRuntime, config.primaryRuntimePath],
-          [config.fallbackRuntime, config.fallbackRuntimePath],
-        ] as const) {
-          if (kind === undefined || executablePath === undefined) continue;
+        for (const [kind, executablePath] of runtimeExecutables(config)) {
           const result = await qualifyRuntime({
             adapter: createRuntimeAdapter(kind, executablePath),
             ...(bridgeExecutableArgs === undefined ? {} : { bridgeExecutableArgs }),
@@ -916,11 +918,7 @@ async function runDoctor(json = false, offline = false): Promise<number> {
       report.checks.push(await whatsappDoctorCheck(config, paths));
     }
 
-    for (const [kind, executablePath] of [
-      [config.primaryRuntime, config.primaryRuntimePath],
-      [config.fallbackRuntime, config.fallbackRuntimePath],
-    ] as const) {
-      if (kind === undefined || executablePath === undefined) continue;
+    for (const [kind, executablePath] of runtimeExecutables(config)) {
       const qualification = await qualifyRuntime({
         adapter: createRuntimeAdapter(kind, executablePath),
         bridgeExecutablePath: paths.executablePath,
@@ -1067,27 +1065,39 @@ async function runUninstall(args: readonly string[]): Promise<number> {
   return 0;
 }
 
-const TAGS_USAGE = "Usage: pronto tags [list | add <tag> [--app <app>]... | remove <tag> [--app <app>]...] [--json]";
+const TAGS_USAGE = "Usage: pronto tags [list | add <tag> [--app <app>]... | remove <tag> [--app <app>]... | agents <tag> --primary codex|claude --backup codex|claude|none | agents <tag> --reset] [--json]";
 
 async function runTags(args: readonly string[]): Promise<number> {
   const paths = pathsForHome(homedir());
   const json = args.includes("--json");
+  const config = await loadConfig(paths.configPath);
+  if (args[0] === "agents") {
+    let next: ProntoConfig;
+    try { next = await editTagAgents(config, args.slice(1)); }
+    catch (error) { return fail(json, (error as Error).message, 2); }
+    if (JSON.stringify(next) !== JSON.stringify(config)) {
+      await saveConfig(paths.configPath, next);
+      if (existsSync(paths.launchAgentPath)) await reloadLaunchAgent().catch(() => undefined);
+    }
+    if (json) console.log(JSON.stringify(await tagsResponse(next)));
+    else console.log(`Agent choices saved for ${normalizeTag(args[1]!)}.`);
+    return 0;
+  }
   let parsed: ReturnType<typeof parseAppFlags>;
   try {
     parsed = parseAppFlags(args);
   } catch (error) {
     return fail(json, (error as Error).message, 2);
   }
-  const config = await loadConfig(paths.configPath);
   const [action = "list", value, extra] = parsed.positional;
   const enabled = enabledChannels(config);
-  const printTags = (current: ProntoConfig) => {
-    console.log(JSON.stringify({ tags: tagAssignments(current) }));
+  const printTags = async (current: ProntoConfig) => {
+    console.log(JSON.stringify(await tagsResponse(current)));
   };
 
   if (action === "list") {
     if (value !== undefined || parsed.apps.length > 0) return fail(json, TAGS_USAGE, 2);
-    if (json) printTags(config);
+    if (json) await printTags(config);
     else {
       for (const { apps, tag } of tagAssignments(config)) {
         console.log(enabled.length > 1 ? `${tag.padEnd(12)} ${appList(apps)}` : tag);
@@ -1116,14 +1126,14 @@ async function runTags(args: readonly string[]): Promise<number> {
     return fail(json, (error as Error).message, 2);
   }
   if (JSON.stringify(next.channels) === JSON.stringify(config.channels)) {
-    if (json) printTags(config);
+    if (json) await printTags(config);
     else console.log(`${normalizedValue} is already configured.`);
     return 0;
   }
 
   await saveConfig(paths.configPath, next);
   await reloadLaunchAgent().catch(() => undefined);
-  if (json) printTags(next);
+  if (json) await printTags(next);
   else {
     console.log(`Configured tags: ${tagAssignments(next).map(({ apps, tag }) => {
       return enabled.length > 1 ? `${tag} (${appList(apps)})` : tag;

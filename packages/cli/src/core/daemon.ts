@@ -13,8 +13,7 @@ import { standaloneSlack } from "../slack/standalone";
 import { WhatsappChannel } from "../whatsapp/channel";
 import { standaloneWhatsapp } from "../whatsapp/standalone";
 import type { ProntoPaths } from "../macos/paths";
-import { RuntimeChain } from "../runtimes/chain";
-import { createRuntimeAdapter } from "../runtimes/factory";
+import { runtimeChainForTag } from "../runtimes/selection";
 import { openProntoDatabase } from "../storage/database";
 import { DeliveryJournal, type ChannelHealth } from "../storage/journal";
 import { DEFAULT_SCHEMA_VERSION, MULTI_APP_SCHEMA_VERSION } from "../storage/migrations";
@@ -46,12 +45,6 @@ export function standaloneMessagesOptions(input: {
   };
 }
 
-function runtimePath(config: ProntoConfig, fallback = false): string {
-  const path = fallback ? config.fallbackRuntimePath : config.primaryRuntimePath;
-  if (path === undefined) throw new Error("Runtime executable path is missing; run pronto setup");
-  return path;
-}
-
 type Health = { reason?: string; state: ChannelHealth["state"] };
 
 export class ProntoDaemon {
@@ -79,8 +72,8 @@ export class ProntoDaemon {
 
   /**
    * Re-reads the configuration and applies tag changes and enabled apps without restarting.
-   * Apps that need linking or failed to start are retried. Runtime, folder, and tool path
-   * changes still need a listener restart, which setup performs.
+   * Apps that need linking or failed to start are retried. Agent choices are read at
+   * the start of each turn; working-folder changes still need a listener restart.
    */
   reload(load: () => Promise<ProntoConfig>): Promise<void> {
     this.#reloads = this.#reloads.then(async () => {
@@ -221,11 +214,6 @@ export class ProntoDaemon {
       }
       if (channels.size === 0) throw firstFailure ?? new Error("No messaging app is enabled");
       brokerServer = broker.listen();
-      const primary = createRuntimeAdapter(this.#config.primaryRuntime, runtimePath(this.#config));
-      const fallback =
-        this.#config.fallbackRuntime === undefined
-          ? undefined
-          : createRuntimeAdapter(this.#config.fallbackRuntime, runtimePath(this.#config, true));
       const memory = new MemoryStore(database);
       const workspaces = new WorkspaceStore(database);
       coordinator = new TurnCoordinator(
@@ -236,7 +224,8 @@ export class ProntoDaemon {
           channels,
           journal,
           memory,
-          runtimes: new RuntimeChain(primary, fallback),
+          runtimes: runtimeChainForTag(this.#config),
+          runtimesForTag: (tag) => runtimeChainForTag(this.#config, tag),
           defaultWorkingDirectory: this.#config.workingDirectory,
           outboundStagingDirectory: this.paths.outboundStagingDirectory,
           workspaces,
