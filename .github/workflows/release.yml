@@ -182,8 +182,7 @@ jobs:
             --key "$PRONTO_NOTARY_KEY_PATH" \
             --wait --output-format json)"
           test "$(jq -r '.status' <<< "$notarization")" = "Accepted"
-          xcrun stapler staple "$app"
-          xcrun stapler validate "$app"
+          bash scripts/staple-notarized-app.sh "$app"
           ditto -c -k --keepParent "$app" release/Pronto-menubar.zip
       - name: Smoke test signed release artifacts
         env:

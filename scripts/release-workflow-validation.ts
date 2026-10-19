@@ -12,7 +12,7 @@ const REQUIRED_CONTROLS = [
   ["release/pronto-whatsapp-*.tgz", "WhatsApp package release artifact"],
   ["apps/menubar/scripts/bundle.sh \"$menubar\" --universal --sign-identity \"$identity\"", "universal menu bar app build"],
   ["codesign --verify --deep --strict --verbose=4 -R=\"$requirement\" \"$app\"", "menu bar app designated requirement"],
-  ["xcrun stapler staple \"$app\"", "menu bar app notarization ticket"],
+  ["bash scripts/staple-notarized-app.sh \"$app\"", "menu bar app notarization ticket"],
   ["release-assets/Pronto-menubar.zip", "menu bar app release asset"],
   ["release-assets/pronto-menubar-update.json", "menu bar app signed manifest"],
   ["sha256sum -c pronto-whatsapp.sha256", "downloaded WhatsApp package checksum verification"],
