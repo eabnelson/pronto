@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -36,6 +37,9 @@ func event(kind string, v map[string]any) { v["version"] = protocol; v["event"] 
 func health(state, reason string)         { event("health", map[string]any{"state": state, "reason": reason}) }
 
 var safe = regexp.MustCompile(`^slack-[a-z0-9-]{1,80}$`)
+var validTag = regexp.MustCompile(`^@[A-Za-z0-9_-]{1,32}$`)
+var validID = regexp.MustCompile(`^[CDGU][A-Z0-9]{1,32}$`)
+var validSeconds = regexp.MustCompile(`^\d{10,16}(\.\d{1,9})?$`)
 var validTS = regexp.MustCompile(`^\d{10,16}\.\d{1,9}$`)
 
 func safeError(err error) string {
@@ -104,7 +108,7 @@ func str(v map[string]json.RawMessage, key string) string {
 	return s
 }
 func (h *helper) call(ctx context.Context, s *session, method string, params map[string]any) (map[string]json.RawMessage, error) {
-	allowed := map[string]bool{"auth.test": true, "rtm.connect": true, "users.conversations": true, "conversations.info": true, "users.info": true, "conversations.history": true, "conversations.replies": true, "chat.postMessage": true}
+	allowed := map[string]bool{"auth.test": true, "rtm.connect": true, "users.conversations": true, "conversations.info": true, "users.info": true, "conversations.history": true, "conversations.replies": true, "chat.postMessage": true, "search.messages": true}
 	if !allowed[method] {
 		return nil, errors.New("slack-operation-rejected")
 	}
@@ -414,13 +418,105 @@ func (h *helper) execute(ctx context.Context, op string, input map[string]json.R
 			rows = append(rows, row)
 		}
 		return map[string]any{"conversations": rows, "nextCursor": cursor(result)}, nil
+	case "tagged", "participation":
+		query := ""
+		count, page := 100, 1
+		var oldest float64
+		if op == "tagged" {
+			tag, since := str(input, "tag"), str(input, "oldest")
+			if !validTag.MatchString(tag) || !validSeconds.MatchString(since) {
+				return nil, errors.New("slack-search-invalid")
+			}
+			oldest, _ = strconv.ParseFloat(since, 64)
+			// Include the preceding UTC day to avoid search timezone boundary omissions;
+			// the exact numeric cutoff is enforced again on returned candidates.
+			date := time.Unix(int64(oldest), 0).UTC().AddDate(0, 0, -1).Format("2006-01-02")
+			query = fmt.Sprintf(`"%s" after:%s`, tag, date)
+			if value := str(input, "cursor"); value != "" {
+				var err error
+				page, err = strconv.Atoi(value)
+				if err != nil || page < 1 || page > 5 {
+					return nil, errors.New("slack-search-invalid")
+				}
+			}
+		} else {
+			if !validID.MatchString(id) {
+				return nil, errors.New("slack-search-invalid")
+			}
+			query = fmt.Sprintf("from:<@%s> in:%s", s.owner, id)
+			count = 3
+		}
+		result, err := h.call(ctx, s, "search.messages", map[string]any{"query": query, "count": count, "page": page, "sort": "timestamp", "sort_dir": "desc", "highlight": false, "team_id": s.team})
+		if err != nil {
+			return nil, err
+		}
+		var found struct {
+			Matches []struct {
+				message
+				Channel struct {
+					ID string `json:"id"`
+				} `json:"channel"`
+				Team      string `json:"team"`
+				Permalink string `json:"permalink"`
+			} `json:"matches"`
+			Paging struct {
+				Pages int `json:"pages"`
+			} `json:"paging"`
+			Pagination struct {
+				Pages int `json:"page_count"`
+			} `json:"pagination"`
+		}
+		if json.Unmarshal(result["messages"], &found) != nil {
+			return nil, errors.New("slack-search-invalid")
+		}
+		messages := []message{}
+		for index, match := range found.Matches {
+			if index >= count {
+				break
+			}
+			if !validID.MatchString(match.Channel.ID) || !validTS.MatchString(match.TS) || match.Team != "" && match.Team != s.team {
+				continue
+			}
+			if op == "participation" && (match.Channel.ID != id || match.User != s.owner) {
+				continue
+			}
+			at, _ := strconv.ParseFloat(match.TS, 64)
+			if at < oldest {
+				continue
+			}
+			m := match.message
+			m.Conversation = match.Channel.ID
+			if m.ThreadTS == "" {
+				if link, err := url.Parse(match.Permalink); err == nil && link.Scheme == "https" && strings.HasSuffix(link.Hostname(), ".slack.com") && strings.HasPrefix(link.Path, "/archives/"+m.Conversation+"/") {
+					if thread := link.Query().Get("thread_ts"); validTS.MatchString(thread) {
+						m.ThreadTS = thread
+					}
+				}
+			}
+			messages = append(messages, m)
+		}
+		pages := found.Paging.Pages
+		if found.Pagination.Pages > pages {
+			pages = found.Pagination.Pages
+		}
+		next := ""
+		if op == "tagged" && (page < pages || pages == 0 && len(found.Matches) == count) {
+			next = strconv.Itoa(page + 1)
+		}
+		return map[string]any{"messages": messages, "nextCursor": next}, nil
 	case "info":
 		return h.info(ctx, s, id)
 	case "history", "replies":
 		if id == "" {
 			return nil, errors.New("slack-scope-revoked")
 		}
-		params := map[string]any{"channel": id, "limit": 100, "cursor": str(input, "cursor")}
+		limit := 100
+		if raw, ok := input["limit"]; ok {
+			if json.Unmarshal(raw, &limit) != nil || limit < 1 || limit > 100 {
+				return nil, errors.New("slack-history-limit")
+			}
+		}
+		params := map[string]any{"channel": id, "limit": limit, "cursor": str(input, "cursor")}
 		method := "conversations.history"
 		if op == "replies" {
 			thread := str(input, "thread")
@@ -432,6 +528,13 @@ func (h *helper) execute(ctx context.Context, op string, input map[string]json.R
 		}
 		if oldest := str(input, "oldest"); oldest != "" {
 			params["oldest"] = oldest
+			params["inclusive"] = true
+		}
+		if latest := str(input, "latest"); latest != "" {
+			if !validTS.MatchString(latest) {
+				return nil, errors.New("slack-scope-invalid")
+			}
+			params["latest"] = latest
 			params["inclusive"] = true
 		}
 		result, err := h.call(ctx, s, method, params)

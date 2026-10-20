@@ -43,6 +43,8 @@ export class SlackChannel implements Channel {
   async qualify() { const result = await this.provider.qualify(); if (result.status === "needs_link") throw new ChannelNeedsLinkError("slack-needs-link"); return { degraded: result.degraded, version: result.version }; }
   async watch(input: Parameters<Channel["watch"]>[0]): Promise<ChannelWatch> {
     return this.provider.subscribe({
+      tags: input.tags,
+      isRequest: (text) => removeOneMatchedTag(text, input.tags()) !== null,
       onObservation: async (event) => {
         const activation = slackActivation(event, input.tags(), this.kind);
         if (!activation) return;

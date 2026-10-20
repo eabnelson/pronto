@@ -1,8 +1,8 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProntoSlack, SLACK_RECOVERY_LIMITS, type SlackBridge, type SlackBridgeEvent } from "../../packages/slack/src/index";
+import { createProntoSlack, type SlackBridge, type SlackBridgeEvent } from "../../packages/slack/src/index";
 import { addTagToApps, createConfig, loadConfig, saveConfig, tagAssignments, removeTagFromApps, setTagRuntimes } from "../../packages/cli/src/config";
 import { isChannelKind, type SlackChannelKind } from "../../packages/cli/src/channels/types";
 import { SlackChannel, slackActivation } from "../../packages/cli/src/slack/channel";
@@ -31,6 +31,7 @@ function bridge() {
       if (operation === "connect") { team = String(input.team); return { team, owner: `U${team}`, label: team === "TONE" ? "Workspace One" : "Workspace Two", memberLabel: "Synthetic owner" }; }
       if (operation === "list") return { conversations: ["DSELF", "CDISCUSSION"].map((id) => ({ id, label: id, type: id.startsWith("D") ? "self" : "channel", supported: true })), nextCursor: "" };
       if (operation === "info") return { id: input.conversation, label: "Synthetic conversation", type: "channel", supported: input.conversation !== "CEXTERNAL" };
+      if (operation === "participation") return { messages: [{ conversation: input.conversation, user: `U${team}`, ts: "1700000000.000001", text: "Earlier owner participation" }] };
       if (operation === "history") return { messages: [{ conversation: input.conversation, user: `U${team}`, ts: "1700000000.000001", text: "Earlier owner participation" }], nextCursor: "" };
       return { messages: [], nextCursor: "", outcome: "confirmed", ts: "1792152001.000001" };
     },
@@ -92,10 +93,10 @@ test("workspace coverage learns participation, ignores historical requests, and 
     expect((await f.second.qualify()).degraded).toEqual([]);
     expect((await f.second.connection())?.coverage).toBe("participated");
     const request = { conversation: "CDISCUSSION", ts: "1792152000.000002", user: "UPARTICIPANT", text: "@two request" };
-    expect(await f.second.observe(request, "live")).toBeNull();
+    expect(await f.second.observe(request, "live")).not.toBeNull();
     const observed: unknown[] = [];
     await f.second.reconcile(async (event) => { observed.push(event); });
-    expect(observed).toEqual([]); // Old owner messages establish eligibility, not new requests.
+    expect(observed).toEqual([]); // Targeted owner evidence establishes eligibility without replaying old requests.
     expect(await f.second.observe(request, "live")).not.toBeNull();
     expect(await f.second.observe({ ...request, conversation: "CNEW", user: "UTTWO" }, "live")).not.toBeNull();
     expect(await f.second.observe({ ...request, conversation: "CEXTERNAL", user: "UTTWO" }, "live")).toBeNull();
@@ -123,126 +124,6 @@ test("workspace apps keep independent tags and switches across configuration rel
   expect(isChannelKind("slack:../../another-directory")).toBeFalse();
 });
 
-test("participation in an old thread authorizes fresh replies without replaying old tags", async () => {
-  const f = await fixture();
-  try {
-    await f.second.qualify();
-    f.secondBridge.overrides.set("history", (input) => ({ messages: input.conversation === "CDISCUSSION" ? [{ conversation: input.conversation, user: "UPARTICIPANT", ts: "1700000000.000001", text: "old root", reply_count: 2, latest_reply: "1792152000.000002" }] : [], nextCursor: "" }));
-    f.secondBridge.overrides.set("replies", () => ({ messages: [
-      { conversation: "CDISCUSSION", user: "UTTWO", ts: "1700000000.000002", text: "@two old owner reply" },
-      { conversation: "CDISCUSSION", user: "UPARTICIPANT", ts: "1792152000.000002", text: "@two new request" },
-    ], nextCursor: "" }));
-    const observations: any[] = [];
-    await f.second.reconcile(async (event) => { observations.push(event); });
-    expect(observations).toHaveLength(1);
-    expect(observations[0].message.text).toBe("@two new request");
-  } finally { await f.root.close(); await f.second.close(); }
-});
-
-test("workspace recovery completes across bounded batches and stays healthy during the next sweep", async () => {
-  const f = await fixture();
-  try {
-    f.secondBridge.overrides.set("list", () => ({ conversations: Array.from({ length: 51 }, (_, n) => ({ id: `C${n}`, label: `Synthetic ${n}`, type: "channel", supported: true })), nextCursor: "" }));
-    f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
-    await f.second.qualify();
-    const first = await f.second.reconcile(async () => {});
-    expect(first.status).toBe("degraded"); expect(first.requests).toBe(100);
-    f.secondBridge.calls.length = 0;
-    const second = await f.second.reconcile(async () => {});
-    expect(f.secondBridge.calls.find((call) => call.operation === "info")?.input.conversation).toBe("C50");
-    expect(second.status).toBe("recovered");
-    expect(second.requests).toBe(2);
-    const next = await f.second.reconcile(async () => {});
-    expect(next.requests).toBe(100);
-    expect(next.status).toBe("recovered");
-  } finally { await f.root.close(); await f.second.close(); }
-});
-
-test("the recovery timer drains progressing batches and backs off after real failures", async () => {
-  const f = await fixture();
-  f.secondBridge.overrides.set("list", () => ({ conversations: Array.from({ length: 51 }, (_, n) => ({ id: `C${n}`, label: `Synthetic ${n}`, type: "channel", supported: true })), nextCursor: "" }));
-  f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
-  const timer = setTimeout(() => {}, 2_147_483_647); timer.unref();
-  const scheduled: Array<{ callback: () => void; delay: number }> = [];
-  const schedule = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => {
-    scheduled.push({ callback, delay }); return timer;
-  }) as typeof setTimeout);
-  let subscription: Awaited<ReturnType<typeof f.second.subscribe>> | undefined;
-  try {
-    subscription = await f.second.subscribe({ onObservation: async () => {} });
-    expect(scheduled.at(-1)?.delay).toBe(1_000);
-    scheduled.at(-1)!.callback(); await f.second.refresh();
-    expect(scheduled.at(-1)?.delay).toBe(SLACK_RECOVERY_LIMITS.intervalMs);
-    f.secondBridge.overrides.set("list", () => ({ conversations: [{ id: "CLARGE", label: "Synthetic large history", type: "channel", supported: true }], nextCursor: "" }));
-    f.secondBridge.overrides.set("history", (input) => {
-      const page = input.cursor ? Number(String(input.cursor).slice(1)) : 0;
-      return { messages: page < 10 ? Array.from({ length: 100 }, (_, n) => ({ conversation: "CLARGE", ts: `1700000000.${String(page * 100 + n).padStart(6, "0")}`, user: "UTTWO", text: "old synthetic message" })) : [], nextCursor: page < 10 ? `p${page + 1}` : "" };
-    });
-    scheduled.at(-1)!.callback(); await f.second.refresh();
-    expect(scheduled.at(-1)?.delay).toBe(1_000); // A page checkpoint alone must also continue promptly.
-    f.secondBridge.overrides.set("info", () => { throw new Error("synthetic unavailable read"); });
-    scheduled.at(-1)!.callback(); await f.second.refresh();
-    expect(scheduled.at(-1)?.delay).toBe(SLACK_RECOVERY_LIMITS.intervalMs);
-  } finally { schedule.mockRestore(); clearTimeout(timer); await subscription?.close(); await f.root.close(); await f.second.close(); }
-}, 10_000);
-
-test("a failing observation does not starve recovery of other conversations", async () => {
-  const f = await fixture();
-  try {
-    await f.second.qualify();
-    f.secondBridge.overrides.set("history", (input) => ({ messages: [{
-      conversation: input.conversation, user: "UTTWO", ts: "1792152000.000001", text: "@two new request",
-    }], nextCursor: "" }));
-    const first = await f.second.reconcile(async () => { throw new Error("admission unavailable"); });
-    expect(first.status).toBe("degraded");
-    f.secondBridge.calls.length = 0;
-    await f.second.reconcile(async () => {});
-    expect(f.secondBridge.calls.find((call) => call.operation === "info")?.input.conversation).toBe("CDISCUSSION");
-  } finally { await f.root.close(); await f.second.close(); }
-});
-
-test("genuine recovery failures invalidate a previous success until that conversation is checked again", async () => {
-  const f = await fixture();
-  try {
-    f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
-    await f.second.qualify();
-    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
-    f.secondBridge.overrides.set("info", () => { throw new Error("synthetic read failure"); });
-    expect((await f.second.reconcile(async () => {})).status).toBe("degraded");
-    f.secondBridge.overrides.delete("info");
-    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
-    f.secondBridge.overrides.set("history", () => ({ messages: [], hasMore: true, nextCursor: "" }));
-    expect((await f.second.reconcile(async () => {})).status).toBe("degraded");
-  } finally { await f.root.close(); await f.second.close(); }
-});
-
-test("old recovery receipts expire and a new provider must recheck coverage after restart", async () => {
-  let at = now;
-  const f = await fixture(() => at);
-  try {
-    f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
-    f.secondBridge.overrides.set("list", () => ({ conversations: Array.from({ length: 51 }, (_, n) => ({ id: `C${n}`, label: `Synthetic ${n}`, type: "channel", supported: true })), nextCursor: "" }));
-    await f.second.qualify();
-    expect((await f.second.reconcile(async () => {})).status).toBe("degraded");
-    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
-    at += SLACK_RECOVERY_LIMITS.maxCheckAgeMs + 1;
-    const expired = await f.second.reconcile(async () => {});
-    expect(expired.requests).toBe(100); expect(expired.status).toBe("degraded");
-    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
-    expect((await f.second.reconcile(async () => {})).status).toBe("recovered"); // New partial sweep.
-    await f.second.close();
-    const transport = bridge();
-    transport.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
-    const restarted = createProntoSlack({ directory: join(f.directory, "workspaces", f.result.id), referenceKey, bridge: transport.transport, now: () => at });
-    try {
-      const check = await restarted.reconcile(async () => {});
-      expect(check.requests).toBe(100); expect(check.status).toBe("degraded");
-      expect(check.progress?.checked).toBe(50);
-      expect((await restarted.reconcile(async () => {})).status).toBe("recovered");
-    } finally { await restarted.close(); }
-  } finally { await f.root.close(); await f.second.close(); }
-});
-
 test("ignored old and bot observations do not rewrite private metadata", async () => {
   const f = await fixture();
   try {
@@ -254,60 +135,6 @@ test("ignored old and bot observations do not rewrite private metadata", async (
     expect((await stat(state)).mtimeMs).toBe(1_000);
   } finally { await f.root.close(); await f.second.close(); }
 });
-
-test("large-history coverage stays fresh for an hour after the completed check", async () => {
-  let at = now;
-  const f = await fixture(() => at);
-  try {
-    f.secondBridge.overrides.set("list", () => ({ conversations: [{ id: "CLARGE", label: "Synthetic large history", type: "channel", supported: true }], nextCursor: "" }));
-    f.secondBridge.overrides.set("history", (input) => {
-      const page = input.cursor ? Number(String(input.cursor).slice(1)) : 0;
-      return { messages: page < 10 ? Array.from({ length: 100 }, (_, n) => ({ conversation: "CLARGE", ts: `1700000000.${String(page * 100 + n).padStart(6, "0")}`, user: "UTTWO", text: "old synthetic message" })) : [], nextCursor: page < 10 ? `p${page + 1}` : "" };
-    });
-    await f.second.qualify();
-    expect((await f.second.reconcile(async () => {})).status).toBe("degraded");
-    at += 45 * 60_000;
-    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
-    at += 16 * 60_000;
-    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
-  } finally { await f.root.close(); await f.second.close(); }
-});
-
-test("wake invalidates previous coverage and requires a complete bounded recheck", async () => {
-  const f = await fixture(); const outcomes: Array<{ status: string }> = [];
-  f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
-  f.secondBridge.overrides.set("list", () => ({ conversations: Array.from({ length: 51 }, (_, n) => ({ id: `C${n}`, label: `Synthetic ${n}`, type: "channel", supported: true })), nextCursor: "" }));
-  const subscription = await f.second.subscribe({ onObservation: async () => {}, onRecovery: (result) => { outcomes.push(result); } });
-  try {
-    await f.second.refresh();
-    expect(outcomes.at(-1)?.status).toBe("recovered");
-    f.secondBridge.emit({ event: "wake" });
-    await f.second.refresh();
-    expect(outcomes.slice(-2).map((result) => result.status)).toEqual(["degraded", "recovered"]);
-  } finally { await subscription.close(); await f.root.close(); await f.second.close(); }
-});
-
-test("large histories resume at the next page and replay recent requests after learning older participation", async () => {
-  const f = await fixture(); const observed: string[] = [];
-  try {
-    f.secondBridge.overrides.set("list", () => ({ conversations: [{ id: "CLARGE", label: "Synthetic large history", type: "channel", supported: true }], nextCursor: "" }));
-    f.secondBridge.overrides.set("history", (input) => {
-      const page = input.cursor ? Number(String(input.cursor).slice(1)) : 0;
-      const messages = page === 10 ? [{ conversation: "CLARGE", ts: "1700000000.999999", user: "UTTWO", text: "old owner participation" }]
-        : Array.from({ length: 100 }, (_, n) => ({ conversation: "CLARGE", ts: page === 0 && n === 0 ? "1792152000.000001" : `1700000000.${String(page * 100 + n).padStart(6, "0")}`, user: "UOTHER", text: page === 0 && n === 0 ? "@two fresh request" : "old synthetic root" }));
-      return { messages, nextCursor: page < 10 ? `p${page + 1}` : "" };
-    });
-    await f.second.qualify();
-    const recover = () => f.second.reconcile(async (event) => { observed.push(event.message.text); });
-    expect((await recover()).status).toBe("degraded");
-    f.secondBridge.calls.length = 0;
-    expect((await recover()).status).toBe("degraded"); // Learned participation; earlier pages need replay.
-    expect(f.secondBridge.calls.find((call) => call.operation === "history")?.input.cursor).toBe("p10");
-    expect((await recover()).status).toBe("degraded");
-    expect((await recover()).status).toBe("recovered");
-    expect(observed).toEqual(["@two fresh request"]);
-  } finally { await f.root.close(); await f.second.close(); }
-}, 10_000);
 
 test("the CLI lists workspace apps and edits tags while a workspace is off", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pronto-workspace-cli-")); directories.push(directory);

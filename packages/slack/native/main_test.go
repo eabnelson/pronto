@@ -153,3 +153,69 @@ func TestSendNeverRetriesUncertainWrites(t *testing.T) {
 		})
 	}
 }
+
+func TestFocusedSearchIsBoundedAndOwnerBound(t *testing.T) {
+	h := newHelper()
+	h.session = &session{team: "TTEST", owner: "UOWNER", token: "synthetic", cookie: "synthetic"}
+	h.selected["CTEST"] = true
+	calls := 0
+	h.client = &http.Client{Transport: roundTrip(func(req *http.Request) (*http.Response, error) {
+		calls++
+		h.lastCall = time.Time{}
+		q := req.URL.Query()
+		if req.URL.Path != "/api/search.messages" || q.Get("sort") != "timestamp" || q.Get("sort_dir") != "desc" {
+			t.Fatal("unexpected search")
+		}
+		if calls == 1 && (q.Get("query") != `"@test" after:2026-10-15` || q.Get("count") != "100" || q.Get("page") != "1") {
+			t.Fatalf("unbounded tag search: %v", q)
+		}
+		if calls == 2 && (q.Get("query") != "from:<@UOWNER> in:CTEST" || q.Get("count") != "3") {
+			t.Fatalf("owner search lost binding: %v", q)
+		}
+		body := `{"ok":true,"messages":{"matches":[{"channel":{"id":"CTEST"},"team":"TTEST","user":"UOWNER","ts":"1792152000.000001","text":"@test synthetic","permalink":"https://synthetic.slack.com/archives/CTEST/p1792152000000001?thread_ts=1700000000.000001"},{"channel":{"id":"COTHER"},"team":"TOTHER","user":"UOWNER","ts":"1792152000.000002","text":"wrong workspace"}],"paging":{"pages":2}}}`
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	result, err := h.execute(context.Background(), "tagged", map[string]json.RawMessage{"tag": json.RawMessage(`"@test"`), "oldest": json.RawMessage(`"1792152000"`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := result.(map[string]any)
+	messages := page["messages"].([]message)
+	if len(messages) != 1 || messages[0].ThreadTS != "1700000000.000001" || page["nextCursor"] != "2" {
+		t.Fatalf("lost thread identity or pagination: %v", page)
+	}
+	if _, err = h.execute(context.Background(), "participation", map[string]json.RawMessage{"conversation": json.RawMessage(`"CTEST"`), "owner": json.RawMessage(`"UATTACKER"`)}); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []map[string]json.RawMessage{
+		{"tag": json.RawMessage(`"@test OR password"`), "oldest": json.RawMessage(`"1792152000"`)},
+		{"tag": json.RawMessage(`"@test"`), "oldest": json.RawMessage(`"1792152000"`), "cursor": json.RawMessage(`"6"`)},
+	} {
+		if _, err = h.execute(context.Background(), "tagged", input); err == nil {
+			t.Fatal("unbounded query accepted")
+		}
+	}
+	if calls != 2 {
+		t.Fatal("invalid search reached network")
+	}
+	if _, err = h.execute(context.Background(), "participation", map[string]json.RawMessage{"conversation": json.RawMessage(`"CUNKNOWN"`)}); err == nil {
+		t.Fatal("unverified conversation granted search access")
+	}
+}
+
+func TestCanonicalLookupPinsBothTimestampBounds(t *testing.T) {
+	h := newHelper()
+	h.session = &session{team: "TTEST", owner: "UOWNER"}
+	h.selected["CTEST"] = true
+	h.client = &http.Client{Transport: roundTrip(func(req *http.Request) (*http.Response, error) {
+		q := req.URL.Query()
+		if q.Get("oldest") != "1792152000.000001" || q.Get("latest") != "1792152000.000001" || q.Get("inclusive") != "true" || q.Get("limit") != "1" {
+			t.Fatalf("lookup became a timeline scan: %v", q)
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"messages":[]}`))}, nil
+	})}
+	_, err := h.execute(context.Background(), "history", map[string]json.RawMessage{"conversation": json.RawMessage(`"CTEST"`), "oldest": json.RawMessage(`"1792152000.000001"`), "latest": json.RawMessage(`"1792152000.000001"`), "limit": json.RawMessage(`1`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

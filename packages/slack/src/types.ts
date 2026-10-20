@@ -1,5 +1,5 @@
 /** Private, versioned helper operations. This is a transport seam, not a raw Slack API. */
-export type SlackOperation = "discover" | "connect" | "select" | "list" | "info" | "history" | "replies" | "send" | "watch" | "unwatch";
+export type SlackOperation = "discover" | "connect" | "select" | "list" | "info" | "tagged" | "participation" | "history" | "replies" | "send" | "watch" | "unwatch";
 export interface SlackBridge {
   request(operation: SlackOperation, input?: Record<string, unknown>): Promise<any>;
   listen(callback: (event: SlackBridgeEvent) => void): () => void;

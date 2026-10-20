@@ -109,26 +109,6 @@ test("lost send response is ambiguous without retry; exact outbound identity sup
   expect(await f.provider.observe({ conversation: "DFIXTURE", ts: "1792152000.000005", user: "UFIXTURE", text: "Pronto\n@pronto output" }, "live")).not.toBeNull();
 });
 
-test("recovery discovers unseen old roots and paginates replies without reclassifying a DM root", async () => {
-  const f = await linked();
-  f.overrides.set("history", (input) => ({ messages: input.conversation === "DFIXTURE" ? [{ conversation: "DFIXTURE", ts: "1700000000.000001", user: "UFIXTURE", text: "old root", reply_count: 2, latest_reply: "1792152000.000003" }] : [], nextCursor: "" }));
-  f.overrides.set("replies", (input) => ({ messages: [{ conversation: "DFIXTURE", ts: input.cursor ? "1792152000.000003" : "1792152000.000002", thread_ts: "1700000000.000001", user: "UOTHER", text: "@pronto recovered" }], nextCursor: input.cursor ? "" : "second-page" }));
-  const observed: any[] = [];
-  const outcome = await f.provider.reconcile(async (event) => { observed.push(event); });
-  expect(outcome.status).toBe("recovered");
-  expect(observed).toHaveLength(2);
-  expect(observed[0].scope.id).toBe(observed[1].scope.id);
-  expect((await f.provider.reconcile(async () => { throw new Error("duplicate admission"); })).messages).toBe(0);
-});
-
-test("root scan limits remain degraded and retain recoverable observed work", async () => {
-  const f = await linked();
-  f.overrides.set("history", () => ({ messages: Array.from({ length: 100 }, (_, i) => ({ conversation: "DFIXTURE", ts: `1700000000.${String(i).padStart(6, "0")}`, user: "UFIXTURE", text: "old synthetic root" })), nextCursor: "more" }));
-  const result = await f.provider.reconcile(async () => {});
-  expect(result.status).toBe("degraded"); expect(result.reason).toBe("slack-recovery-incomplete");
-  expect(result.requests).toBeLessThanOrEqual(100);
-});
-
 test("sealed scopes expire and cannot cross installations, relinks, or conversation reselection", async () => {
   const f = await linked(); const other = await linked();
   const event = await f.provider.observe({ conversation: "DFIXTURE", ts: "1792152000.000001", user: "UFIXTURE", text: "@pronto request" }, "live");
@@ -171,15 +151,6 @@ test("a running broker capability cannot inherit new authority when the same mem
   await expect(broker.query(capability.token, "current_chat_details", {})).rejects.toThrow("slack-scope-revoked");
 });
 
-test("an incomplete reply page still admits safely observed timeline requests", async () => {
-  const f = await linked();
-  f.overrides.set("history", (input) => ({ messages: input.conversation === "DFIXTURE" ? [{ conversation: "DFIXTURE", ts: "1792152000.000001", user: "UFIXTURE", text: "@pronto visible request", reply_count: 1 }] : [], nextCursor: "" }));
-  f.overrides.set("replies", () => { throw new Error("synthetic incomplete page"); });
-  const observed: any[] = [];
-  const result = await f.provider.reconcile(async (event) => { observed.push(event); });
-  expect(result.status).toBe("degraded"); expect(observed).toHaveLength(1);
-});
-
 test("canonical duplicate handles count once and a linked member cannot silently change", async () => {
   const f = await linked();
   const one = (await f.provider.conversations()).conversations[0]!;
@@ -206,19 +177,6 @@ test("settings reload reconciles empty selection and unlink without restarting t
   } finally { await subscription.close(); await f.provider.close(); }
 });
 
-test("native wake and socket triggers coalesce while recovering an unseen old thread", async () => {
-  const f = await linked(); const observed: any[] = []; const outcomes: any[] = [];
-  const subscription = await f.provider.subscribe({ onObservation: async (event) => { observed.push(event); }, onRecovery: (value) => { outcomes.push(value); } });
-  try {
-    f.overrides.set("history", (input) => ({ messages: input.conversation === "DFIXTURE" ? [{ conversation: "DFIXTURE", ts: "1700000000.000001", user: "UFIXTURE", text: "Old synthetic root", reply_count: 1, latest_reply: "1792152000.000002" }] : [], nextCursor: "" }));
-    f.overrides.set("replies", () => ({ messages: [{ conversation: "DFIXTURE", ts: "1792152000.000002", user: "UFIXTURE", text: "@pronto missed during synthetic sleep", thread_ts: "1700000000.000001" }], nextCursor: "" }));
-    f.emit({ event: "wake" }); f.emit({ event: "health", state: "connected" }); f.emit({ event: "wake" });
-    await f.provider.refresh();
-    expect(observed).toHaveLength(1); expect(outcomes.at(-1).status).toBe("recovered");
-    expect(f.calls.filter((row) => row.operation === "watch")).toHaveLength(2);
-  } finally { await subscription.close(); await f.provider.close(); }
-});
-
 test("a new provider process replays unacknowledged work and retains durable dedupe", async () => {
   const f = await linked();
   const message = { conversation: "DFIXTURE", ts: "1792152000.000001", user: "UFIXTURE", text: "@pronto synthetic pending request" };
@@ -233,11 +191,3 @@ test("a new provider process replays unacknowledged work and retains durable ded
   expect(await restarted.observe(message, "recovered")).toBeNull();
   await next.close(); await restarted.close();
 });
-
-test("one recovery sweep has a shared 500-observation budget across selected conversations", async () => {
-  const f = await linked();
-  f.overrides.set("history", (input) => ({ messages: Array.from({ length: 300 }, (_, i) => ({ conversation: input.conversation, ts: `1792152000.${String(i + 1).padStart(6, "0")}`, user: "UFIXTURE", text: "@pronto synthetic recovered request" })), nextCursor: "" }));
-  let count = 0;
-  const outcome = await f.provider.reconcile(async () => { count++; });
-  expect(count).toBe(500); expect(outcome.messages).toBe(500); expect(outcome.status).toBe("degraded");
-}, 15_000);
