@@ -94,7 +94,7 @@ Commands:
   tags        List, add, or remove trigger tags and the apps they apply to
   channels    List, enable, or disable messaging apps
   whatsapp    Link or unlink WhatsApp
-  slack       Connect Slack desktop and select trusted conversations
+  slack       Add and manage Slack workspace apps
   menubar     Install, check, or remove the menu bar app
   update      Check for or install a verified Pronto update
   start       Start the installed listener

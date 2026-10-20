@@ -117,9 +117,17 @@ export async function loadExistingSetupDefaults(
         ? Object.values(value.channels as Record<string, { tags?: unknown }>)
         : [];
       const all = channels.flatMap((channel) => Array.isArray(channel?.tags) ? channel.tags : [null]);
-      tags = all.length > 0 && all.every((tag) => typeof tag === "string")
-        ? normalizeTags(all as string[])
-        : null;
+      if (all.length === 0 && channels.length > 0) {
+        // Only Slack may legitimately wait for its first tag. Validate the full
+        // config before offering defaults for an additional app; keep the saved
+        // workspace's empty assignments and installation identity unchanged.
+        await loadConfig(configPath);
+        tags = ["@s4"];
+      } else {
+        tags = all.length > 0 && all.every((tag) => typeof tag === "string")
+          ? normalizeTags(all as string[])
+          : null;
+      }
     } else {
       throw new Error(`Unsupported configuration version ${String(value.version)}`);
     }

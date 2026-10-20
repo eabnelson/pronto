@@ -201,18 +201,11 @@ desktop sign-in unchanged. At least one enabled app must remain. Turning a
 workspace off preserves catch-up state. Removing a tag's final app assignment
 also removes its per-tag agent override.
 
-Workspace discovery is bounded to 500 conversations and 20 metadata pages per
-refresh. Recovery retains completed conversation checks across bounded batches
-and resumes large histories from page checkpoints. Its optional
-`progress: { checked, total }` reports coverage counts. Initial catch-up remains
-degraded until all conversations are checked; later batches retain healthy
-coverage for at most one hour after a successful conversation check completes. Actual read/admission failures invalidate that
-coverage immediately. Restart, wake, and connection loss require fresh checks.
-Progressing batches with unfinished work continue automatically after one second;
-completed sweeps, failures and batches without progress wait sixty seconds.
-Missing participation evidence never grants permission. Slack Connect, externally shared, archived, and
-read-only conversations remain unsupported. Reconnecting rotates authority;
-workspace, member, conversation, and thread isolation remain enforced.
+Workspace connection does not enumerate conversation histories or import an archive. The listener receives live messages and filters configured tags before admission. Untagged owner messages may establish positive participation without storing their text. For a tagged request in an unknown conversation, a targeted owner search supplies up to three hints, each verified against its canonical message before granting eligibility. Zero matches leave participation unknown.
+
+At startup, reconnect/wake and roughly every sixty seconds, recovery searches for configured tags within the last 24 hours and after connection/selection cutoffs. Each pass has five search pages per tag, 50 budgeted provider read operations, 4 MiB of normalized responses, a 30-second boundary between operation starts, and 100 recovered observations. Native identity/metadata checks can add HTTP requests within an operation; an already-running native RPC can finish after the time boundary. At most 500 conversation bindings are retained per workspace. No archive crawl follows a failed or empty search.
+
+Recovery is best effort because Slack search can omit or filter matches. A successful bounded search reports `recovered`; a failed read/admission or exhausted work budget reports `degraded`. Neither socket health nor a zero-result search proves exhaustive offline coverage. The optional legacy recovery `progress` field is not produced by this search path. Missing participation evidence never grants permission. Slack Connect, externally shared, archived, and read-only conversations remain unsupported. Reconnecting rotates authority; workspace, member, conversation, and thread isolation remain enforced.
 
 Replies are text-only and come from the connected member. Channel roots open
 a response thread; actual replies retain their root; ordinary DMs use the

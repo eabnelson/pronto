@@ -186,6 +186,17 @@ struct ChannelRowView: View {
             }
         }
         .accessibilityElement(children: .combine)
+        .contextMenu {
+            if row.app.isSlack, row.configured {
+                Button("Remove Workspace", role: .destructive) {
+                    Task { await model.removeSlackWorkspace(row.app) }
+                }
+                .disabled(!row.workspaceRemovalAllowed || model.busyAction != nil)
+                if !row.workspaceRemovalAllowed {
+                    Text("Add another app before removing this workspace.")
+                }
+            }
+        }
         .accessibilityLabel(row.accessibilityLabel)
         .accessibilityHint(hint ?? "")
         .help(hint ?? "")

@@ -7,7 +7,7 @@ Run offline checks with `bun run typecheck`, `bun test`, `bun run build`, `swift
 Initialize private qualification evidence with:
 
 ```
-bun scripts/slack-qualification.ts --init .scratch/slack-channel/qualification.json v0.4.3
+bun scripts/slack-qualification.ts --init .scratch/slack-channel/qualification.json v0.5.2
 ```
 
 Record the exact signed artifact SHA-256 for both architectures, device/profile versions, test identities using local opaque aliases, and evidence for each gate. Keep account IDs, message bodies, private links, and screenshots in `.scratch/`. The validator checks a record; the person conducting qualification must verify the underlying evidence. It cannot infer that a checked box is true.
@@ -23,3 +23,5 @@ For sleep, record native will-sleep/wake evidence and an actual sleep of at leas
 After completing private evidence, copy a redacted pass/fail matrix and exact candidate hashes into the tracked record. Check it with `bun scripts/slack-qualification.ts --check docs/slack-qualification.json <exact-tag>`. Publishing is separately authorized; the release workflow refuses to publish while required Slack gates are pending or failed. Signed candidate-only builds remain available for qualification.
 
 Workspace app qualification additionally covers two independent workspace connections, per-workspace tags and enable/disable, removal and relinking without affecting the other workspace, and cross-workspace scope rejection. Workspace coverage must prove positive owner participation in timeline and thread history, ignore pre-connection requests, discover new conversations, reject unsupported destinations, retain revocation rules, and remain bounded and visibly degraded at discovery/recovery limits. Offline fixtures cover these mechanics; supervised multi-workspace, signed-helper, and sleep evidence remains required.
+
+The accepted recovery design now uses live observations plus bounded searches for configured tags in the last 24 hours. It does not traverse all conversation histories. Offline recovery claims must remain best effort; a successful bounded search is not proof of exhaustive coverage. Qualification should measure observed misses and method costs for its actual test set without restoring archive scans to satisfy a coverage assertion. The existing release gate and pending record remain in force until their evidence or an explicitly approved qualification-policy change is recorded.

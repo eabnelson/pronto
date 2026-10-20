@@ -116,3 +116,5 @@ failed, or an enabled app failed or needs linking; dimmed when paused
 
 Quitting the menu bar app never stops the listener. Launch at Login uses
 `SMAppService.mainApp`, so it only works from the bundled app.
+
+Slack workspace rows show the workspace name and logo. Click a row to toggle replies; right-click it for **Remove Workspace** (another enabled app must remain). Use **Add App…** to add a workspace, and **Tags** to assign its tags and choose default/backup agents. Empty tags do not suppress connection/recovery warnings or the paused state.

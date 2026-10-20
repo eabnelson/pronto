@@ -85,4 +85,24 @@ struct SlackWorkspaceTests {
         #expect(menu.tagEntries.map(\.apps) == [[.slack]])
         #expect(menu.busyAction == nil)
     }
+    @Test func emptyTagsDoNotHideRecoveryWarningsOrPauseState() {
+        let channels = ChannelsResponse(channels: [ChannelInfo(app: .slack, label: "One", configured: true, enabled: true)])
+        let degraded = StatusResponse(version: "1", listener: .running, daemon: .degraded,
+                                      channels: ["slack": ChannelStatus(state: .degraded, reason: "slack-recovery-incomplete")])
+        let row = ChannelRowBuilder.rows(status: degraded, channels: channels).first!
+        #expect(row.statusText == "Degraded")
+        #expect(row.tone == .warning)
+        #expect(row.detail == "Missed-tag recovery is incomplete. Retrying automatically.")
+        let paused = StatusResponse(version: "1", listener: .stopped, daemon: .stopped)
+        #expect(ChannelRowBuilder.rows(status: paused, channels: channels).first!.statusText == "Paused")
+    }
+
+    @Test func workspaceRemovalKeepsAtLeastOneEnabledApp() {
+        let only = ChannelsResponse(channels: [ChannelInfo(app: .slack, label: "One", configured: true, enabled: true, tags: ["@test"])])
+        #expect(!ChannelRowBuilder.rows(status: nil, channels: only).first!.workspaceRemovalAllowed)
+        let multiple = ChannelsResponse(channels: only.channels + [ChannelInfo(app: .whatsapp, configured: true, enabled: true, tags: ["@test"])])
+        #expect(ChannelRowBuilder.rows(status: nil, channels: multiple).first(where: { $0.app == .slack })!.workspaceRemovalAllowed)
+        #expect(!ChannelRowBuilder.rows(status: nil, channels: multiple).first(where: { $0.app == .whatsapp })!.workspaceRemovalAllowed)
+    }
+
 }

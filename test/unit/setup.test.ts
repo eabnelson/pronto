@@ -1279,3 +1279,20 @@ test("confirmed purge removes private state and logs", async () => {
   await expect(access(paths.appSupportDirectory)).rejects.toThrow();
   await expect(access(paths.logDirectory)).rejects.toThrow();
 });
+
+test("setup preserves a Slack-only installation waiting for its first tag", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pronto-slack-tagless-setup-"));
+  temporaryDirectories.push(directory);
+  const path = join(directory, "config.json");
+  const salt = "synthetic-slack-installation-key-32-characters";
+  await saveConfig(path, {
+    version: 3, channels: { slack: { enabled: true, tags: [], riskConsentVersion: 1, workspaceKey: "a".repeat(32), workspaceLabel: "Synthetic" } },
+    primaryRuntime: "codex", primaryRuntimePath: "/synthetic/codex", chatKeySalt: salt,
+    unrestrictedTrustVersion: 1, workingDirectory: directory,
+  });
+  const defaults = await loadExistingSetupDefaults(path);
+  expect(defaults?.chatKeySalt).toBe(salt);
+  expect(defaults?.workingDirectory).toBe(directory);
+  expect(defaults?.slackWorkspaces?.slack?.tags).toEqual([]);
+  expect(defaults?.tags.length).toBeGreaterThan(0); // Suggestions for another app, not workspace assignments.
+});
