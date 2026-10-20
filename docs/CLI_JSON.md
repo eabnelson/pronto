@@ -206,7 +206,7 @@ refresh. Recovery retains completed conversation checks across bounded batches
 and resumes large histories from page checkpoints. Its optional
 `progress: { checked, total }` reports coverage counts. Initial catch-up remains
 degraded until all conversations are checked; later batches retain healthy
-coverage for at most one hour. Actual read/admission failures invalidate that
+coverage for at most one hour after a successful conversation check completes. Actual read/admission failures invalidate that
 coverage immediately. Restart, wake, and connection loss require fresh checks.
 Progressing batches with unfinished work continue automatically after one second;
 completed sweeps, failures and batches without progress wait sixty seconds.

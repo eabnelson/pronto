@@ -243,6 +243,24 @@ test("old recovery receipts expire and a new provider must recheck coverage afte
   } finally { await f.root.close(); await f.second.close(); }
 });
 
+test("large-history coverage stays fresh for an hour after the completed check", async () => {
+  let at = now;
+  const f = await fixture(() => at);
+  try {
+    f.secondBridge.overrides.set("list", () => ({ conversations: [{ id: "CLARGE", label: "Synthetic large history", type: "channel", supported: true }], nextCursor: "" }));
+    f.secondBridge.overrides.set("history", (input) => {
+      const page = input.cursor ? Number(String(input.cursor).slice(1)) : 0;
+      return { messages: page < 10 ? Array.from({ length: 100 }, (_, n) => ({ conversation: "CLARGE", ts: `1700000000.${String(page * 100 + n).padStart(6, "0")}`, user: "UTTWO", text: "old synthetic message" })) : [], nextCursor: page < 10 ? `p${page + 1}` : "" };
+    });
+    await f.second.qualify();
+    expect((await f.second.reconcile(async () => {})).status).toBe("degraded");
+    at += 45 * 60_000;
+    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
+    at += 16 * 60_000;
+    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
+  } finally { await f.root.close(); await f.second.close(); }
+});
+
 test("wake invalidates previous coverage and requires a complete bounded recheck", async () => {
   const f = await fixture(); const outcomes: Array<{ status: string }> = [];
   f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));

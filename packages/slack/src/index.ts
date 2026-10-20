@@ -10,7 +10,7 @@ const SCOPE_TTL = 24 * 60 * 60_000;
 export const SLACK_RECOVERY_LIMITS = Object.freeze({ requests: 100, bytes: 16 * 1024 * 1024, durationMs: 90_000, rootsPerConversation: 1_000, threads: 50, replyPages: 10, messages: 500, pageSize: 100, intervalMs: 60_000, maxCheckAgeMs: 60 * 60_000 });
 type RecoveryFailure = "read" | "unsupported" | "root-limit" | "reply-limit" | "admission";
 interface RecoveryCheck { cycle: string; session: string; checkedAt: number; failed?: boolean; reason?: RecoveryFailure }
-interface RootScan { cycle: string; session: string; cursor: string; startedAt: number; participated: boolean; roots: number }
+interface RootScan { cycle: string; session: string; cursor: string; participated: boolean; roots: number }
 interface Selection extends SlackConversation { cutoff: number; epoch: string; participated: boolean; recovery?: RecoveryCheck; rootScan?: RootScan }
 interface Binding { team: string; owner: string; label: string; memberLabel: string; profile: "direct" }
 interface State {
@@ -341,11 +341,11 @@ class ProntoSlack {
       return current;
     });
     await this.#connect(state);
-    const record = async (selection: Selection, success: boolean, checkedAt = started) => this.#mutate(async (current) => {
+    const record = async (selection: Selection, success: boolean) => this.#mutate(async (current) => {
       if (current.generation !== state.generation || current.recoveryCycle !== state.recoveryCycle) return;
       const selected = current.selections.find((row) => row.id === selection.id && row.epoch === selection.epoch);
       if (!selected) return;
-      selected.recovery = success ? { cycle: state.recoveryCycle!, session, checkedAt }
+      selected.recovery = success ? { cycle: state.recoveryCycle!, session, checkedAt: this.#now() }
         : { ...(selected.recovery ?? { cycle: state.recoveryCycle!, session, checkedAt: 0 }), failed: true, reason: failureReason };
       if (success) { delete selected.rootScan; advanced = true; }
       else hadFailure = true;
@@ -399,7 +399,6 @@ class ProntoSlack {
           continue;
         }
         const savedScan = selection.rootScan?.cycle === state.recoveryCycle && selection.rootScan?.session === session ? selection.rootScan : undefined;
-        const scanStartedAt = savedScan?.startedAt ?? started;
         let cursor = savedScan?.cursor ?? ""; let roots = 0; let historyRemaining = false; const messages: SlackMessage[] = [];
         do {
           const page = await request("history", { conversation: selection.id, cursor });
@@ -441,11 +440,11 @@ class ProntoSlack {
               const selected = current.selections.find((row) => row.id === selection.id && row.epoch === selection.epoch);
               if (selected) {
                 selected.rootScan = { cycle: state.recoveryCycle!, session, cursor: replayForParticipation ? "" : cursor,
-                  startedAt: replayForParticipation ? started : scanStartedAt, participated: selected.participated, roots: replayForParticipation ? 0 : (savedScan?.roots ?? 0) + roots };
+                  participated: selected.participated, roots: replayForParticipation ? 0 : (savedScan?.roots ?? 0) + roots };
                 advanced = true;
               }
             });
-          } else await record(selection, true, scanStartedAt);
+          } else await record(selection, true);
         }
         scanning = undefined;
         if (budgetLimited) break;
