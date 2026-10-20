@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createProntoSlack, type SlackBridge, type SlackBridgeEvent } from "../../packages/slack/src/index";
+import { writePrivate } from "../../packages/slack/src/store";
 const now = 1_792_152_000_000;
 const fresh = "1792152000.000001";
 const old = "1700000000.000001";
@@ -39,6 +40,22 @@ test("an idle workspace reads no channel history regardless of workspace size", 
     expect(result.status).toBe("recovered");
     expect(f.calls.filter((call) => ["list", "history", "replies", "participation"].includes(call.operation))).toEqual([]);
     expect(f.calls.filter((call) => call.operation === "tagged")).toHaveLength(1);
+  } finally { await f.provider.close(); }
+});
+
+test("a live conversation limit remains degraded when tag search has not indexed the request", async () => {
+  const f = await fixture();
+  const file = join(f.directory, "state.json");
+  const state = JSON.parse(await readFile(file, "utf8"));
+  state.selections = Array.from({ length: 500 }, (_, index) => ({ id: `C${index}`, label: "Synthetic", type: "channel", supported: true, participated: true, cutoff: now, epoch: `epoch-${index}` }));
+  await writePrivate(file, state);
+  try {
+    expect(await f.provider.observe(message(), "live")).toBeNull();
+    const result = await f.provider.reconcile(async () => {}, ["@test"]);
+    expect(result.status).toBe("degraded");
+    expect(result.reason).toBe("slack-conversation-limit");
+    expect((await f.provider.qualify()).degraded).toEqual(["slack-conversation-limit"]);
+    expect(f.calls.filter((call) => ["list", "history", "replies"].includes(call.operation))).toEqual([]);
   } finally { await f.provider.close(); }
 });
 

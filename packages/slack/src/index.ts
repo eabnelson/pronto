@@ -29,6 +29,9 @@ function digest(value: unknown): string { return createHash("sha256").update(JSO
 function ordinary(message: SlackMessage): boolean {
   return timestamp.test(message.ts) && typeof message.user === "string" && message.user.length > 0 && typeof message.text === "string" && message.text.length > 0 && !message.bot_id && !message.app_id && (!message.subtype || message.subtype === "file_share");
 }
+function reachedConversationLimit(state: State): boolean {
+  return state.coverage === "participated" && state.discoveryIncomplete === true && state.selections.length >= 500;
+}
 
 export function createProntoSlack(options: SlackOptions) { return new ProntoSlack(options); }
 export type ProntoSlackProvider = ReturnType<typeof createProntoSlack>;
@@ -106,6 +109,7 @@ class ProntoSlack {
         if (identity.team !== selected.team || !identity.owner || state.binding && identity.owner !== state.binding.owner) throw new Error("slack-identity-mismatch");
         state.generation = randomUUID(); state.binding = { ...identity, profile: "direct" };
         state.coverage = "participated"; state.cutoff = this.#now(); state.recoveryCursor = 0;
+        delete state.discoveryIncomplete;
         state.selections = []; state.seen = []; state.outbound = [];
         return { linked: true, id: this.#workspaceKey(identity.team as string), workspace: identity.label as string, member: identity.memberLabel as string };
       });
@@ -144,7 +148,7 @@ class ProntoSlack {
       if (/needs-link|identity-mismatch|keychain/.test(String(error))) return { status: "needs_link", degraded: [], version: "1" };
       throw error;
     }
-    return { status: "ready", degraded: state.coverage === "participated" || state.selections.length ? [] : ["slack-selection-required"], version: "1" };
+    return { status: "ready", degraded: reachedConversationLimit(state) ? ["slack-conversation-limit"] : state.coverage === "participated" || state.selections.length ? [] : ["slack-selection-required"], version: "1" };
   }
   async conversations() {
     const state = await this.#state(); await this.#connect(state);
@@ -408,7 +412,9 @@ class ProntoSlack {
     const current = await this.#state();
     if (current.generation !== state.generation) incomplete = true;
     const needsSelection = current.coverage !== "participated" && current.selections.length === 0;
-    return { status: incomplete || needsSelection ? "degraded" : "recovered", ...(incomplete ? { reason: "slack-recovery-incomplete" } : needsSelection ? { reason: "slack-selection-required" } : {}), messages: delivered, requests, bytes, durationMs: this.#now() - started };
+    const reason = reachedConversationLimit(current) ? "slack-conversation-limit"
+      : incomplete ? "slack-recovery-incomplete" : needsSelection ? "slack-selection-required" : undefined;
+    return { status: reason ? "degraded" : "recovered", ...(reason ? { reason } : {}), messages: delivered, requests, bytes, durationMs: this.#now() - started };
   }
   async subscribe(input: { onObservation: (observation: SlackObservation) => Promise<void>; tags?: () => readonly string[]; isRequest?: (text: string) => boolean; onRecovery?: (outcome: SlackRecovery) => void; onHealth?: (health: SlackHealth) => void }) {
     let stopped = false; let active: Promise<void> = Promise.resolve(); let timer: ReturnType<typeof setTimeout> | undefined;

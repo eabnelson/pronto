@@ -105,4 +105,14 @@ struct SlackWorkspaceTests {
         #expect(!ChannelRowBuilder.rows(status: nil, channels: multiple).first(where: { $0.app == .whatsapp })!.workspaceRemovalAllowed)
     }
 
+    @Test func conversationLimitStaysVisibleWithoutTags() {
+        let channels = ChannelsResponse(channels: [ChannelInfo(app: .slack, label: "One", configured: true, enabled: true)])
+        let status = StatusResponse(version: "1", listener: .running, daemon: .degraded,
+                                    channels: ["slack": ChannelStatus(state: .degraded, reason: "slack-conversation-limit")])
+        let row = ChannelRowBuilder.rows(status: status, channels: channels).first!
+        #expect(row.statusText == "Degraded")
+        #expect(row.tone == .warning)
+        #expect(row.detail == "This workspace reached the 500-conversation limit.")
+    }
+
 }

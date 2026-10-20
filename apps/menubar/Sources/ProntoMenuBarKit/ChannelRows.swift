@@ -79,6 +79,7 @@ public enum ChannelRowBuilder {
                     switch live.reason {
                     case "slack-recovery-incomplete": row.detail = "Missed-tag recovery is incomplete. Retrying automatically."
                     case "slack-discovery-incomplete": row.detail = "Some conversations could not be monitored."
+                    case "slack-conversation-limit": row.detail = "This workspace reached the 500-conversation limit."
                     case "slack-selection-required": row.detail = "Reconnect to finish workspace setup."
                     default: break
                     }
