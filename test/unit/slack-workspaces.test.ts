@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -157,6 +157,34 @@ test("workspace recovery completes across bounded batches and stays healthy duri
     expect(next.status).toBe("recovered");
   } finally { await f.root.close(); await f.second.close(); }
 });
+
+test("the recovery timer drains progressing batches and backs off after real failures", async () => {
+  const f = await fixture();
+  f.secondBridge.overrides.set("list", () => ({ conversations: Array.from({ length: 51 }, (_, n) => ({ id: `C${n}`, label: `Synthetic ${n}`, type: "channel", supported: true })), nextCursor: "" }));
+  f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
+  const timer = setTimeout(() => {}, 2_147_483_647); timer.unref();
+  const scheduled: Array<{ callback: () => void; delay: number }> = [];
+  const schedule = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => {
+    scheduled.push({ callback, delay }); return timer;
+  }) as typeof setTimeout);
+  let subscription: Awaited<ReturnType<typeof f.second.subscribe>> | undefined;
+  try {
+    subscription = await f.second.subscribe({ onObservation: async () => {} });
+    expect(scheduled.at(-1)?.delay).toBe(1_000);
+    scheduled.at(-1)!.callback(); await f.second.refresh();
+    expect(scheduled.at(-1)?.delay).toBe(SLACK_RECOVERY_LIMITS.intervalMs);
+    f.secondBridge.overrides.set("list", () => ({ conversations: [{ id: "CLARGE", label: "Synthetic large history", type: "channel", supported: true }], nextCursor: "" }));
+    f.secondBridge.overrides.set("history", (input) => {
+      const page = input.cursor ? Number(String(input.cursor).slice(1)) : 0;
+      return { messages: page < 10 ? Array.from({ length: 100 }, (_, n) => ({ conversation: "CLARGE", ts: `1700000000.${String(page * 100 + n).padStart(6, "0")}`, user: "UTTWO", text: "old synthetic message" })) : [], nextCursor: page < 10 ? `p${page + 1}` : "" };
+    });
+    scheduled.at(-1)!.callback(); await f.second.refresh();
+    expect(scheduled.at(-1)?.delay).toBe(1_000); // A page checkpoint alone must also continue promptly.
+    f.secondBridge.overrides.set("info", () => { throw new Error("synthetic unavailable read"); });
+    scheduled.at(-1)!.callback(); await f.second.refresh();
+    expect(scheduled.at(-1)?.delay).toBe(SLACK_RECOVERY_LIMITS.intervalMs);
+  } finally { schedule.mockRestore(); clearTimeout(timer); await subscription?.close(); await f.root.close(); await f.second.close(); }
+}, 10_000);
 
 test("a failing observation does not starve recovery of other conversations", async () => {
   const f = await fixture();

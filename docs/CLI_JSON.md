@@ -208,6 +208,8 @@ and resumes large histories from page checkpoints. Its optional
 degraded until all conversations are checked; later batches retain healthy
 coverage for at most one hour. Actual read/admission failures invalidate that
 coverage immediately. Restart, wake, and connection loss require fresh checks.
+Progressing batches with unfinished work continue automatically after one second;
+completed sweeps, failures and batches without progress wait sixty seconds.
 Missing participation evidence never grants permission. Slack Connect, externally shared, archived, and
 read-only conversations remain unsupported. Reconnecting rotates authority;
 workspace, member, conversation, and thread isolation remain enforced.

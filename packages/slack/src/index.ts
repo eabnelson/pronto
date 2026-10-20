@@ -41,6 +41,7 @@ class ProntoSlack {
   #serial: Promise<unknown> = Promise.resolve();
   #closed = false;
   #recoverySession = randomUUID();
+  #recoveryPending = false;
   #watchClose: (() => Promise<void>) | undefined;
   #watchRefresh: (() => Promise<void>) | undefined;
   constructor(private readonly options: SlackOptions) {
@@ -331,7 +332,7 @@ class ProntoSlack {
   }
   async reconcile(onObservation: (observation: SlackObservation) => Promise<void>): Promise<SlackRecovery> {
     const started = this.#now(); const session = this.#recoverySession;
-    let requests = 0; let bytes = 0; let delivered = 0; let threads = 0;
+    let requests = 0; let bytes = 0; let delivered = 0; let threads = 0; let advanced = false; let hadFailure = false;
     let scanFailed = false; let budgetLimited = false; let scanning: Selection | undefined; let failureReason: RecoveryFailure = "read";
     const budgetError = new Error("slack-recovery-budget");
     const atBudget = () => this.#closed || requests >= SLACK_RECOVERY_LIMITS.requests || bytes >= SLACK_RECOVERY_LIMITS.bytes || this.#now() - started >= SLACK_RECOVERY_LIMITS.durationMs;
@@ -346,7 +347,8 @@ class ProntoSlack {
       if (!selected) return;
       selected.recovery = success ? { cycle: state.recoveryCycle!, session, checkedAt }
         : { ...(selected.recovery ?? { cycle: state.recoveryCycle!, session, checkedAt: 0 }), failed: true, reason: failureReason };
-      if (success) delete selected.rootScan;
+      if (success) { delete selected.rootScan; advanced = true; }
+      else hadFailure = true;
     });
     const request = async (operation: "history" | "replies" | "info", input: Record<string, unknown>) => {
       if (atBudget()) { budgetLimited = true; return null; }
@@ -362,7 +364,7 @@ class ProntoSlack {
       const observation = await this.observe(message, "recovered");
       if (observation) {
         if (delivered >= SLACK_RECOVERY_LIMITS.messages) throw budgetError;
-        try { await onObservation(observation); await this.acknowledgeObservation(observation); delivered++; }
+        try { await onObservation(observation); await this.acknowledgeObservation(observation); delivered++; advanced = true; }
         catch (error) { failureReason = "admission"; throw error; }
       }
     };
@@ -437,8 +439,11 @@ class ProntoSlack {
             await this.#mutate(async (current) => {
               if (current.generation !== state.generation || current.recoveryCycle !== state.recoveryCycle) return;
               const selected = current.selections.find((row) => row.id === selection.id && row.epoch === selection.epoch);
-              if (selected) selected.rootScan = { cycle: state.recoveryCycle!, session, cursor: replayForParticipation ? "" : cursor,
-                startedAt: replayForParticipation ? started : scanStartedAt, participated: selected.participated, roots: replayForParticipation ? 0 : (savedScan?.roots ?? 0) + roots };
+              if (selected) {
+                selected.rootScan = { cycle: state.recoveryCycle!, session, cursor: replayForParticipation ? "" : cursor,
+                  startedAt: replayForParticipation ? started : scanStartedAt, participated: selected.participated, roots: replayForParticipation ? 0 : (savedScan?.roots ?? 0) + roots };
+                advanced = true;
+              }
             });
           } else await record(selection, true, scanStartedAt);
         }
@@ -452,6 +457,9 @@ class ProntoSlack {
     const checked = current.selections.filter((row) => this.#freshRecovery(row, this.#now())).length;
     const incomplete = current.generation !== state.generation || checked !== current.selections.length;
     const needsSelection = current.coverage !== "participated" && current.selections.length === 0;
+    this.#recoveryPending = advanced && !hadFailure && !current.discoveryIncomplete
+      && current.generation === state.generation && session === this.#recoverySession
+      && current.selections.some((row) => row.recovery?.cycle !== current.recoveryCycle || !this.#freshRecovery(row, this.#now()));
     return { status: incomplete || current.discoveryIncomplete || needsSelection ? "degraded" : "recovered", ...(incomplete ? { reason: "slack-recovery-incomplete" } : current.discoveryIncomplete ? { reason: "slack-discovery-incomplete" } : needsSelection ? { reason: "slack-selection-required" } : {}), messages: delivered, requests, bytes, durationMs: this.#now() - started, progress: { checked, total: current.selections.length } };
   }
   async subscribe(input: { onObservation: (observation: SlackObservation) => Promise<void>; onRecovery?: (outcome: SlackRecovery) => void; onHealth?: (health: SlackHealth) => void }) {
@@ -463,8 +471,10 @@ class ProntoSlack {
       try {
         const state = await this.#state(); await this.#connect(state); await this.#refreshConversations();
         if (state.generation !== generation) { await this.options.bridge.request("watch"); generation = state.generation; }
-        input.onRecovery?.(await this.reconcile(input.onObservation));
+        const outcome = await this.reconcile(input.onObservation);
+        input.onRecovery?.(outcome);
       } catch (error) {
+        this.#recoveryPending = false;
         const needsLink = /needs-link|identity-mismatch|keychain/.test(String(error));
         if (needsLink) { generation = ""; await this.options.bridge.request("unwatch", { clearSession: true }).catch(() => undefined); }
         input.onHealth?.({ state: needsLink ? "needs_link" : "reconnecting", reason: "slack-recovery-failed" });
@@ -486,7 +496,7 @@ class ProntoSlack {
         if (event.state !== "connected") { generation = ""; this.#recoverySession = randomUUID(); }
       }
     });
-    const tick = async () => { await recover(); if (!stopped) { timer = setTimeout(() => { void tick(); }, SLACK_RECOVERY_LIMITS.intervalMs); timer.unref?.(); } };
+    const tick = async () => { await recover(); if (!stopped) { timer = setTimeout(() => { void tick(); }, this.#recoveryPending ? 1_000 : SLACK_RECOVERY_LIMITS.intervalMs); timer.unref?.(); } };
     await tick();
     const close = async () => { if (stopped) return; stopped = true; if (timer) clearTimeout(timer); unlisten(); await this.options.bridge.request("unwatch").catch(() => undefined); await active.catch(() => undefined); finish(); };
     this.#watchClose = close;
