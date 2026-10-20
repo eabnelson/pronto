@@ -202,9 +202,13 @@ workspace off preserves catch-up state. Removing a tag's final app assignment
 also removes its per-tag agent override.
 
 Workspace discovery is bounded to 500 conversations and 20 metadata pages per
-refresh. Recovery rotates its starting conversation when its budget is
-exhausted, reports gaps as degraded, and never treats missing participation
-evidence as permission. Slack Connect, externally shared, archived, and
+refresh. Recovery retains completed conversation checks across bounded batches
+and resumes large histories from page checkpoints. Its optional
+`progress: { checked, total }` reports coverage counts. Initial catch-up remains
+degraded until all conversations are checked; later batches retain healthy
+coverage for at most one hour. Actual read/admission failures invalidate that
+coverage immediately. Restart, wake, and connection loss require fresh checks.
+Missing participation evidence never grants permission. Slack Connect, externally shared, archived, and
 read-only conversations remain unsupported. Reconnecting rotates authority;
 workspace, member, conversation, and thread isolation remain enforced.
 

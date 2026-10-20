@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProntoSlack, type SlackBridge } from "../../packages/slack/src/index";
+import { createProntoSlack, SLACK_RECOVERY_LIMITS, type SlackBridge, type SlackBridgeEvent } from "../../packages/slack/src/index";
 import { addTagToApps, createConfig, loadConfig, saveConfig, tagAssignments, removeTagFromApps, setTagRuntimes } from "../../packages/cli/src/config";
 import { isChannelKind, type SlackChannelKind } from "../../packages/cli/src/channels/types";
 import { SlackChannel, slackActivation } from "../../packages/cli/src/slack/channel";
@@ -22,6 +22,7 @@ function bridge() {
   let team = "TONE";
   const calls: Array<{ operation: string; input: any }> = [];
   const overrides = new Map<string, (input: any) => any>();
+  const listeners = new Set<(event: SlackBridgeEvent) => void>();
   const transport: SlackBridge = {
     async request(operation, input = {}) {
       calls.push({ operation, input });
@@ -33,21 +34,21 @@ function bridge() {
       if (operation === "history") return { messages: [{ conversation: input.conversation, user: `U${team}`, ts: "1700000000.000001", text: "Earlier owner participation" }], nextCursor: "" };
       return { messages: [], nextCursor: "", outcome: "confirmed", ts: "1792152001.000001" };
     },
-    listen() { return () => {}; }, async close() {},
+    listen(callback) { listeners.add(callback); return () => { listeners.delete(callback); }; }, async close() {},
   };
-  return { transport, calls, overrides };
+  return { transport, calls, overrides, emit: (event: SlackBridgeEvent) => { for (const listener of listeners) listener(event); } };
 }
 
-async function fixture() {
+async function fixture(clock: () => number = () => now) {
   const directory = await mkdtemp(join(tmpdir(), "pronto-workspaces-")); directories.push(directory);
   const rootBridge = bridge();
-  const root = createProntoSlack({ directory, referenceKey, bridge: rootBridge.transport, now: () => now });
+  const root = createProntoSlack({ directory, referenceKey, bridge: rootBridge.transport, now: clock });
   await root.link((await root.discover()).workspaces[0]!.handle); await root.useParticipatedConversations();
   const choices = (await root.discover()).workspaces;
   const secondDirectory = join(directory, "workspaces", choices[1]!.id);
   const result = await root.linkWorkspace(choices[1]!.handle, secondDirectory);
   const secondBridge = bridge();
-  const second = createProntoSlack({ directory: secondDirectory, referenceKey, bridge: secondBridge.transport, now: () => now });
+  const second = createProntoSlack({ directory: secondDirectory, referenceKey, bridge: secondBridge.transport, now: clock });
   return { directory, root, rootBridge, second, secondBridge, result, choices };
 }
 
@@ -138,17 +139,22 @@ test("participation in an old thread authorizes fresh replies without replaying 
   } finally { await f.root.close(); await f.second.close(); }
 });
 
-test("workspace recovery keeps its request bound and continues at another conversation next time", async () => {
+test("workspace recovery completes across bounded batches and stays healthy during the next sweep", async () => {
   const f = await fixture();
   try {
-    f.secondBridge.overrides.set("list", () => ({ conversations: Array.from({ length: 60 }, (_, n) => ({ id: `C${n}`, label: `Synthetic ${n}`, type: "channel", supported: true })), nextCursor: "" }));
+    f.secondBridge.overrides.set("list", () => ({ conversations: Array.from({ length: 51 }, (_, n) => ({ id: `C${n}`, label: `Synthetic ${n}`, type: "channel", supported: true })), nextCursor: "" }));
     f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
     await f.second.qualify();
     const first = await f.second.reconcile(async () => {});
     expect(first.status).toBe("degraded"); expect(first.requests).toBe(100);
     f.secondBridge.calls.length = 0;
-    await f.second.reconcile(async () => {});
+    const second = await f.second.reconcile(async () => {});
     expect(f.secondBridge.calls.find((call) => call.operation === "info")?.input.conversation).toBe("C50");
+    expect(second.status).toBe("recovered");
+    expect(second.requests).toBe(2);
+    const next = await f.second.reconcile(async () => {});
+    expect(next.requests).toBe(100);
+    expect(next.status).toBe("recovered");
   } finally { await f.root.close(); await f.second.close(); }
 });
 
@@ -166,6 +172,84 @@ test("a failing observation does not starve recovery of other conversations", as
     expect(f.secondBridge.calls.find((call) => call.operation === "info")?.input.conversation).toBe("CDISCUSSION");
   } finally { await f.root.close(); await f.second.close(); }
 });
+
+test("genuine recovery failures invalidate a previous success until that conversation is checked again", async () => {
+  const f = await fixture();
+  try {
+    f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
+    await f.second.qualify();
+    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
+    f.secondBridge.overrides.set("info", () => { throw new Error("synthetic read failure"); });
+    expect((await f.second.reconcile(async () => {})).status).toBe("degraded");
+    f.secondBridge.overrides.delete("info");
+    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
+    f.secondBridge.overrides.set("history", () => ({ messages: [], hasMore: true, nextCursor: "" }));
+    expect((await f.second.reconcile(async () => {})).status).toBe("degraded");
+  } finally { await f.root.close(); await f.second.close(); }
+});
+
+test("old recovery receipts expire and a new provider must recheck coverage after restart", async () => {
+  let at = now;
+  const f = await fixture(() => at);
+  try {
+    f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
+    f.secondBridge.overrides.set("list", () => ({ conversations: Array.from({ length: 51 }, (_, n) => ({ id: `C${n}`, label: `Synthetic ${n}`, type: "channel", supported: true })), nextCursor: "" }));
+    await f.second.qualify();
+    expect((await f.second.reconcile(async () => {})).status).toBe("degraded");
+    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
+    at += SLACK_RECOVERY_LIMITS.maxCheckAgeMs + 1;
+    const expired = await f.second.reconcile(async () => {});
+    expect(expired.requests).toBe(100); expect(expired.status).toBe("degraded");
+    expect((await f.second.reconcile(async () => {})).status).toBe("recovered");
+    expect((await f.second.reconcile(async () => {})).status).toBe("recovered"); // New partial sweep.
+    await f.second.close();
+    const transport = bridge();
+    transport.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
+    const restarted = createProntoSlack({ directory: join(f.directory, "workspaces", f.result.id), referenceKey, bridge: transport.transport, now: () => at });
+    try {
+      const check = await restarted.reconcile(async () => {});
+      expect(check.requests).toBe(100); expect(check.status).toBe("degraded");
+      expect(check.progress?.checked).toBe(50);
+      expect((await restarted.reconcile(async () => {})).status).toBe("recovered");
+    } finally { await restarted.close(); }
+  } finally { await f.root.close(); await f.second.close(); }
+});
+
+test("wake invalidates previous coverage and requires a complete bounded recheck", async () => {
+  const f = await fixture(); const outcomes: Array<{ status: string }> = [];
+  f.secondBridge.overrides.set("history", () => ({ messages: [], nextCursor: "" }));
+  f.secondBridge.overrides.set("list", () => ({ conversations: Array.from({ length: 51 }, (_, n) => ({ id: `C${n}`, label: `Synthetic ${n}`, type: "channel", supported: true })), nextCursor: "" }));
+  const subscription = await f.second.subscribe({ onObservation: async () => {}, onRecovery: (result) => { outcomes.push(result); } });
+  try {
+    await f.second.refresh();
+    expect(outcomes.at(-1)?.status).toBe("recovered");
+    f.secondBridge.emit({ event: "wake" });
+    await f.second.refresh();
+    expect(outcomes.slice(-2).map((result) => result.status)).toEqual(["degraded", "recovered"]);
+  } finally { await subscription.close(); await f.root.close(); await f.second.close(); }
+});
+
+test("large histories resume at the next page and replay recent requests after learning older participation", async () => {
+  const f = await fixture(); const observed: string[] = [];
+  try {
+    f.secondBridge.overrides.set("list", () => ({ conversations: [{ id: "CLARGE", label: "Synthetic large history", type: "channel", supported: true }], nextCursor: "" }));
+    f.secondBridge.overrides.set("history", (input) => {
+      const page = input.cursor ? Number(String(input.cursor).slice(1)) : 0;
+      const messages = page === 10 ? [{ conversation: "CLARGE", ts: "1700000000.999999", user: "UTTWO", text: "old owner participation" }]
+        : Array.from({ length: 100 }, (_, n) => ({ conversation: "CLARGE", ts: page === 0 && n === 0 ? "1792152000.000001" : `1700000000.${String(page * 100 + n).padStart(6, "0")}`, user: "UOTHER", text: page === 0 && n === 0 ? "@two fresh request" : "old synthetic root" }));
+      return { messages, nextCursor: page < 10 ? `p${page + 1}` : "" };
+    });
+    await f.second.qualify();
+    const recover = () => f.second.reconcile(async (event) => { observed.push(event.message.text); });
+    expect((await recover()).status).toBe("degraded");
+    f.secondBridge.calls.length = 0;
+    expect((await recover()).status).toBe("degraded"); // Learned participation; earlier pages need replay.
+    expect(f.secondBridge.calls.find((call) => call.operation === "history")?.input.cursor).toBe("p10");
+    expect((await recover()).status).toBe("degraded");
+    expect((await recover()).status).toBe("recovered");
+    expect(observed).toEqual(["@two fresh request"]);
+  } finally { await f.root.close(); await f.second.close(); }
+}, 10_000);
 
 test("the CLI lists workspace apps and edits tags while a workspace is off", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pronto-workspace-cli-")); directories.push(directory);

@@ -7,8 +7,11 @@ export { createSlackBridge } from "./process.js";
 
 const HANDLE_TTL = 10 * 60_000;
 const SCOPE_TTL = 24 * 60 * 60_000;
-export const SLACK_RECOVERY_LIMITS = Object.freeze({ requests: 100, bytes: 16 * 1024 * 1024, durationMs: 90_000, rootsPerConversation: 1_000, threads: 50, replyPages: 10, messages: 500, pageSize: 100, intervalMs: 60_000 });
-interface Selection extends SlackConversation { cutoff: number; epoch: string; participated: boolean }
+export const SLACK_RECOVERY_LIMITS = Object.freeze({ requests: 100, bytes: 16 * 1024 * 1024, durationMs: 90_000, rootsPerConversation: 1_000, threads: 50, replyPages: 10, messages: 500, pageSize: 100, intervalMs: 60_000, maxCheckAgeMs: 60 * 60_000 });
+type RecoveryFailure = "read" | "unsupported" | "root-limit" | "reply-limit" | "admission";
+interface RecoveryCheck { cycle: string; session: string; checkedAt: number; failed?: boolean; reason?: RecoveryFailure }
+interface RootScan { cycle: string; session: string; cursor: string; startedAt: number; participated: boolean; roots: number }
+interface Selection extends SlackConversation { cutoff: number; epoch: string; participated: boolean; recovery?: RecoveryCheck; rootScan?: RootScan }
 interface Binding { team: string; owner: string; label: string; memberLabel: string; profile: "direct" }
 interface State {
   version: 1; installation: string; generation: string; binding: Binding | null;
@@ -17,6 +20,7 @@ interface State {
   coverage?: "participated";
   cutoff?: number;
   recoveryCursor?: number;
+  recoveryCycle?: string;
   discoveryIncomplete?: boolean;
 }
 interface Handle { value: string; expires: number; generation: string; kind: "workspace" | "conversation"; team?: string; conversation?: SlackConversation }
@@ -36,6 +40,7 @@ class ProntoSlack {
   readonly #key: Buffer;
   #serial: Promise<unknown> = Promise.resolve();
   #closed = false;
+  #recoverySession = randomUUID();
   #watchClose: (() => Promise<void>) | undefined;
   #watchRefresh: (() => Promise<void>) | undefined;
   constructor(private readonly options: SlackOptions) {
@@ -143,7 +148,7 @@ class ProntoSlack {
       if (identity.team !== selected.team || !identity.owner || state.binding && identity.owner !== state.binding.owner) throw new Error("slack-identity-mismatch");
       state.generation = randomUUID(); state.binding = { ...identity, profile: "direct" };
       state.selections = []; state.seen = []; state.outbound = [];
-      delete state.coverage; delete state.cutoff; delete state.recoveryCursor; delete state.discoveryIncomplete;
+      delete state.coverage; delete state.cutoff; delete state.recoveryCursor; delete state.recoveryCycle; delete state.discoveryIncomplete;
       return { linked: true, workspace: identity.label as string, member: identity.memberLabel as string };
     });
   }
@@ -319,24 +324,46 @@ class ProntoSlack {
     });
   }
 
+  #freshRecovery(selection: Selection, at: number): boolean {
+    const check = selection.recovery;
+    return !!check && !check.failed && check.session === this.#recoverySession
+      && check.checkedAt <= at && at - check.checkedAt <= SLACK_RECOVERY_LIMITS.maxCheckAgeMs;
+  }
   async reconcile(onObservation: (observation: SlackObservation) => Promise<void>): Promise<SlackRecovery> {
-    const started = this.#now(); let requests = 0; let bytes = 0; let delivered = 0; let threads = 0; let incomplete = false;
-    const state = await this.#state(); await this.#connect(state);
+    const started = this.#now(); const session = this.#recoverySession;
+    let requests = 0; let bytes = 0; let delivered = 0; let threads = 0;
+    let scanFailed = false; let budgetLimited = false; let scanning: Selection | undefined; let failureReason: RecoveryFailure = "read";
+    const budgetError = new Error("slack-recovery-budget");
+    const atBudget = () => this.#closed || requests >= SLACK_RECOVERY_LIMITS.requests || bytes >= SLACK_RECOVERY_LIMITS.bytes || this.#now() - started >= SLACK_RECOVERY_LIMITS.durationMs;
+    const state = await this.#mutate(async (current) => {
+      if (!current.recoveryCycle || current.selections.every((row) => row.recovery?.cycle === current.recoveryCycle && !row.recovery?.failed)) current.recoveryCycle = randomUUID();
+      return current;
+    });
+    await this.#connect(state);
+    const record = async (selection: Selection, success: boolean, checkedAt = started) => this.#mutate(async (current) => {
+      if (current.generation !== state.generation || current.recoveryCycle !== state.recoveryCycle) return;
+      const selected = current.selections.find((row) => row.id === selection.id && row.epoch === selection.epoch);
+      if (!selected) return;
+      selected.recovery = success ? { cycle: state.recoveryCycle!, session, checkedAt }
+        : { ...(selected.recovery ?? { cycle: state.recoveryCycle!, session, checkedAt: 0 }), failed: true, reason: failureReason };
+      if (success) delete selected.rootScan;
+    });
     const request = async (operation: "history" | "replies" | "info", input: Record<string, unknown>) => {
+      if (atBudget()) { budgetLimited = true; return null; }
       try {
-      if (this.#closed || requests >= SLACK_RECOVERY_LIMITS.requests || bytes >= SLACK_RECOVERY_LIMITS.bytes || this.#now() - started >= SLACK_RECOVERY_LIMITS.durationMs) throw new Error("slack-recovery-budget");
       const current = await this.#state();
       const original = state.selections.find((row) => row.id === input.conversation);
       if (current.generation !== state.generation || !original || !current.selections.some((row) => row.id === original.id && row.epoch === original.epoch)) throw new Error("slack-scope-revoked");
       requests++; const response = await this.options.bridge.request(operation, { ...input, limit: 100 }); bytes += Buffer.byteLength(JSON.stringify(response));
-      if (bytes > SLACK_RECOVERY_LIMITS.bytes) throw new Error("slack-recovery-budget"); return response;
-      } catch { incomplete = true; return null; }
+      if (bytes > SLACK_RECOVERY_LIMITS.bytes) { budgetLimited = true; return null; } return response;
+      } catch { scanFailed = true; failureReason = "read"; return null; }
     };
     const deliver = async (message: SlackMessage) => {
       const observation = await this.observe(message, "recovered");
       if (observation) {
-        if (delivered >= SLACK_RECOVERY_LIMITS.messages) throw new Error("slack-recovery-budget");
-        await onObservation(observation); await this.acknowledgeObservation(observation); delivered++;
+        if (delivered >= SLACK_RECOVERY_LIMITS.messages) throw budgetError;
+        try { await onObservation(observation); await this.acknowledgeObservation(observation); delivered++; }
+        catch (error) { failureReason = "admission"; throw error; }
       }
     };
     const learnParticipation = async (selection: Selection, messages: SlackMessage[]) => {
@@ -350,37 +377,45 @@ class ProntoSlack {
     };
     try {
       const start = (state.recoveryCursor ?? 0) % Math.max(1, state.selections.length);
-      const selections = [...state.selections.slice(start), ...state.selections.slice(0, start)];
+      const selections = [...state.selections.slice(start), ...state.selections.slice(0, start)]
+        .filter((row) => row.recovery?.cycle !== state.recoveryCycle || !this.#freshRecovery(row, started));
       for (const selection of selections) {
-        if (requests >= SLACK_RECOVERY_LIMITS.requests || bytes >= SLACK_RECOVERY_LIMITS.bytes || this.#now() - started >= SLACK_RECOVERY_LIMITS.durationMs) {
-          incomplete = true;
+        if (atBudget()) {
           await this.#mutate(async (current) => { if (current.generation === state.generation) current.recoveryCursor = state.selections.findIndex((row) => row.id === selection.id); });
           break;
         }
+        scanning = selection; scanFailed = false; budgetLimited = false; failureReason = "read";
         // A failed admission or delivery budget must not pin every pass to this conversation.
         await this.#mutate(async (current) => {
           if (current.generation === state.generation) current.recoveryCursor = (state.selections.findIndex((row) => row.id === selection.id) + 1) % state.selections.length;
         });
-        let info: any;
-        try { info = await request("info", { conversation: selection.id }); }
-        catch { incomplete = true; continue; }
-        if (!info?.supported) { incomplete = true; continue; }
-        let cursor = ""; let roots = 0; const messages: SlackMessage[] = [];
+        const info = await request("info", { conversation: selection.id });
+        if (!info?.supported) {
+          if (info) failureReason = "unsupported";
+          if (info || scanFailed) await record(selection, false);
+          if (budgetLimited) break;
+          continue;
+        }
+        const savedScan = selection.rootScan?.cycle === state.recoveryCycle && selection.rootScan?.session === session ? selection.rootScan : undefined;
+        const scanStartedAt = savedScan?.startedAt ?? started;
+        let cursor = savedScan?.cursor ?? ""; let roots = 0; let historyRemaining = false; const messages: SlackMessage[] = [];
         do {
           const page = await request("history", { conversation: selection.id, cursor });
           if (!page) break;
           for (const row of page.messages as SlackMessage[]) { messages.push({ ...row, conversation: selection.id }); roots++; }
-          cursor = page.nextCursor ?? "";
-          if (page.hasMore && !cursor) { incomplete = true; break; }
-          if (roots >= SLACK_RECOVERY_LIMITS.rootsPerConversation && cursor) { incomplete = true; break; }
+          const nextCursor = page.nextCursor ?? "";
+          if (cursor && cursor === nextCursor) { scanFailed = true; failureReason = "root-limit"; break; }
+          cursor = nextCursor;
+          if (page.hasMore && !cursor) { scanFailed = true; failureReason = "root-limit"; break; }
+          if (roots >= SLACK_RECOVERY_LIMITS.rootsPerConversation && cursor) { historyRemaining = true; break; }
         } while (cursor);
         // Positive evidence is learned before considering newer human requests.
         await learnParticipation(selection, messages);
-        const candidates: SlackMessage[] = [];
+        const candidates: SlackMessage[] = [...messages];
         for (const root of messages) {
-          candidates.push(root);
+          if (budgetLimited) break;
           if (!root.reply_count || (root.latest_reply && ms(root.latest_reply) < Math.max(selection.cutoff, this.#now() - SCOPE_TTL))) continue;
-          if (++threads > SLACK_RECOVERY_LIMITS.threads) { incomplete = true; continue; }
+          if (++threads > SLACK_RECOVERY_LIMITS.threads) { budgetLimited = true; break; }
           let replyCursor = "";
           for (let pageNumber = 0; pageNumber < SLACK_RECOVERY_LIMITS.replyPages; pageNumber++) {
             const page = await request("replies", { conversation: selection.id, thread: root.ts, cursor: replyCursor,
@@ -390,15 +425,34 @@ class ProntoSlack {
             // The root fetched as context never becomes a new activation in another scope.
             candidates.push(...(page.messages as SlackMessage[]).filter((row) => row.ts !== root.ts).map((row) => ({ ...row, conversation: selection.id, thread_ts: root.ts })));
             replyCursor = page.nextCursor ?? "";
-            if (!replyCursor) { if (page.hasMore) incomplete = true; break; }
-            if (pageNumber === SLACK_RECOVERY_LIMITS.replyPages - 1) incomplete = true;
+            if (!replyCursor) { if (page.hasMore) { scanFailed = true; failureReason = "reply-limit"; } break; }
+            if (pageNumber === SLACK_RECOVERY_LIMITS.replyPages - 1) { scanFailed = true; failureReason = "reply-limit"; }
           }
         }
         for (const row of [...new Map(candidates.map((row) => [row.ts, row])).values()].sort((a, b) => a.ts.localeCompare(b.ts))) await deliver(row);
+        if (scanFailed) await record(selection, false);
+        else if (!budgetLimited) {
+          const replayForParticipation = !!savedScan && !savedScan.participated && selection.participated;
+          if (historyRemaining || replayForParticipation) {
+            await this.#mutate(async (current) => {
+              if (current.generation !== state.generation || current.recoveryCycle !== state.recoveryCycle) return;
+              const selected = current.selections.find((row) => row.id === selection.id && row.epoch === selection.epoch);
+              if (selected) selected.rootScan = { cycle: state.recoveryCycle!, session, cursor: replayForParticipation ? "" : cursor,
+                startedAt: replayForParticipation ? started : scanStartedAt, participated: selected.participated, roots: replayForParticipation ? 0 : (savedScan?.roots ?? 0) + roots };
+            });
+          } else await record(selection, true, scanStartedAt);
+        }
+        scanning = undefined;
+        if (budgetLimited) break;
       }
-    } catch { incomplete = true; }
-    const needsSelection = state.coverage !== "participated" && state.selections.length === 0;
-    return { status: incomplete || state.discoveryIncomplete || needsSelection ? "degraded" : "recovered", ...(incomplete ? { reason: "slack-recovery-incomplete" } : state.discoveryIncomplete ? { reason: "slack-discovery-incomplete" } : needsSelection ? { reason: "slack-selection-required" } : {}), messages: delivered, requests, bytes, durationMs: this.#now() - started };
+    } catch (error) {
+      if (scanning && (error !== budgetError || scanFailed)) await record(scanning, false);
+    }
+    const current = await this.#state();
+    const checked = current.selections.filter((row) => this.#freshRecovery(row, this.#now())).length;
+    const incomplete = current.generation !== state.generation || checked !== current.selections.length;
+    const needsSelection = current.coverage !== "participated" && current.selections.length === 0;
+    return { status: incomplete || current.discoveryIncomplete || needsSelection ? "degraded" : "recovered", ...(incomplete ? { reason: "slack-recovery-incomplete" } : current.discoveryIncomplete ? { reason: "slack-discovery-incomplete" } : needsSelection ? { reason: "slack-selection-required" } : {}), messages: delivered, requests, bytes, durationMs: this.#now() - started, progress: { checked, total: current.selections.length } };
   }
   async subscribe(input: { onObservation: (observation: SlackObservation) => Promise<void>; onRecovery?: (outcome: SlackRecovery) => void; onHealth?: (health: SlackHealth) => void }) {
     let stopped = false; let active: Promise<void> = Promise.resolve(); let timer: ReturnType<typeof setTimeout> | undefined;
@@ -424,11 +478,12 @@ class ProntoSlack {
           if (observation) { await input.onObservation(observation); await this.acknowledgeObservation(observation); }
         }).catch(() => { input.onRecovery?.({ status: "degraded", reason: "slack-admission-failed", messages: 0, requests: 0, bytes: 0, durationMs: 0 }); });
       } else if (event.event === "wake") {
+        this.#recoverySession = randomUUID();
         generation = ""; void recover();
       } else if (event.event === "health") {
         input.onHealth?.(event);
         if (event.state === "connected") void recover();
-        if (event.state !== "connected") generation = "";
+        if (event.state !== "connected") { generation = ""; this.#recoverySession = randomUUID(); }
       }
     });
     const tick = async () => { await recover(); if (!stopped) { timer = setTimeout(() => { void tick(); }, SLACK_RECOVERY_LIMITS.intervalMs); timer.unref?.(); } };

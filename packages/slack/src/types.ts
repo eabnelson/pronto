@@ -50,7 +50,7 @@ export interface SlackObservation {
   messageId: string;
 }
 export type SlackHealth = { state: "connected" | "reconnecting" | "needs_link"; reason?: string };
-export interface SlackRecovery { status: "recovered" | "degraded"; reason?: string; messages: number; requests: number; bytes: number; durationMs: number }
+export interface SlackRecovery { status: "recovered" | "degraded"; reason?: string; messages: number; requests: number; bytes: number; durationMs: number; progress?: { checked: number; total: number } }
 export interface SlackOptions {
   directory: string;
   referenceKey: string;
