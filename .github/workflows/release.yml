@@ -52,6 +52,9 @@ jobs:
           cache-dependency-path: packages/slack/native/go.sum
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      - name: Check native helper vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        working-directory: packages/slack/native
       - run: bun run build
       - run: bun test
       - run: ./dist/pronto --version

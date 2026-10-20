@@ -48,7 +48,7 @@ switch a chat into a repository you do not trust.
 - For iMessage and RCS, [`imsg`](https://github.com/openclaw/imsg) 0.15.0
 - For WhatsApp, [`wacli`](https://github.com/openclaw/wacli) 0.19.0 or newer and
   the WhatsApp app on your phone (see [WhatsApp](#whatsapp) before enabling it)
-- For the Slack candidate, the direct-download Slack desktop app signed in to your chosen workspace; source builds also require Go 1.25.5 or newer and Xcode command line tools
+- For the Slack candidate, the direct-download Slack desktop app signed in to your chosen workspace; source builds also require Go 1.27.3 or newer and Xcode command line tools
 - At least one authenticated [Codex CLI](https://github.com/openai/codex) or
   [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/getting-started)
 

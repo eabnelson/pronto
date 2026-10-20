@@ -4,7 +4,7 @@ A local macOS Slack desktop transport. The provider uses standard ESM and Node i
 
 This is an **unqualified beta candidate**. Installed credential approval, both release architectures, broader conversation types, latency, and long-sleep recovery require the evidence in [Slack qualification](../../docs/SLACK_QUALIFICATION.md) before release. The direct-download desktop profile is the only implemented profile. App Store Slack is excluded.
 
-Build the native helper and compiled CLI with `bun run build` on macOS with Xcode command line tools and Go 1.25.5 or later. Source consumers supply a verified helper path through `createSlackBridge(path)`; the Pronto executable embeds its matching signed helper. No runtime downloads occur.
+Build the native helper and compiled CLI with `bun run build` on macOS with Xcode command line tools and Go 1.27.3 or later. Source consumers supply a verified helper path through `createSlackBridge(path)`; the Pronto executable embeds its matching signed helper. No runtime downloads occur.
 
 ```js
 import { createProntoSlack, createSlackBridge } from "pronto-slack";

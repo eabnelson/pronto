@@ -42,3 +42,11 @@ steps:
     expect(mutableActionReferences(workflow)).toEqual([]);
   });
 });
+
+test("CI and release builds scan the native Slack helper for known vulnerabilities", async () => {
+  for (const name of ["ci", "release"]) {
+    const configuration = await Bun.file(new URL(`../../.github/workflows/${name}.yml`, import.meta.url)).text();
+    expect(configuration).toContain("go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...");
+    expect(configuration).toContain("working-directory: packages/slack/native");
+  }
+});
