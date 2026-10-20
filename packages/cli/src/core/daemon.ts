@@ -58,6 +58,7 @@ export class ProntoDaemon {
   constructor(
     config: ProntoConfig,
     readonly paths: ProntoPaths,
+    private readonly channelFactory?: (kind: ChannelKind) => Channel | Promise<Channel>,
   ) {
     this.#config = config;
   }
@@ -108,6 +109,7 @@ export class ProntoDaemon {
     const health = new Map<ChannelKind, Health>();
     const degraded = new Map<ChannelKind, readonly string[]>();
     const recoveryReasons = new Map<ChannelKind, string>();
+    const connectionReasons = new Map<ChannelKind, string>();
     let signalTransportClosed!: () => void;
     const transportClosed = new Promise<"transport-closed">((resolve) => {
       signalTransportClosed = () => resolve("transport-closed");
@@ -134,7 +136,8 @@ export class ProntoDaemon {
       ]);
     };
     const settle = (kind: ChannelKind) => {
-      const reason = recoveryReasons.get(kind);
+      // A completed catch-up search cannot repair a disconnected live stream.
+      const reason = connectionReasons.get(kind) ?? recoveryReasons.get(kind);
       const current = health.get(kind);
       if (current?.state === "needs_link" || current?.state === "failed") return;
       health.set(kind, reason !== undefined
@@ -146,7 +149,7 @@ export class ProntoDaemon {
       if (kind !== "imessage") journal.enableMultiApp();
       journal.recordChannelHealth(kind, "starting");
       try {
-        const channel = await this.#createChannel(kind, journal);
+        const channel = await (this.channelFactory?.(kind) ?? this.#createChannel(kind, journal));
         created.set(kind, channel);
         const qualification = await channel.qualify();
         degraded.set(kind, qualification.degraded);
@@ -172,6 +175,8 @@ export class ProntoDaemon {
           admit.admit(activation);
         },
         onHealth: (connection) => {
+          if (connection.state === "reconnecting") connectionReasons.set(kind, connection.reason);
+          else connectionReasons.delete(kind);
           if (connection.state === "needs_link") {
             health.set(kind, { state: "needs_link" });
           } else if (connection.state === "reconnecting") {
@@ -204,7 +209,7 @@ export class ProntoDaemon {
       await watch?.close().catch(() => undefined);
       await created.get(kind)?.close().catch(() => undefined);
       created.delete(kind);
-      for (const state of [health, degraded, recoveryReasons]) state.delete(kind);
+      for (const state of [health, degraded, recoveryReasons, connectionReasons]) state.delete(kind);
       journal.recordChannelHealth(kind, "stopped");
     };
 
