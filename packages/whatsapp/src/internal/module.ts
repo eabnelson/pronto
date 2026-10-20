@@ -537,6 +537,7 @@ class Subscription {
   #resolveTerminated!: () => void;
   #tail: Promise<void> = Promise.resolve();
   #sweepQueued = false;
+  #lastRecoveryStatus: WhatsappRecoveryOutcome["status"] | undefined;
   #supervisor: SyncSupervisor | null = null;
   #server: WebhookServer | null = null;
   #interval: NodeJS.Timeout | null = null;
@@ -674,7 +675,11 @@ class Subscription {
     this.#enqueue(async () => {
       this.#sweepQueued = false;
       const outcome = await this.#runSweep();
-      if (reason === "interval" && outcome.status === "recovered" && outcome.messages === 0) return;
+      // Quiet healthy intervals are redundant, but the first success after a gap
+      // must clear the consumer's warning even when it delivers no new messages.
+      if (reason === "interval" && outcome.status === "recovered" && outcome.messages === 0
+        && this.#lastRecoveryStatus === "recovered") return;
+      this.#lastRecoveryStatus = outcome.status;
       const callback = this.input.onRecovery;
       if (callback !== undefined) await Promise.resolve(callback(outcome)).catch(() => undefined);
     });
