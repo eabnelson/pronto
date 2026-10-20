@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProntoSlack, SLACK_RECOVERY_LIMITS, type SlackBridge, type SlackBridgeEvent } from "../../packages/slack/src/index";
@@ -240,6 +240,18 @@ test("old recovery receipts expire and a new provider must recheck coverage afte
       expect(check.progress?.checked).toBe(50);
       expect((await restarted.reconcile(async () => {})).status).toBe("recovered");
     } finally { await restarted.close(); }
+  } finally { await f.root.close(); await f.second.close(); }
+});
+
+test("ignored old and bot observations do not rewrite private metadata", async () => {
+  const f = await fixture();
+  try {
+    const state = join(f.directory, "workspaces", f.result.id, "state.json");
+    await utimes(state, 1, 1);
+    expect(await f.second.observe({ conversation: "DSELF", ts: "1700000000.000001", user: "UTTWO", text: "old synthetic message" }, "recovered")).toBeNull();
+    expect((await stat(state)).mtimeMs).toBe(1_000);
+    expect(await f.second.observe({ conversation: "DSELF", ts: "1792152000.000001", user: "UTTWO", text: "synthetic bot", bot_id: "BTEST" }, "live")).toBeNull();
+    expect((await stat(state)).mtimeMs).toBe(1_000);
   } finally { await f.root.close(); await f.second.close(); }
 });
 

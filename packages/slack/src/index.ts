@@ -241,6 +241,10 @@ class ProntoSlack {
   }
   async authorized(scope: SlackScope): Promise<boolean> { try { await this.#authorize(scope, false); return true; } catch { return false; } }
   async observe(message: SlackMessage, origin: "live" | "recovered"): Promise<SlackObservation | null> {
+    // Avoid a metadata fsync for every ignored archive root. Recheck inside the lock as well.
+    if (!ordinary(message)) return null;
+    const initialAge = this.#now() - ms(message.ts);
+    if (initialAge > (origin === "live" ? 300_000 : SCOPE_TTL) || initialAge < -60_000) return null;
     return this.#mutate(async (state) => {
       const binding = state.binding;
       if (!binding || !ordinary(message)) return null;
