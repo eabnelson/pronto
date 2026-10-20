@@ -219,7 +219,7 @@ class ProntoSlack {
   async observe(message: SlackMessage, origin: "live" | "recovered", isRequest = true): Promise<SlackObservation | null> {
     return this.#observe(message, origin, isRequest);
   }
-  async #observe(message: SlackMessage, origin: "live" | "recovered", isRequest: boolean, request: Request = this.options.bridge.request.bind(this.options.bridge)): Promise<SlackObservation | null> {
+  async #observe(message: SlackMessage, origin: "live" | "recovered", isRequest: boolean, request: Request = this.options.bridge.request.bind(this.options.bridge), expected?: { generation: string; epoch: string }): Promise<SlackObservation | null> {
     // Socket chatter is transient. Persist only owner participation and acknowledged requests.
     if (!ordinary(message)) return null;
     const initialAge = this.#now() - ms(message.ts);
@@ -229,6 +229,7 @@ class ProntoSlack {
     const seenKey = digest([before.binding.team, before.binding.owner, message.conversation, message.ts]);
     if (before.seen.some((row) => row.key === seenKey)) return null;
     return this.#mutate(async (state) => {
+      if (expected && (state.generation !== expected.generation || !state.selections.some((row) => row.id === message.conversation && row.epoch === expected.epoch))) throw new Error("slack-scope-revoked");
       const binding = state.binding;
       if (!binding || !ordinary(message)) return null;
       const age = this.#now() - ms(message.ts);
@@ -375,22 +376,23 @@ class ProntoSlack {
             try {
               const current = await this.#state();
               if (current.generation !== state.generation) throw new Error("slack-link-changed");
-              const selection = current.selections.find((row) => row.id === hint.conversation);
+              let selection = current.selections.find((row) => row.id === hint.conversation);
               if (!selection && current.coverage !== "participated") continue;
               // Validate membership/destination before reading a search result's context.
               const info = await request("info", { conversation: hint.conversation, selectionCheck: true });
               if (info.id !== hint.conversation || !info.supported) continue;
               if (!selection) {
-                await this.#mutate(async (current) => {
+                selection = await this.#mutate(async (current) => {
                   if (current.generation !== state.generation) throw new Error("slack-link-changed");
                   if (current.selections.length >= 500) throw new Error("slack-selection-limit");
                   if (!current.selections.some((row) => row.id === hint.conversation)) current.selections.push({ ...info, cutoff: current.cutoff ?? started, epoch: randomUUID(), participated: false });
+                  return current.selections.find((row) => row.id === hint.conversation)!;
                 });
                 await this.#connect(await this.#state());
               }
               const message = await this.#readMessage(hint, request);
               if (!message || !isRequest(message.text)) continue; // Deleted/edited; search is only a hint.
-              const observation = await this.#observe(message, "recovered", true, request);
+              const observation = await this.#observe(message, "recovered", true, request, { generation: state.generation, epoch: selection!.epoch });
               if (!observation) continue;
               await onObservation(observation); await this.acknowledgeObservation(observation); delivered++;
             } catch { incomplete = true; }

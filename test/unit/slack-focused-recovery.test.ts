@@ -157,3 +157,18 @@ test("a search hit without thread metadata is resolved to its canonical old thre
     expect(f.calls.find((call) => call.operation === "replies")?.input).toMatchObject({ thread: fresh, oldest: fresh, latest: fresh });
   } finally { await f.provider.close(); }
 });
+
+test("a workspace relink during canonical lookup cannot give an old request new authority", async () => {
+  const f = await fixture(); const seen: any[] = [];
+  f.overrides.set("tagged", () => ({ messages: [message()], nextCursor: "" }));
+  f.overrides.set("replies", async () => {
+    await f.provider.unlink();
+    await f.provider.link((await f.provider.discover()).workspaces[0]!.handle);
+    await f.provider.useParticipatedConversations();
+    return { messages: [message()], nextCursor: "" };
+  });
+  try {
+    expect((await f.provider.reconcile(async (event) => { seen.push(event); }, ["@test"])).status).toBe("degraded");
+    expect(seen).toEqual([]);
+  } finally { await f.provider.close(); }
+});

@@ -39,6 +39,7 @@ func health(state, reason string)         { event("health", map[string]any{"stat
 var safe = regexp.MustCompile(`^slack-[a-z0-9-]{1,80}$`)
 var validTag = regexp.MustCompile(`^@[A-Za-z0-9_-]{1,32}$`)
 var validID = regexp.MustCompile(`^[CDGU][A-Z0-9]{1,32}$`)
+var validSearchName = regexp.MustCompile(`^[\p{L}\p{N}_-]{1,80}$`)
 var validSeconds = regexp.MustCompile(`^\d{10,16}(\.\d{1,9})?$`)
 var validTS = regexp.MustCompile(`^\d{10,16}\.\d{1,9}$`)
 
@@ -443,7 +444,26 @@ func (h *helper) execute(ctx context.Context, op string, input map[string]json.R
 			if !validID.MatchString(id) {
 				return nil, errors.New("slack-search-invalid")
 			}
-			query = fmt.Sprintf("from:<@%s> in:%s", s.owner, id)
+			// Search accepts channel names and DM user references, rather than
+			// conversation IDs. Resolve only this request's already selected target.
+			info, err := h.call(ctx, s, "conversations.info", map[string]any{"channel": id})
+			if err != nil {
+				return nil, err
+			}
+			var c conversation
+			if json.Unmarshal(info["channel"], &c) != nil || c.ID != id || c.normalized(s)["supported"] != true {
+				return nil, errors.New("slack-access-revoked")
+			}
+			target := c.Name
+			if c.IsIM {
+				if !validID.MatchString(c.User) {
+					return nil, errors.New("slack-search-invalid")
+				}
+				target = "<@" + c.User + ">"
+			} else if !validSearchName.MatchString(target) {
+				return nil, errors.New("slack-search-invalid")
+			}
+			query = fmt.Sprintf("from:<@%s> in:%s", s.owner, target)
 			count = 3
 		}
 		result, err := h.call(ctx, s, "search.messages", map[string]any{"query": query, "count": count, "page": page, "sort": "timestamp", "sort_dir": "desc", "highlight": false, "team_id": s.team})

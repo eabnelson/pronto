@@ -160,8 +160,11 @@ func TestFocusedSearchIsBoundedAndOwnerBound(t *testing.T) {
 	h.selected["CTEST"] = true
 	calls := 0
 	h.client = &http.Client{Transport: roundTrip(func(req *http.Request) (*http.Response, error) {
-		calls++
 		h.lastCall = time.Time{}
+		if req.URL.Path == "/api/conversations.info" {
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"channel":{"id":"CTEST","name":"synthetic","is_member":true}}`))}, nil
+		}
+		calls++
 		q := req.URL.Query()
 		if req.URL.Path != "/api/search.messages" || q.Get("sort") != "timestamp" || q.Get("sort_dir") != "desc" {
 			t.Fatal("unexpected search")
@@ -169,7 +172,7 @@ func TestFocusedSearchIsBoundedAndOwnerBound(t *testing.T) {
 		if calls == 1 && (q.Get("query") != `"@test" after:2026-10-15` || q.Get("count") != "100" || q.Get("page") != "1") {
 			t.Fatalf("unbounded tag search: %v", q)
 		}
-		if calls == 2 && (q.Get("query") != "from:<@UOWNER> in:CTEST" || q.Get("count") != "3") {
+		if calls == 2 && (q.Get("query") != "from:<@UOWNER> in:synthetic" || q.Get("count") != "3") {
 			t.Fatalf("owner search lost binding: %v", q)
 		}
 		body := `{"ok":true,"messages":{"matches":[{"channel":{"id":"CTEST"},"team":"TTEST","user":"UOWNER","ts":"1792152000.000001","text":"@test synthetic","permalink":"https://synthetic.slack.com/archives/CTEST/p1792152000000001?thread_ts=1700000000.000001"},{"channel":{"id":"COTHER"},"team":"TOTHER","user":"UOWNER","ts":"1792152000.000002","text":"wrong workspace"}],"paging":{"pages":2}}}`
@@ -217,5 +220,28 @@ func TestCanonicalLookupPinsBothTimestampBounds(t *testing.T) {
 	_, err := h.execute(context.Background(), "history", map[string]json.RawMessage{"conversation": json.RawMessage(`"CTEST"`), "oldest": json.RawMessage(`"1792152000.000001"`), "latest": json.RawMessage(`"1792152000.000001"`), "limit": json.RawMessage(`1`)})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSelfDMParticipationUsesTheOwnerDMSelector(t *testing.T) {
+	h := newHelper()
+	h.session = &session{team: "TTEST", owner: "UOWNER"}
+	h.selected["DSELF"] = true
+	searches := 0
+	h.client = &http.Client{Transport: roundTrip(func(req *http.Request) (*http.Response, error) {
+		h.lastCall = time.Time{}
+		body := `{"ok":true,"channel":{"id":"DSELF","is_im":true,"user":"UOWNER"}}`
+		if req.URL.Path == "/api/search.messages" {
+			searches++
+			if req.URL.Query().Get("query") != "from:<@UOWNER> in:<@UOWNER>" {
+				t.Fatal("self DM search used an unsupported conversation-ID selector")
+			}
+			body = `{"ok":true,"messages":{"matches":[]}}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	_, err := h.execute(context.Background(), "participation", map[string]json.RawMessage{"conversation": json.RawMessage(`"DSELF"`)})
+	if err != nil || searches != 1 {
+		t.Fatalf("search failed: %v", err)
 	}
 }
