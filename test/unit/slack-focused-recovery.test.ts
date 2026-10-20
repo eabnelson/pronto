@@ -146,3 +146,14 @@ test("canonical edits, bots and unsupported destinations cannot become recovered
     expect(f.calls.some((call) => call.operation === "replies" && call.input.conversation === "CEXTERNAL")).toBeFalse();
   } finally { await f.provider.close(); }
 });
+
+test("a search hit without thread metadata is resolved to its canonical old thread", async () => {
+  const f = await fixture(); const seen: any[] = [];
+  f.overrides.set("tagged", () => ({ messages: [message({ thread_ts: undefined })], nextCursor: "" }));
+  f.overrides.set("replies", () => ({ messages: [message()], nextCursor: "" }));
+  try {
+    expect((await f.provider.reconcile(async (event) => { seen.push(event); }, ["@test"])).status).toBe("recovered");
+    expect(seen).toHaveLength(1); expect(seen[0].message.thread_ts).toBe(old);
+    expect(f.calls.find((call) => call.operation === "replies")?.input).toMatchObject({ thread: fresh, oldest: fresh, latest: fresh });
+  } finally { await f.provider.close(); }
+});

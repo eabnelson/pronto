@@ -326,10 +326,16 @@ class ProntoSlack {
   async #readMessage(hint: SlackMessage, request: Request = this.options.bridge.request.bind(this.options.bridge)): Promise<SlackMessage | null> {
     if (!timestamp.test(hint.ts) || hint.thread_ts && !timestamp.test(hint.thread_ts)) return null;
     const thread = hint.thread_ts && hint.thread_ts !== hint.ts ? hint.thread_ts : undefined;
-    const response = await request(thread ? "replies" : "history", {
-      conversation: hint.conversation, ...(thread ? { thread } : {}), oldest: hint.ts, latest: hint.ts, limit: 1,
-    });
-    const row = (response.messages as SlackMessage[]).find((row) => row.ts === hint.ts && row.conversation === hint.conversation);
+    const bounds = { conversation: hint.conversation, oldest: hint.ts, latest: hint.ts, limit: 1 };
+    let response = await request(thread ? "replies" : "history", { ...bounds, ...(thread ? { thread } : {}) });
+    let row = (response.messages as SlackMessage[]).find((row) => row.ts === hint.ts && row.conversation === hint.conversation);
+    // Search may omit thread_ts and return a permalink without the root. Slack
+    // accepts a reply's own timestamp for replies(), so resolve that exact message
+    // without scanning roots or guessing which timeline it belongs to.
+    if (!row && !thread) {
+      response = await request("replies", { ...bounds, thread: hint.ts });
+      row = (response.messages as SlackMessage[]).find((row) => row.ts === hint.ts && row.conversation === hint.conversation);
+    }
     if (!row || row.thread_ts && thread && row.thread_ts !== thread) return null;
     return { ...row, ...(thread ? { thread_ts: thread } : {}) };
   }
