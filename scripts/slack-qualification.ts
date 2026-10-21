@@ -28,7 +28,9 @@ if (import.meta.main) {
   if (!file || !tag || !["--init", "--check"].includes(action ?? "")) throw new Error("Usage: bun scripts/slack-qualification.ts --init|--check <file> <release-tag>");
   // Qualification records belong to this checkout; resolve parent symlinks before writing.
   const root = await realpath(join(import.meta.dir, ".."));
-  const directory = await realpath(dirname(resolve(file)));
+  const requested = resolve(file);
+  if (!requested.startsWith(root + sep)) throw new Error("Qualification records must be inside this checkout");
+  const directory = await realpath(dirname(requested));
   if (directory !== root && !directory.startsWith(root + sep)) throw new Error("Qualification records must be inside this checkout");
   const path = join(directory, basename(file));
   if (action === "--init") {
