@@ -23,7 +23,7 @@ Use the normal automated suite and signed build, plus four recorded results:
 The short common release checklist in [LIVE_SMOKE.md](LIVE_SMOKE.md) covers startup
 and rollback readiness; reuse its evidence rather than repeating the same test.
 
-Initialize private evidence with:
+Initialize private evidence inside this checkout with:
 
 ```sh
 bun scripts/slack-qualification.ts --init .scratch/slack-channel/qualification.json <release-tag>

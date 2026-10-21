@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, realpath, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve, sep } from "node:path";
 export const SLACK_GATES = [
   "signed-helper-arm64",
   "signed-helper-x64",
@@ -25,7 +26,12 @@ export function validateSlackQualification(value: SlackQualification, releaseTag
 if (import.meta.main) {
   const [action, file, tag] = process.argv.slice(2);
   if (!file || !tag || !["--init", "--check"].includes(action ?? "")) throw new Error("Usage: bun scripts/slack-qualification.ts --init|--check <file> <release-tag>");
+  // Qualification records belong to this checkout; resolve parent symlinks before writing.
+  const root = await realpath(join(import.meta.dir, ".."));
+  const directory = await realpath(dirname(resolve(file)));
+  if (directory !== root && !directory.startsWith(root + sep)) throw new Error("Qualification records must be inside this checkout");
+  const path = join(directory, basename(file));
   if (action === "--init") {
-    await writeFile(file, JSON.stringify({ version: 2, releaseTag: tag, artifacts: {}, checks: SLACK_GATES.map((id) => ({ id, status: "pending", evidence: "" })) }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
-  } else { validateSlackQualification(JSON.parse(await readFile(file, "utf8")), tag); console.log("All recorded Slack qualification gates pass."); }
+    await writeFile(path, JSON.stringify({ version: 2, releaseTag: tag, artifacts: {}, checks: SLACK_GATES.map((id) => ({ id, status: "pending", evidence: "" })) }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+  } else { validateSlackQualification(JSON.parse(await readFile(path, "utf8")), tag); console.log("All recorded Slack qualification gates pass."); }
 }

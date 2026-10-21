@@ -38,7 +38,7 @@ class Element extends EventTarget {
 
 async function page(clipboardRejects = false) {
   const html = await Bun.file(new URL("../../site/index.html", import.meta.url)).text();
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  const script = html.split("<script>")[1]?.split("</script>")[0];
   const link = html.match(/<a\b[^>]*\bid="copy-prompt"[^>]*>/)?.[0];
   if (!script || !link) throw new Error("Setup link or page script is missing");
   const button = new Element();
