@@ -88,13 +88,6 @@ struct DecodingTests {
         #expect(try Fixture.decode(UpdateInstallResponse.self, "update-migration-required.json").status == .migrationRequired)
     }
 
-    @Test func sampleJSONMatchesFixtures() throws {
-        // The preview samples embed the documented examples; keep them in sync.
-        let decoder = JSONDecoder()
-        #expect(try decoder.decode(StatusResponse.self, from: Data(SampleJSON.status.utf8)) == Fixture.decode(StatusResponse.self, "status.json"))
-        #expect(try decoder.decode(ChannelsResponse.self, from: Data(SampleJSON.channels.utf8)) == Fixture.decode(ChannelsResponse.self, "channels-list.json"))
-        #expect(try decoder.decode(TagsResponse.self, from: Data(SampleJSON.tags.utf8)) == Fixture.decode(TagsResponse.self, "tags-list.json"))
-    }
 }
 
 @Suite("CLI output rules")

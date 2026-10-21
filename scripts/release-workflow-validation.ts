@@ -12,7 +12,7 @@ const REQUIRED_CONTROLS = [
   ["release/pronto-whatsapp-*.tgz", "WhatsApp package release artifact"],
   ["apps/menubar/scripts/bundle.sh \"$menubar\" --universal --sign-identity \"$identity\"", "universal menu bar app build"],
   ["codesign --verify --deep --strict --verbose=4 -R=\"$requirement\" \"$app\"", "menu bar app designated requirement"],
-  ["xcrun stapler staple \"$app\"", "menu bar app notarization ticket"],
+  ["bash scripts/staple-notarized-app.sh \"$app\"", "menu bar app notarization ticket"],
   ["release-assets/Pronto-menubar.zip", "menu bar app release asset"],
   ["release-assets/pronto-menubar-update.json", "menu bar app signed manifest"],
   ["sha256sum -c pronto-whatsapp.sha256", "downloaded WhatsApp package checksum verification"],
@@ -32,6 +32,7 @@ const REQUIRED_CONTROLS = [
   ["candidate_only:", "explicit candidate-only input"],
   ["if: ${{ inputs.candidate_only != true && !contains(github.ref_name, '-candidate.') }}", "candidate publication fence"],
   ["- name: Verify owner qualification is complete\n        if: ${{ inputs.candidate_only != true }}", "normal-release owner qualification gate"],
+  ["- name: Require Slack qualification before publishing\n        if: ${{ inputs.candidate_only != true }}", "normal-release Slack qualification gate"],
   ["- name: Create signed update manifest and checksums\n        if: ${{ inputs.candidate_only != true }}", "candidate update-manifest fence"],
   [
     "ref: ${{ github.ref }}",
@@ -47,6 +48,7 @@ const PUBLISHED_PACKAGES = 2;
 
 const ORDERED_STEPS = [
   "- name: Verify owner qualification is complete",
+  "- name: Require Slack qualification before publishing",
   "- name: Create signed update manifest and checksums",
   "\n  publish:",
   "- name: Verify downloaded checksum",

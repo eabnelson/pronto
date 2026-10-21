@@ -142,9 +142,10 @@ through qualification; a runtime change requires a new candidate and fresh smoke
 Only qualification/documentation changes may separate the candidate source from
 the final same-version release tag, and that diff must be reviewed explicitly.
 
-Before tagging a release, install the exact signed candidate over the prior
-signed production release on every supported macOS version. Confirm that Full
-Disk Access remains effective from the launchd-started listener, one explicit
-tag produces exactly one reply, an active turn drains before replacement, and a
-synthetically broken candidate rolls back. Record only content-free evidence in
-`docs/RELEASE_QUALIFICATION.md`.
+Before tagging a release, follow the three-result smoke in `docs/LIVE_SMOKE.md`:
+installed startup, the changed app flow and rollback readiness. Owner daily use
+can provide evidence; name the tested candidate/source and reviewed unchanged
+behavior. Run the broader permission, drain and fault/rollback scenarios when
+those mechanisms change or a bug requires reproduction. A full supported-platform
+matrix is not required for each release. Record only content-free evidence in
+`docs/RELEASE_QUALIFICATION.md`; signing and installed readiness checks still run.

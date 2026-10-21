@@ -15,10 +15,12 @@ import {
   normalizeTag,
   normalizeTags,
   removeTagFromApps,
+  runtimeExecutables,
   saveConfig,
   tagAssignments,
   type ProntoConfig,
   WHATSAPP_RISK_CONSENT_VERSION,
+  SLACK_RISK_CONSENT_VERSION,
 } from "./config";
 import {
   launchAgentStateForLabel,
@@ -56,11 +58,13 @@ import {
   standaloneWhatsapp,
   WHATSAPP_DISCLOSURE,
 } from "./whatsapp/standalone";
+import { runSlack } from "./slack/commands";
+import { standaloneSlack, slackHelperPath, SLACK_DISCLOSURE } from "./slack/standalone";
 import { qualifyRuntime } from "./runtimes/qualification";
 import { createRuntimeAdapter } from "./runtimes/factory";
 import { ImsgTransport } from "./imessage/transport";
 import { DeliveryJournal } from "./storage/journal";
-import { CHANNEL_KINDS, CHANNEL_LABELS, isChannelKind, type ChannelKind } from "./channels/types";
+import { CHANNEL_KINDS, CHANNEL_LABELS, channelLabel, isChannelKind, isSlackChannel, type ChannelKind } from "./channels/types";
 import {
   appList,
   parseAppFlags,
@@ -75,6 +79,7 @@ import {
   PRONTO_BROKER_URL_ENV,
 } from "./tools/contract";
 import { ProntoUpdater } from "./update";
+import { editTagAgents, tagsResponse } from "./tag-agents";
 import { MenubarInstaller } from "./menubar";
 
 const HELP = `pronto ${packageJson.version}
@@ -89,6 +94,7 @@ Commands:
   tags        List, add, or remove trigger tags and the apps they apply to
   channels    List, enable, or disable messaging apps
   whatsapp    Link or unlink WhatsApp
+  slack       Add and manage Slack workspace apps
   menubar     Install, check, or remove the menu bar app
   update      Check for or install a verified Pronto update
   start       Start the installed listener
@@ -124,6 +130,7 @@ async function runSetup(): Promise<number> {
     const installedApps: ChannelKind[] = [
       ...(discovery.imsgPath === undefined ? [] : ["imessage" as const]),
       ...(discovery.wacliPath === undefined ? [] : ["whatsapp" as const]),
+      ...(existsSync(join(homedir(), "Library/Application Support/Slack")) ? ["slack" as const] : []),
     ];
     const appChoices = tagAppChoices(installedApps);
     let apps = appChoices[0]!.apps;
@@ -229,6 +236,10 @@ async function runSetup(): Promise<number> {
       }
     }
 
+    if (apps.includes("slack")) {
+      console.log(`\n${SLACK_DISCLOSURE}\n`);
+      if ((await prompt.question("Type yes to use Slack with this risk: ")).trim().toLowerCase() !== "yes") return 1;
+    }
     const workingDirectory = selection.exists
       ? selection.path
       : await createWorkspaceDirectory(selection.path);
@@ -242,9 +253,32 @@ async function runSetup(): Promise<number> {
       primaryRuntime: primaryAnswer,
       tagApps,
       tags,
+      ...(apps.includes("slack") ? { slackRiskConsentVersion: SLACK_RISK_CONSENT_VERSION } : {}),
       ...(apps.includes("whatsapp") ? { whatsappRiskConsentVersion: WHATSAPP_RISK_CONSENT_VERSION } : {}),
       workingDirectory,
     });
+    if (apps.includes("slack") && existing?.slackWorkspaces !== undefined) {
+      delete config.channels.slack;
+      Object.assign(config.channels, existing.slackWorkspaces);
+    }
+    if (existing?.tagRuntimes !== undefined) {
+      const configuredTags = new Set(tagAssignments(config).map((entry) => entry.tag));
+      config.tagRuntimes = Object.fromEntries(Object.entries(existing.tagRuntimes).filter(([tag]) => configuredTags.has(tag)));
+    }
+    if (apps.includes("slack") && existing?.slackWorkspaces === undefined) {
+      const slack = await standaloneSlack({ paths, chatKeySalt: config.chatKeySalt });
+      try {
+        const workspaces = (await slack.discover()).workspaces;
+        if (!workspaces.length) throw new Error("Sign in to the direct-download Slack desktop app first.");
+        workspaces.forEach((row, index) => console.log(`${index + 1}. ${row.label}`));
+        const number = Number(await prompt.question("Choose your Slack workspace: "));
+        if (!Number.isInteger(number) || !workspaces[number - 1]) throw new Error("Invalid workspace selection");
+        const linked = await slack.link(workspaces[number - 1]!.handle);
+        await slack.useParticipatedConversations();
+        const identity = await slack.connection();
+        config.channels.slack = { ...config.channels.slack!, workspaceLabel: linked.workspace, workspaceKey: identity!.id };
+      } finally { await slack.close(); }
+    }
     const whatsappConfig = config.channels.whatsapp;
     if (whatsappConfig !== undefined) {
       const whatsapp = standaloneWhatsapp({
@@ -283,11 +317,7 @@ async function runSetup(): Promise<number> {
         const imessage = config.channels.imessage;
         if (imessage !== undefined) await imessagePreflight(imessage.imsgPath, imessage.tags);
         console.log("Qualifying each selected runtime with one temporary, noninteractive file-tool probe...");
-        for (const [kind, executablePath] of [
-          [config.primaryRuntime, config.primaryRuntimePath],
-          [config.fallbackRuntime, config.fallbackRuntimePath],
-        ] as const) {
-          if (kind === undefined || executablePath === undefined) continue;
+        for (const [kind, executablePath] of runtimeExecutables(config)) {
           const result = await qualifyRuntime({
             adapter: createRuntimeAdapter(kind, executablePath),
             ...(bridgeExecutableArgs === undefined ? {} : { bridgeExecutableArgs }),
@@ -316,7 +346,7 @@ async function runSetup(): Promise<number> {
             label: LAUNCH_AGENT_LABEL,
             plistPath: paths.launchAgentPath,
           });
-        });
+        }, Bun.sleep);
       },
       removeProntoAgent: async () => {
         await stopLaunchAgentForLabel({ label: UPDATER_LAUNCH_AGENT_LABEL });
@@ -515,32 +545,44 @@ async function whatsappDoctorCheck(
 
 const CHANNELS_USAGE = "Usage: pronto channels [list | enable <app> | disable <app>] [--json]";
 
-const CHANNEL_TOOLS: Record<ChannelKind, "imsg" | "wacli"> = { imessage: "imsg", whatsapp: "wacli" };
+const CHANNEL_TOOLS: Record<ChannelKind, string> = { imessage: "imsg", whatsapp: "wacli", slack: "Pronto Slack helper" };
 
-function channelListing(config: ProntoConfig) {
-  return CHANNEL_KINDS.map((app) => {
+async function channelListing(config: ProntoConfig) {
+  let legacyWorkspace: { id: string; label: string } | null = null;
+  if (config.channels.slack !== undefined && config.channels.slack.workspaceLabel === undefined) {
+    let provider: Awaited<ReturnType<typeof standaloneSlack>> | undefined;
+    try { provider = await standaloneSlack({ paths: pathsForHome(homedir()), chatKeySalt: config.chatKeySalt }); legacyWorkspace = await provider.connection(); }
+    catch { /* Keep the app visible if metadata isn't available yet. */ }
+    finally { await provider?.close(); }
+  }
+  const apps = [...new Set<ChannelKind>([...CHANNEL_KINDS, ...Object.keys(config.channels).filter(isChannelKind)])];
+  return apps.map((app) => {
     const entry = config.channels[app];
     const configuredPath = entry === undefined
       ? undefined
-      : "imsgPath" in entry ? entry.imsgPath : entry.wacliPath;
-    const path = configuredPath ?? Bun.which(CHANNEL_TOOLS[app]);
+      : "imsgPath" in entry ? entry.imsgPath : "wacliPath" in entry ? entry.wacliPath : undefined;
+    const tool = isSlackChannel(app) ? CHANNEL_TOOLS.slack : CHANNEL_TOOLS[app];
+    const path = configuredPath ?? Bun.which(tool);
+    const workspace = isSlackChannel(app) ? config.channels[app] : undefined;
+    const workspaceLabel = workspace?.workspaceLabel ?? (app === "slack" ? legacyWorkspace?.label : undefined);
     return {
       app,
       configured: entry !== undefined,
       enabled: entry?.enabled === true,
-      label: CHANNEL_LABELS[app],
+      label: workspaceLabel ?? channelLabel(app),
+      ...(workspace === undefined ? {} : { workspaceKey: workspace.workspaceKey ?? (app === "slack" ? legacyWorkspace?.id : undefined) }),
       tags: channelTags(config, app),
       tool: {
-        installed: path !== null && existsSync(path),
-        name: CHANNEL_TOOLS[app],
+        installed: isSlackChannel(app) ? existsSync("/Applications/Slack.app") : path !== null && existsSync(path),
+        name: tool,
         path: path ?? null,
       },
     };
   });
 }
 
-function printChannels(config: ProntoConfig): void {
-  console.log(JSON.stringify({ channels: channelListing(config) }));
+async function printChannels(config: ProntoConfig): Promise<void> {
+  console.log(JSON.stringify({ channels: await channelListing(config) }));
 }
 
 async function runChannels(args: readonly string[]): Promise<number> {
@@ -549,9 +591,9 @@ async function runChannels(args: readonly string[]): Promise<number> {
   const paths = pathsForHome(homedir());
   const config = await loadConfig(paths.configPath);
   if (action === "list" && app === undefined) {
-    if (json) printChannels(config);
+    if (json) await printChannels(config);
     else {
-      for (const channel of channelListing(config)) {
+      for (const channel of await channelListing(config)) {
         const state = channel.enabled ? "enabled" : channel.configured ? "disabled" : "not set up";
         console.log(`${channel.label.padEnd(10)} ${state}`);
       }
@@ -563,7 +605,7 @@ async function runChannels(args: readonly string[]): Promise<number> {
   }
   const entry = config.channels[app];
   if (entry === undefined) {
-    return fail(json, app === "whatsapp"
+    return fail(json, isSlackChannel(app) ? "Slack is not set up. Run pronto slack discover --json, then pronto slack link." : app === "whatsapp"
       ? "WhatsApp is not set up. Run pronto whatsapp link."
       : "iMessage is not set up. Run pronto setup.", 2);
   }
@@ -574,9 +616,9 @@ async function runChannels(args: readonly string[]): Promise<number> {
     return fail(json, (error as Error).message, 2);
   }
   await saveConfig(paths.configPath, next);
-  await reloadLaunchAgent().catch(() => undefined);
-  if (json) printChannels(next);
-  else console.log(`${CHANNEL_LABELS[app]} is ${action === "enable" ? "enabled" : "disabled"}.`);
+  if (existsSync(paths.launchAgentPath)) await reloadLaunchAgent().catch(() => undefined);
+  if (json) await printChannels(next);
+  else console.log(`${channelLabel(app)} is ${action === "enable" ? "enabled" : "disabled"}.`);
   return 0;
 }
 
@@ -868,15 +910,25 @@ async function runDoctor(json = false, offline = false): Promise<number> {
     if (imessage?.enabled === true) {
       report.checks.push(...await imessageDoctorChecks(imessage.imsgPath, imessage.tags));
     }
+    for (const workspace of enabledChannels(config).filter(isSlackChannel)) {
+      if (offline) {
+        try { await slackHelperPath(paths); report.checks.push({ id: "slack-helper", status: "ok" }); }
+        catch { report.checks.push({ id: "slack-helper", status: "failed", remediation: "Rebuild or reinstall the signed Slack helper." }); }
+      } else {
+        let slack: Awaited<ReturnType<typeof standaloneSlack>> | undefined;
+        try {
+          slack = await standaloneSlack({ paths, chatKeySalt: config.chatKeySalt, workspace });
+          const result = await slack.qualify();
+          report.checks.push({ id: workspace === "slack" ? "slack-linked" : `${workspace}-linked`, status: result.status === "needs_link" ? "failed" : result.degraded.length ? "degraded" : "ok", remediation: "Reconnect this Slack workspace. No test message was sent." });
+        } catch { report.checks.push({ id: workspace === "slack" ? "slack-linked" : `${workspace}-linked`, status: "failed", remediation: "Reconnect this Slack workspace." }); }
+        finally { await slack?.close(); }
+      }
+    }
     if (config.channels.whatsapp?.enabled === true) {
       report.checks.push(await whatsappDoctorCheck(config, paths));
     }
 
-    for (const [kind, executablePath] of [
-      [config.primaryRuntime, config.primaryRuntimePath],
-      [config.fallbackRuntime, config.fallbackRuntimePath],
-    ] as const) {
-      if (kind === undefined || executablePath === undefined) continue;
+    for (const [kind, executablePath] of runtimeExecutables(config)) {
       const qualification = await qualifyRuntime({
         adapter: createRuntimeAdapter(kind, executablePath),
         bridgeExecutablePath: paths.executablePath,
@@ -951,6 +1003,7 @@ async function runStatus(json: boolean, includeChats: boolean): Promise<number> 
         console.log(`degraded   ${capability}`);
       }
       for (const [kind, channel] of Object.entries(status.channels)) {
+        if (channel === undefined) continue;
         const tags = channel.tags === undefined ? "" : ` ${channel.tags.join(", ")}`;
         console.log(`${kind.padEnd(10)} ${channel.state}${tags}`);
       }
@@ -1023,27 +1076,39 @@ async function runUninstall(args: readonly string[]): Promise<number> {
   return 0;
 }
 
-const TAGS_USAGE = "Usage: pronto tags [list | add <tag> [--app <app>]... | remove <tag> [--app <app>]...] [--json]";
+const TAGS_USAGE = "Usage: pronto tags [list | add <tag> [--app <app>]... | remove <tag> [--app <app>]... | agents <tag> --primary codex|claude --backup codex|claude|none | agents <tag> --reset] [--json]";
 
 async function runTags(args: readonly string[]): Promise<number> {
   const paths = pathsForHome(homedir());
   const json = args.includes("--json");
+  const config = await loadConfig(paths.configPath);
+  if (args[0] === "agents") {
+    let next: ProntoConfig;
+    try { next = await editTagAgents(config, args.slice(1)); }
+    catch (error) { return fail(json, (error as Error).message, 2); }
+    if (JSON.stringify(next) !== JSON.stringify(config)) {
+      await saveConfig(paths.configPath, next);
+      if (existsSync(paths.launchAgentPath)) await reloadLaunchAgent().catch(() => undefined);
+    }
+    if (json) console.log(JSON.stringify(await tagsResponse(next)));
+    else console.log(`Agent choices saved for ${normalizeTag(args[1]!)}.`);
+    return 0;
+  }
   let parsed: ReturnType<typeof parseAppFlags>;
   try {
     parsed = parseAppFlags(args);
   } catch (error) {
     return fail(json, (error as Error).message, 2);
   }
-  const config = await loadConfig(paths.configPath);
   const [action = "list", value, extra] = parsed.positional;
   const enabled = enabledChannels(config);
-  const printTags = (current: ProntoConfig) => {
-    console.log(JSON.stringify({ tags: tagAssignments(current) }));
+  const printTags = async (current: ProntoConfig) => {
+    console.log(JSON.stringify(await tagsResponse(current)));
   };
 
   if (action === "list") {
     if (value !== undefined || parsed.apps.length > 0) return fail(json, TAGS_USAGE, 2);
-    if (json) printTags(config);
+    if (json) await printTags(config);
     else {
       for (const { apps, tag } of tagAssignments(config)) {
         console.log(enabled.length > 1 ? `${tag.padEnd(12)} ${appList(apps)}` : tag);
@@ -1060,11 +1125,11 @@ async function runTags(args: readonly string[]): Promise<number> {
   try {
     normalizedValue = normalizeTag(value);
     for (const app of parsed.apps) {
-      if (!enabled.includes(app)) throw new Error(`${CHANNEL_LABELS[app]} is not enabled`);
+      if (config.channels[app] === undefined) throw new Error(`${channelLabel(app)} is not configured`);
     }
     let apps = parsed.apps;
     if (apps.length === 0 && action === "add" && !json) apps = await chooseTagApps(normalizedValue, enabled);
-    if (apps.length === 0) apps = enabled;
+    if (apps.length === 0) apps = action === "remove" ? Object.keys(config.channels).filter(isChannelKind) : enabled;
     next = action === "add"
       ? addTagToApps(config, value, apps)
       : removeTagFromApps(config, value, apps);
@@ -1072,14 +1137,14 @@ async function runTags(args: readonly string[]): Promise<number> {
     return fail(json, (error as Error).message, 2);
   }
   if (JSON.stringify(next.channels) === JSON.stringify(config.channels)) {
-    if (json) printTags(config);
+    if (json) await printTags(config);
     else console.log(`${normalizedValue} is already configured.`);
     return 0;
   }
 
   await saveConfig(paths.configPath, next);
-  await reloadLaunchAgent().catch(() => undefined);
-  if (json) printTags(next);
+  if (existsSync(paths.launchAgentPath)) await reloadLaunchAgent().catch(() => undefined);
+  if (json) await printTags(next);
   else {
     console.log(`Configured tags: ${tagAssignments(next).map(({ apps, tag }) => {
       return enabled.length > 1 ? `${tag} (${appList(apps)})` : tag;
@@ -1132,6 +1197,7 @@ export async function runCli(args: readonly string[]): Promise<number> {
   if (command === "doctor") return runDoctor(args.includes("--json"), args.includes("--offline"));
   if (command === "status") return runStatus(args.includes("--json"), args.includes("--chats"));
   if (command === "tags" || command === "tag") return runTags(args.slice(1));
+  if (command === "slack") return runSlack(args.slice(1));
   if (command === "whatsapp") return runWhatsapp(args.slice(1));
   if (command === "update") return runUpdate(args.slice(1));
   if (command === "stop" || command === "start") return runListener(command, args.includes("--json"));

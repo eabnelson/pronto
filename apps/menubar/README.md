@@ -2,7 +2,12 @@
 
 A native SwiftUI menu bar app (`Pronto.app`, bundle id `dev.pronto.menubar`) for
 checking and controlling the local Pronto listener: app status, tags, pause and
-resume, updates, diagnostics, and WhatsApp linking.
+resume, updates, diagnostics, WhatsApp linking, and separate Slack workspace apps.
+
+Apps shows connected apps and one Add App entry. Add App offers a Slack
+workspace connection or an agent setup prompt for iMessage and WhatsApp.
+All tag creation, app assignment and agent settings live under Tags; adding a
+Slack workspace creates no tags, and reconnecting preserves existing ones.
 
 The app talks to Pronto **only** through the machine-readable CLI contract in
 [`docs/CLI_JSON.md`](../../docs/CLI_JSON.md). It runs the installed executable
@@ -96,10 +101,12 @@ Tests/Fixtures/             JSON/NDJSON fixtures and the fake-pronto script
 | Status, icon, app rows | `status --json` (5 s while the panel is open, 60 s otherwise), `channels list --json` |
 | Enable or disable an app | `channels enable <app> --json`, `channels disable <app> --json` |
 | Tags | `tags list --json`, `tags add <tag> --app … --json`, `tags remove <tag> [--app …] --json` |
+| Per-tag agents | `tags agents <tag> --primary codex\|claude --backup codex\|claude\|none --json`, `tags agents <tag> --reset --json` |
 | Pause and resume | `stop --json`, `start --json` |
 | Updates | `update --check --json` (at most every 6 h, or on demand), `update --json` |
 | Diagnostics | `doctor --json` |
 | Link WhatsApp | `whatsapp link --events --accept-risk [--phone …] [--tag …]` |
+| Slack workspaces | `slack discover --json`, `slack link --workspace … --events --accept-risk --defer-tags`, `slack unlink --app … --json` |
 
 Menu bar icon: normal when the listener is running and every enabled app is
 ready; attention (orange) when something is degraded or starting, or an update
@@ -109,3 +116,5 @@ failed, or an enabled app failed or needs linking; dimmed when paused
 
 Quitting the menu bar app never stops the listener. Launch at Login uses
 `SMAppService.mainApp`, so it only works from the bundled app.
+
+Slack workspace rows show the workspace name and logo. Click a row to toggle replies; right-click it for **Remove Workspace** (another enabled app must remain). Use **Add App…** to add a workspace, and **Tags** to assign its tags and choose default/backup agents. Empty tags do not suppress connection/recovery warnings or the paused state.

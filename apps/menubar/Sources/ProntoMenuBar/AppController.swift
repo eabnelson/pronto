@@ -16,6 +16,7 @@ final class AppController {
     let diagnostics: DiagnosticsModel
     /// The active link session; created when the link window opens.
     var linkModel: LinkModel?
+    var slackWorkspaceToReconnect: AppID?
     private(set) var launchAtLogin: Bool = false
 
     init(client: CLIClient? = nil) {
@@ -42,6 +43,20 @@ final class AppController {
         let base = url.path
         await model.pollOnce(full: true)
         snapshot(PanelView().environment(self).environment(model), to: "\(base)-panel")
+        let slack = SlackModel(client: model.client)
+        await slack.discover()
+        snapshot(SlackSettingsView(settings: slack).environment(self).environment(model), to: "\(base)-slack-add")
+        snapshot(AddAppSection(expanded: true, onAddSlack: {})
+            .environment(model).frame(width: PanelMetrics.width), to: "\(base)-add-app")
+        if model.channels?.channel(.whatsapp)?.configured != true {
+            snapshot(AddAppSection(expanded: true, setupApp: .whatsapp, onAddSlack: {})
+                .environment(model).frame(width: PanelMetrics.width), to: "\(base)-app-setup")
+        }
+        if let entry = model.tagEntries.first, let agents = entry.agents,
+           let options = model.tags?.availableAgents {
+            snapshot(TagAgentEditor(tag: entry.tag, agents: agents, options: options)
+                .environment(model).frame(width: PanelMetrics.width), to: "\(base)-tag-agents")
+        }
 
         diagnostics.run()
         await diagnostics.waitUntilFinished()

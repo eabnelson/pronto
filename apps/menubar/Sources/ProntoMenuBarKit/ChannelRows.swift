@@ -23,6 +23,10 @@ public struct ChannelRow: Identifiable, Equatable, Sendable {
 
     public var id: AppID { app }
 
+    public var workspaceRemovalAllowed: Bool {
+        app.isSlack && configured && (!enabled || toggleAllowed)
+    }
+
     /// Text for VoiceOver, e.g. "WhatsApp: Needs linking".
     public var accessibilityLabel: String {
         [label + ": " + statusText, detail].compactMap { $0 }.joined(separator: ". ")
@@ -71,6 +75,15 @@ public enum ChannelRowBuilder {
             } else if let live {
                 (row.statusText, row.tone) = describe(live.state)
                 row.detail = live.reason
+                if app.isSlack {
+                    switch live.reason {
+                    case "slack-recovery-incomplete": row.detail = "Missed-tag recovery is incomplete. Retrying automatically."
+                    case "slack-discovery-incomplete": row.detail = "Some conversations could not be monitored."
+                    case "slack-conversation-limit": row.detail = "This workspace reached the 500-conversation limit."
+                    case "slack-selection-required": row.detail = "Reconnect to finish workspace setup."
+                    default: break
+                    }
+                }
                 row.showsLinkButton = app == .whatsapp && live.state == .needsLink
             } else if status == nil {
                 row.statusText = "Checking…"
@@ -80,6 +93,12 @@ public enum ChannelRowBuilder {
                 row.tone = .warning
             }
 
+            if app.isSlack { row.showsLinkButton = configured && live?.state == .needsLink }
+            if app.isSlack, configured, enabled, info?.tags.isEmpty == true, !paused, !row.showsLinkButton, row.tone != .error, row.tone != .warning {
+                row.statusText = "No tags"
+                row.detail = "Add a tag below to start answering."
+                row.tone = .inactive
+            }
             if row.showsToggle && enabled && enabledCount <= 1 {
                 row.toggleAllowed = false
                 row.toggleHelp = "At least one app must stay on."

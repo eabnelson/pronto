@@ -6,7 +6,7 @@ const root = join(import.meta.dir, "..");
 const dist = join(root, "dist");
 await rm(dist, { force: true, recursive: true });
 await mkdir(dist, { recursive: true });
-for (const modulePackage of ["messages", "whatsapp"]) {
+for (const modulePackage of ["messages", "whatsapp", "slack"]) {
   await rm(join(root, "packages", modulePackage, "dist"), { force: true, recursive: true });
   const moduleBuild = Bun.spawn(
     [join(root, "node_modules", ".bin", "tsc"), "-p", join(root, "packages", modulePackage, "tsconfig.json")],
@@ -20,10 +20,7 @@ const prontoPath = join(dist, "pronto");
 const prontoBuild = Bun.spawn(
   [
     "bun",
-    "build",
-    join(root, "packages", "cli", "src", "cli.ts"),
-    "--compile",
-    "--outfile",
+    join(root, "scripts", "compile-cli.ts"),
     prontoPath,
   ],
   { stderr: "inherit", stdout: "inherit" },

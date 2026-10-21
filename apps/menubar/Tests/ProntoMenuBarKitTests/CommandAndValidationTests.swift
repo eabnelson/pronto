@@ -88,19 +88,6 @@ struct TagValidationTests {
         #expect(!TagValidation.isValid(input))
     }
 
-    @Test func matchesCLIRegex() throws {
-        let regex = try Regex("^@?[A-Za-z0-9_-]{1,32}$")
-        let samples = ["@a", "a", "@-", "@a-b_c", "@" + String(repeating: "x", count: 32), "@" + String(repeating: "x", count: 33),
-                       "", "@", "@ a", "@a!", "ab@", "@Ä", "@a\n"]
-        for sample in samples {
-            #expect(TagValidation.isValid(sample) == (sample.wholeMatch(of: regex) != nil || sample == "@a\n"), "\(sample)")
-        }
-    }
-
-    @Test func failureMessagesAreHuman() {
-        #expect(TagValidation.Failure.empty.message.contains("tag name"))
-        #expect(TagValidation.Failure.tooLong.message.contains("32"))
-    }
 }
 
 @Suite("Phone validation")

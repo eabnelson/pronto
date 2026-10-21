@@ -1,12 +1,13 @@
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
-import type { ChannelKind } from "./channels/types";
+import { isSlackChannel, type ChannelKind } from "./channels/types";
 
 export const CONFIG_VERSION = 3 as const;
 export const UNRESTRICTED_TRUST_VERSION = 1 as const;
 /** Bumped when the WhatsApp disclosure changes materially, so setup asks again. */
 export const WHATSAPP_RISK_CONSENT_VERSION = 1 as const;
+export const SLACK_RISK_CONSENT_VERSION = 1 as const;
 export const TAG_PATTERN = /^@[A-Za-z0-9_-]{1,32}$/;
 
 export type RuntimeKind = "codex" | "claude";
@@ -26,21 +27,36 @@ export interface WhatsappChannelConfig {
   wacliPath: string;
 }
 
+export interface SlackChannelConfig {
+  enabled: boolean;
+  riskConsentVersion: typeof SLACK_RISK_CONSENT_VERSION;
+  tags: string[];
+  workspaceLabel?: string;
+  workspaceKey?: string;
+}
+
 /** One entry per messaging app. Each app keeps its own trigger tags. */
 export interface ChannelsConfig {
   imessage?: ImessageChannelConfig;
   whatsapp?: WhatsappChannelConfig;
+  slack?: SlackChannelConfig;
+  [workspace: `slack:${string}`]: SlackChannelConfig | undefined;
 }
 
-export interface ProntoConfig {
+export interface RuntimeSelection {
+  primaryRuntime: RuntimeKind;
+  fallbackRuntime?: RuntimeKind;
+  primaryRuntimePath?: string;
+  fallbackRuntimePath?: string;
+}
+
+export interface ProntoConfig extends RuntimeSelection {
   version: typeof CONFIG_VERSION;
   chatKeySalt: string;
   channels: ChannelsConfig;
-  primaryRuntime: RuntimeKind;
-  fallbackRuntime?: RuntimeKind;
+  /** Absent tags inherit the global selection, across all messaging apps. */
+  tagRuntimes?: Record<string, RuntimeSelection>;
   installedExecutableHash?: string;
-  primaryRuntimePath?: string;
-  fallbackRuntimePath?: string;
   workingDirectory: string;
   unrestrictedTrustVersion: typeof UNRESTRICTED_TRUST_VERSION;
 }
@@ -50,6 +66,8 @@ export type ConfigInput = Omit<
   "channels" | "chatKeySalt" | "version"
 > & {
   channels: {
+    slack?: Omit<SlackChannelConfig, "tags" | "riskConsentVersion"> & { riskConsentVersion: number; tags: readonly string[] };
+    [workspace: `slack:${string}`]: (Omit<SlackChannelConfig, "tags" | "riskConsentVersion"> & { riskConsentVersion: number; tags: readonly string[] }) | undefined;
     imessage?: Omit<ImessageChannelConfig, "tags"> & { tags: readonly string[] };
     whatsapp?: Omit<WhatsappChannelConfig, "riskConsentVersion" | "tags"> & {
       riskConsentVersion: number;
@@ -141,7 +159,7 @@ export function addTagToApps(
   );
 }
 
-/** Removes a tag from each app in `apps` that has it; refuses to leave an app with no tags. */
+/** Slack workspaces can wait for tag assignment; the other apps keep at least one tag. */
 export function removeTagFromApps(
   config: ProntoConfig,
   value: string,
@@ -150,10 +168,42 @@ export function removeTagFromApps(
   const tag = normalizeTag(value);
   const holders = apps.filter((kind) => channelTags(config, kind).includes(tag));
   if (holders.length === 0) throw new Error(`Tag is not configured: ${tag}`);
-  return holders.reduce(
-    (next, kind) => withChannelTags(next, kind, removeTag(channelTags(next, kind), tag)),
+  const next = holders.reduce(
+    (next, kind) => withChannelTags(next, kind, isSlackChannel(kind)
+      ? channelTags(next, kind).filter((candidate) => candidate !== tag)
+      : removeTag(channelTags(next, kind), tag)),
     config,
   );
+  if (!tagAssignments(next).some((entry) => entry.tag === tag) && next.tagRuntimes?.[tag] !== undefined) {
+    const tagRuntimes = { ...next.tagRuntimes };
+    delete tagRuntimes[tag];
+    return { ...next, tagRuntimes };
+  }
+  return next;
+}
+
+export function runtimeSelection(config: ProntoConfig, tag?: string): RuntimeSelection {
+  return (tag === undefined ? undefined : config.tagRuntimes?.[normalizeTag(tag)]) ?? config;
+}
+
+/** Every configured executable, for setup, diagnostics, and listener PATH construction. */
+export function runtimeExecutables(config: ProntoConfig): Array<[RuntimeKind, string]> {
+  const entries = new Map<string, [RuntimeKind, string]>();
+  for (const selection of [config, ...Object.values(config.tagRuntimes ?? {})]) {
+    for (const [kind, path] of [[selection.primaryRuntime, selection.primaryRuntimePath], [selection.fallbackRuntime, selection.fallbackRuntimePath]] as const) {
+      if (kind !== undefined && path !== undefined) entries.set(`${kind}:${path}`, [kind, path]);
+    }
+  }
+  return [...entries.values()];
+}
+
+export function setTagRuntimes(config: ProntoConfig, value: string, selection: RuntimeSelection | null): ProntoConfig {
+  const tag = normalizeTag(value);
+  if (!tagAssignments(config).some((entry) => entry.tag === tag)) throw new Error(`Tag is not configured: ${tag}`);
+  const tagRuntimes = { ...config.tagRuntimes };
+  if (selection === null) delete tagRuntimes[tag];
+  else tagRuntimes[tag] = parseRuntimeSelection(selection);
+  return { ...config, tagRuntimes };
 }
 
 export function createConfig(input: ConfigInput): ProntoConfig {
@@ -190,12 +240,33 @@ export function createConfig(input: ConfigInput): ProntoConfig {
       wacliPath: whatsapp.wacliPath,
     };
   }
+  for (const [kind, entry] of Object.entries(input.channels)) {
+    if (!isSlackChannel(kind) || entry === undefined) continue;
+    const slack = entry as SlackChannelConfig;
+    if (slack.riskConsentVersion !== SLACK_RISK_CONSENT_VERSION) throw new Error("Slack risk consent is missing; run pronto slack link");
+    if (slack.workspaceKey !== undefined && !/^[a-f0-9]{32}$/.test(slack.workspaceKey)) throw new Error("Invalid Slack workspace key");
+    if (kind !== "slack" && slack.workspaceKey !== undefined && kind !== `slack:${slack.workspaceKey}`) throw new Error("Slack workspace key does not match its app");
+    channels[kind] = {
+      enabled: slack.enabled, riskConsentVersion: SLACK_RISK_CONSENT_VERSION, tags: slack.tags.length ? normalizeTags(slack.tags) : [],
+      ...(slack.workspaceLabel === undefined ? {} : { workspaceLabel: slack.workspaceLabel }),
+      ...(slack.workspaceKey === undefined ? {} : { workspaceKey: slack.workspaceKey }),
+    };
+  }
   if (enabledChannels({ channels }).length === 0) {
     throw new Error("Enable at least one messaging app");
   }
 
+  const tagRuntimes: Record<string, RuntimeSelection> = {};
+  for (const [tag, selection] of Object.entries(input.tagRuntimes ?? {})) {
+    if (normalizeTag(tag) !== tag || !tagAssignments({ channels }).some((entry) => entry.tag === tag)) {
+      throw new Error(`Agent selection refers to an unconfigured tag: ${tag}`);
+    }
+    tagRuntimes[tag] = parseRuntimeSelection(selection);
+  }
+
   return {
     ...input,
+    ...(input.tagRuntimes === undefined ? {} : { tagRuntimes }),
     channels,
     chatKeySalt: input.chatKeySalt ?? randomBytes(32).toString("base64url"),
     version: CONFIG_VERSION,
@@ -256,6 +327,26 @@ function isRuntime(value: unknown): value is RuntimeKind {
   return value === "codex" || value === "claude";
 }
 
+function parseRuntimeSelection(raw: unknown): RuntimeSelection {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid tag agent selection");
+  const value = raw as Record<string, unknown>;
+  if (!isRuntime(value.primaryRuntime) || (value.fallbackRuntime !== undefined && !isRuntime(value.fallbackRuntime))) {
+    throw new Error("Invalid tag agent selection");
+  }
+  if (value.primaryRuntime === value.fallbackRuntime) throw new Error("Backup agent must differ from the default agent");
+  for (const key of ["primaryRuntimePath", "fallbackRuntimePath"] as const) {
+    if (value[key] !== undefined && (typeof value[key] !== "string" || !isAbsolute(value[key]))) {
+      throw new Error("Agent executable path must be absolute");
+    }
+  }
+  return {
+    primaryRuntime: value.primaryRuntime,
+    ...(value.fallbackRuntime === undefined ? {} : { fallbackRuntime: value.fallbackRuntime as RuntimeKind }),
+    ...(typeof value.primaryRuntimePath === "string" ? { primaryRuntimePath: value.primaryRuntimePath } : {}),
+    ...(typeof value.fallbackRuntimePath === "string" ? { fallbackRuntimePath: value.fallbackRuntimePath } : {}),
+  };
+}
+
 export async function loadConfig(path: string): Promise<ProntoConfig> {
   const raw: unknown = JSON.parse(await readFile(path, "utf8"));
   if (raw === null || typeof raw !== "object") throw new Error("Invalid configuration");
@@ -277,6 +368,9 @@ export async function loadConfig(path: string): Promise<ProntoConfig> {
   if (typeof value.chatKeySalt !== "string" || value.chatKeySalt.length < 32) {
     throw new Error("Invalid chat-key salt");
   }
+  if (value.tagRuntimes !== undefined && (value.tagRuntimes === null || typeof value.tagRuntimes !== "object" || Array.isArray(value.tagRuntimes))) {
+    throw new Error("Invalid tag agent selections");
+  }
 
   return createConfig({
     ...(value.fallbackRuntime === undefined
@@ -292,6 +386,9 @@ export async function loadConfig(path: string): Promise<ProntoConfig> {
       ? { fallbackRuntimePath: value.fallbackRuntimePath }
       : {}),
     channels,
+    ...(value.tagRuntimes === undefined ? {} : { tagRuntimes: Object.fromEntries(
+      Object.entries(value.tagRuntimes as Record<string, unknown>).map(([tag, selection]) => [tag, parseRuntimeSelection(selection)]),
+    ) }),
     chatKeySalt: value.chatKeySalt,
     primaryRuntime: value.primaryRuntime,
     workingDirectory: value.workingDirectory,
@@ -343,6 +440,14 @@ function parseChannels(raw: unknown): ConfigInput["channels"] {
         riskConsentVersion: channel.riskConsentVersion,
         tags,
         wacliPath: channel.wacliPath,
+      };
+    } else if (isSlackChannel(kind)) {
+      if (typeof channel.enabled !== "boolean" || typeof channel.riskConsentVersion !== "number" || tags === null) throw new Error("Invalid Slack configuration");
+      if (channel.workspaceLabel !== undefined && typeof channel.workspaceLabel !== "string" || channel.workspaceKey !== undefined && typeof channel.workspaceKey !== "string") throw new Error("Invalid Slack workspace configuration");
+      channels[kind] = {
+        enabled: channel.enabled, riskConsentVersion: channel.riskConsentVersion as typeof SLACK_RISK_CONSENT_VERSION, tags,
+        ...(typeof channel.workspaceLabel === "string" ? { workspaceLabel: channel.workspaceLabel } : {}),
+        ...(typeof channel.workspaceKey === "string" ? { workspaceKey: channel.workspaceKey } : {}),
       };
     } else {
       throw new Error(`Unsupported messaging app in configuration: ${kind}`);

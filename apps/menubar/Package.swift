@@ -29,5 +29,9 @@ let package = Package(
             name: "ProntoMenuBarKitTests",
             dependencies: ["ProntoMenuBarKit"]
         ),
+        .testTarget(
+            name: "ProntoMenuBarTests",
+            dependencies: ["ProntoMenuBar"]
+        ),
     ]
 )

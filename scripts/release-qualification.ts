@@ -1,18 +1,7 @@
 const expectedSurfaces = new Set([
-  "macOS",
-  "Bun",
-  "Node.js",
-  "imsg",
-  "Codex CLI",
-  "Claude Code",
-  "Codex effective local probe",
-  "Claude effective local probe",
-  "Messages Automation",
-  "Self-chat mirror handling",
-  "Full remote tagged flow",
-  "wacli",
-  "WhatsApp tagged flow",
-  "Menu bar app",
+  "Installed startup",
+  "Changed app flow",
+  "Rollback readiness",
 ]);
 const semverTag = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
@@ -70,7 +59,7 @@ export function validateReleaseQualification(markdown: string, releaseTag: strin
       throw new Error(`malformed qualification row at matrix line ${index + 3}`);
     }
 
-    const [surface, qualifiedVersion, _evidence, status] = cells as [string, string, string, string];
+    const [surface, qualifiedVersion, evidence, status] = cells as [string, string, string, string];
     if (!expectedSurfaces.has(surface)) {
       throw new Error(`unknown qualification row: ${surface}`);
     }
@@ -80,9 +69,10 @@ export function validateReleaseQualification(markdown: string, releaseTag: strin
     if (status !== "Pass") {
       throw new Error(`${surface} status must be Pass, received ${status}`);
     }
-    if (surface === "Full remote tagged flow" && qualifiedVersion !== releaseTag) {
-      throw new Error(`Full remote tagged flow must be qualified for exact release tag ${releaseTag}`);
+    if (qualifiedVersion !== releaseTag) {
+      throw new Error(`${surface} must be qualified for exact release tag ${releaseTag}`);
     }
+    if (evidence.length < 10) throw new Error(`${surface} needs recorded evidence`);
   }
 
   for (const surface of expectedSurfaces) {

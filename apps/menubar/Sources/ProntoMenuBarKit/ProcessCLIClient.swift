@@ -43,8 +43,15 @@ public final class ProcessCLIClient: CLIClient, @unchecked Sendable {
     }
 
     public func linkWhatsApp(_ options: WhatsAppLinkOptions) -> AsyncThrowingStream<LinkEvent, Error> {
+        stream(arguments: CLICommand.whatsappLink(options).arguments) { try LinkEvent.parse(line: $0) }
+    }
+
+    public func linkSlack(workspace: String, tags: [String]) -> AsyncThrowingStream<SlackLinkProgress, Error> {
+        stream(arguments: CLICommand.slackLink(workspace: workspace, tags: tags).arguments) { try JSONDecoder().decode(SlackLinkProgress.self, from: $0) }
+    }
+
+    private func stream<Event: Sendable>(arguments: [String], parse: @escaping @Sendable (Data) throws -> Event?) -> AsyncThrowingStream<Event, Error> {
         let url = location.url
-        let arguments = CLICommand.whatsappLink(options).arguments
         let environment = environment
         return AsyncThrowingStream { continuation in
             let process = ProcessHandle()
@@ -54,7 +61,7 @@ public final class ProcessCLIClient: CLIClient, @unchecked Sendable {
                     try self.prepareExecutable()
                     try process.stream(url: url, arguments: arguments, environment: environment) { line in
                         do {
-                            if let event = try LinkEvent.parse(line: line) { continuation.yield(event) }
+                            if let event = try parse(line) { continuation.yield(event) }
                         } catch {
                             // Malformed lines are skipped; the stream contract is one object per line.
                         }

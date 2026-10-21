@@ -1,15 +1,23 @@
 import type { CurrentChatSource } from "../tools/broker";
 
-export const CHANNEL_KINDS = ["imessage", "whatsapp"] as const;
-export type ChannelKind = (typeof CHANNEL_KINDS)[number];
+export const CHANNEL_KINDS = ["imessage", "whatsapp", "slack"] as const;
+export type SlackChannelKind = "slack" | `slack:${string}`;
+export type ChannelKind = (typeof CHANNEL_KINDS)[number] | SlackChannelKind;
+
+export function isSlackChannel(value: unknown): value is SlackChannelKind {
+  return value === "slack" || typeof value === "string" && /^slack:[a-f0-9]{32}$/.test(value);
+}
 
 export function isChannelKind(value: unknown): value is ChannelKind {
-  return CHANNEL_KINDS.includes(value as ChannelKind);
+  return CHANNEL_KINDS.includes(value as typeof CHANNEL_KINDS[number]) || isSlackChannel(value);
 }
+
+export function channelLabel(kind: ChannelKind): string { return isSlackChannel(kind) ? "Slack" : CHANNEL_LABELS[kind]; }
 
 export const CHANNEL_LABELS: Record<ChannelKind, string> = {
   imessage: "iMessage",
   whatsapp: "WhatsApp",
+  slack: "Slack",
 };
 
 /** Identifies one conversation within one messaging app. `id` is the app's own chat id. */
@@ -57,6 +65,8 @@ export interface TurnChannel {
   readonly conversationLabel: string;
   /** Largest file the app accepts with a reply; absent when it cannot send files. */
   readonly maxAttachmentBytes?: number;
+  /** Recheck revocable provider authority before confirmed memory/folder promotion. */
+  canCommit?(chat: ChatAddress, conversation: unknown): Promise<boolean>;
   formatReply(activationTag: string, text: string): string;
   replyBodyCharacterLimit(activationTag: string, maxCharacters: number): number;
   recentMessages(chat: ChatAddress, limit: number, conversation?: unknown): Promise<unknown[]>;
@@ -92,6 +102,8 @@ export type ChannelConnectionHealth =
 export interface Channel extends TurnChannel {
   readonly kind: ChannelKind;
   readonly currentChat: CurrentChatSource;
+  /** Reconcile provider-owned settings updated by a separate CLI process. */
+  reload?(): Promise<void>;
   qualify(): Promise<{ degraded: readonly string[]; version: string }>;
   watch(input: {
     onActivation: (activation: ChannelActivation) => void | Promise<void>;

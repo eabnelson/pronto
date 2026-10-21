@@ -1,0 +1,38 @@
+{
+  "name": "pronto-slack",
+  "version": "0.5.2",
+  "description": "Local Slack desktop transport with scoped reads and conservative delivery",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "native/*.go",
+    "native/*.c",
+    "native/*.h",
+    "native/go.mod",
+    "native/go.sum",
+    "native/credential",
+    "native/licenses",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "homepage": "https://github.com/eabnelson/pronto#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eabnelson/pronto.git",
+    "directory": "packages/slack"
+  }
+}

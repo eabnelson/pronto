@@ -46,14 +46,17 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.23.1
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version-file: packages/slack/native/go.mod
+          cache-dependency-path: packages/slack/native/go.sum
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      - name: Check native helper vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        working-directory: packages/slack/native
       - run: bun run build
       - run: bun test
-      - run: ./dist/pronto --version
-      - run: ./dist/pronto --help
-      - run: node --input-type=module --eval 'import("./packages/messages/dist/index.js").then((module) => { if (typeof module.createProntoMessages !== "function") process.exit(1); })'
-      - run: node --input-type=module --eval 'import("./packages/whatsapp/dist/index.js").then((module) => { if (typeof module.createProntoWhatsapp !== "function") process.exit(1); })'
       - run: bun run release:validate
       - name: Verify immutable tag and package version
         id: release-version
@@ -86,15 +89,9 @@ jobs:
       - name: Verify owner qualification is complete
         if: ${{ inputs.candidate_only != true }}
         run: bun ./scripts/release-qualification.ts docs/RELEASE_QUALIFICATION.md "$RELEASE_TAG"
-      - name: Build native release artifacts
-        env:
-          PRONTO_RELEASE_VERSION: ${{ steps.release-version.outputs.package-version }}
-        run: |
-          mkdir -p release
-          bun build packages/cli/src/cli.ts --compile --target=bun-darwin-arm64 \
-            --outfile release/pronto-darwin-arm64
-          bun build packages/cli/src/cli.ts --compile --target=bun-darwin-x64 \
-            --outfile release/pronto-darwin-x64
+      - name: Require Slack qualification before publishing
+        if: ${{ inputs.candidate_only != true }}
+        run: bun scripts/slack-qualification.ts --check docs/slack-qualification.json "$RELEASE_TAG"
       - name: Import release credentials
         env:
           PRONTO_DEVELOPER_ID_P12_B64: ${{ secrets.PRONTO_DEVELOPER_ID_P12_B64 }}
@@ -130,6 +127,9 @@ jobs:
           test -n "$PRONTO_NOTARY_ISSUER_ID"
           identity="$(security find-identity -v -p codesigning "$PRONTO_SIGNING_KEYCHAIN" | awk '/Developer ID Application:/ { print $2; exit }')"
           test -n "$identity" || { echo "Developer ID Application identity unavailable" >&2; exit 1; }
+          mkdir -p release
+          PRONTO_CODESIGN_IDENTITY="$identity" bun scripts/compile-cli.ts release/pronto-darwin-arm64 bun-darwin-arm64
+          PRONTO_CODESIGN_IDENTITY="$identity" bun scripts/compile-cli.ts release/pronto-darwin-x64 bun-darwin-x64
           requirement="identifier \"$PRONTO_SIGNING_IDENTIFIER\" and anchor apple generic and certificate leaf[subject.OU] = \"$PRONTO_SIGNING_TEAM_IDENTIFIER\""
           for asset in pronto-darwin-arm64 pronto-darwin-x64; do
             codesign --force --options runtime --timestamp \
@@ -181,8 +181,7 @@ jobs:
             --key "$PRONTO_NOTARY_KEY_PATH" \
             --wait --output-format json)"
           test "$(jq -r '.status' <<< "$notarization")" = "Accepted"
-          xcrun stapler staple "$app"
-          xcrun stapler validate "$app"
+          bash scripts/staple-notarized-app.sh "$app"
           ditto -c -k --keepParent "$app" release/Pronto-menubar.zip
       - name: Smoke test signed release artifacts
         env:

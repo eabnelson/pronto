@@ -1,8 +1,7 @@
 import ProntoMenuBarKit
 import SwiftUI
 
-/// Tags, each shown as an @ icon and its name. Clicking a tag expands its apps
-/// as checkmarks, like Listening Mode under AirPods in the Sound menu.
+/// Tags expand to their apps, agent pair, and removal controls.
 struct TagsSection: View {
     @Environment(MenuBarModel.self) private var model
     @State private var expandedTag: String?
@@ -63,7 +62,7 @@ struct TagsSection: View {
             }
         }
         .accessibilityLabel("\(entry.tag), used in \(Presentation.appList(entry.apps, labels: labels))")
-        .accessibilityHint(expanded ? "Hide options" : "Choose apps or remove this tag")
+        .accessibilityHint(expanded ? "Hide options" : "Choose apps, default and backup agents, or remove this tag")
     }
 
     /// Checkmarks apply right away. The last app can't be unchecked; use Remove Tag.
@@ -78,6 +77,15 @@ struct TagsSection: View {
                     if checked { desired.remove(app) } else { desired.insert(app) }
                     Task { await model.setApps(desired, for: entry) }
                 }
+            }
+            if let agents = entry.agents, let options = model.tags?.availableAgents {
+                TagAgentEditor(tag: entry.tag, agents: agents, options: options)
+            } else {
+                Text("Update Pronto to choose agents for this tag.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, PanelMetrics.inset)
+                    .padding(.vertical, 4)
             }
             MenuItem(action: {
                 Task {
@@ -162,6 +170,80 @@ struct TagsSection: View {
         guard !input.trimmingCharacters(in: .whitespaces).isEmpty else { stopAdding(); return }
         Task {
             if await model.addTag(input, apps: apps) { stopAdding() }
+        }
+    }
+}
+
+/// Draft both choices before saving, so swapping agents never persists an invalid pair.
+struct TagAgentEditor: View {
+    let tag: String
+    let agents: TagAgents
+    let options: [AgentOption]
+    @Environment(MenuBarModel.self) private var model
+    @State private var primary: AgentID
+    @State private var backup: AgentID?
+
+    init(tag: String, agents: TagAgents, options: [AgentOption]) {
+        self.tag = tag; self.agents = agents; self.options = options
+        _primary = State(initialValue: agents.primary)
+        _backup = State(initialValue: agents.backup)
+    }
+
+    private var changed: Bool { primary != agents.primary || backup != agents.backup }
+    private var available: Bool {
+        options.contains { $0.id == primary && $0.available }
+            && (backup == nil || options.contains { $0.id == backup && $0.available })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider().padding(.vertical, 2)
+            Picker("Default Agent", selection: $primary) {
+                ForEach(options) { option in
+                    Text(option.label + (option.available ? "" : " (not installed)"))
+                        .tag(option.id).disabled(!option.available)
+                }
+            }
+            Picker("Backup Agent", selection: $backup) {
+                Text("None").tag(Optional<AgentID>.none)
+                ForEach(options) { option in
+                    Text(option.label + (option.available ? "" : " (not installed)"))
+                        .tag(Optional(option.id)).disabled(!option.available)
+                }
+            }
+            Text(primary == backup
+                 ? "Choose different default and backup agents."
+                 : agents.inherited ? "Using global defaults. Changes apply to this tag in every app."
+                 : "Custom agents for this tag in every app.")
+                .font(.system(size: 11))
+                .foregroundStyle(primary == backup ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Save Agents") {
+                    Task { await model.setAgents(for: tag, primary: primary, backup: backup) }
+                }
+                .disabled((!changed && !agents.inherited) || primary == backup || !available)
+                if !agents.inherited {
+                    Button("Use Global Defaults") {
+                        Task {
+                            if await model.setAgents(for: tag, primary: nil),
+                               let updated = model.tagEntries.first(where: { $0.tag == tag })?.agents {
+                                primary = updated.primary; backup = updated.backup
+                            }
+                        }
+                    }
+                }
+            }
+            .controlSize(.small)
+        }
+        .pickerStyle(.menu)
+        .disabled(model.busyAction != nil)
+        .padding(.horizontal, PanelMetrics.inset)
+        .padding(.vertical, 4)
+        .onChange(of: agents) { old, new in
+            if primary == old.primary && backup == old.backup {
+                primary = new.primary; backup = new.backup
+            }
         }
     }
 }

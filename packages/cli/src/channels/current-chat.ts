@@ -9,9 +9,9 @@ export function routeCurrentChat(channels: ReadonlyMap<ChannelKind, Channel>): C
     return channel.currentChat;
   };
   return {
-    attachment: (chat, messageGuid, attachmentId) =>
-      owner(chat).attachment(chat, messageGuid, attachmentId),
-    details: (chat) => owner(chat).details(chat),
-    history: (chat, limit) => owner(chat).history(chat, limit),
+    attachment: (chat, messageGuid, attachmentId, conversation) =>
+      owner(chat).attachment(chat, messageGuid, attachmentId, conversation),
+    details: (chat, conversation) => owner(chat).details(chat, conversation),
+    history: (chat, limit, conversation) => owner(chat).history(chat, limit, conversation),
   };
 }

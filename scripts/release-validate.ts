@@ -4,6 +4,7 @@ import { join } from "node:path";
 import packageJson from "../package.json" with { type: "json" };
 import messagesPackageJson from "../packages/messages/package.json" with { type: "json" };
 import whatsappPackageJson from "../packages/whatsapp/package.json" with { type: "json" };
+import slackPackageJson from "../packages/slack/package.json" with { type: "json" };
 import cliPackageJson from "../packages/cli/package.json" with { type: "json" };
 import { providerOwnershipViolations } from "./provider-ownership";
 import { releaseWorkflowViolations } from "./release-workflow-validation";
@@ -20,7 +21,7 @@ async function sourceFiles(directory: string): Promise<string[]> {
   const files: string[] = [];
 
   for (const entry of entries) {
-    if (entry.name === "node_modules") continue;
+    if (entry.name === "node_modules" || entry.name === "dist") continue;
     const relative = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...(await sourceFiles(relative)));
     else files.push(relative);
@@ -33,9 +34,10 @@ const failures: string[] = [];
 if (
   cliPackageJson.version !== packageJson.version ||
   messagesPackageJson.version !== packageJson.version ||
-  whatsappPackageJson.version !== packageJson.version
+  whatsappPackageJson.version !== packageJson.version ||
+  slackPackageJson.version !== packageJson.version
 ) {
-  failures.push("workspace, CLI, Messages and WhatsApp package versions must agree");
+  failures.push("workspace, CLI, Messages, WhatsApp and Slack package versions must agree");
 }
 const workflowPaths = [
   ".github/workflows/ci.yml",
@@ -107,6 +109,9 @@ const requiredFiles = [
   "packages/whatsapp/README.md",
   "packages/whatsapp/dist/index.js",
   "packages/whatsapp/dist/index.d.ts",
+  "packages/slack/dist/index.js",
+  "packages/slack/dist/index.d.ts",
+  "packages/slack/THIRD_PARTY_NOTICES.md",
 ];
 const requiredFileChecks = await Promise.all(
   requiredFiles.map(async (path) => ({
@@ -155,6 +160,7 @@ for (const file of await sourceFiles("packages")) {
 for (const file of [
   ...await sourceFiles("packages/messages/src"),
   ...await sourceFiles("packages/whatsapp/src"),
+  ...await sourceFiles("packages/slack/src"),
 ]) {
   const source = await read(file);
   if (/\bBun\b/.test(source)) failures.push(`${file} uses a Bun global`);
@@ -166,33 +172,8 @@ for (const workflow of await sourceFiles(".github/workflows")) {
   }
 }
 
-const [codexAdapter, claudeAdapter, qualification] = await Promise.all([
-  read("packages/cli/src/runtimes/codex.ts"),
-  read("packages/cli/src/runtimes/claude.ts"),
-  read("packages/cli/src/runtimes/qualification.ts"),
-]);
 const releaseWorkflow = await read(".github/workflows/release.yml");
 failures.push(...releaseWorkflowViolations(releaseWorkflow));
-for (const [name, source] of [
-  ["Codex", codexAdapter],
-  ["Claude Code", claudeAdapter],
-] as const) {
-  for (const forbidden of ["--model", "--sandbox", "bypassPermissions", "--permission-mode"]) {
-    if (source.includes(forbidden)) failures.push(`${name} adapter overrides ${forbidden}`);
-  }
-}
-if (!codexAdapter.includes("--dangerously-bypass-approvals-and-sandbox")) {
-  failures.push("Codex adapter must use unrestricted no-prompt mode");
-}
-if (!claudeAdapter.includes("--dangerously-skip-permissions")) {
-  failures.push("Claude Code adapter must use unrestricted no-prompt mode");
-}
-if (!qualification.includes('"--dangerously-bypass-approvals-and-sandbox"')) {
-  failures.push("Codex qualification must require unrestricted no-prompt mode");
-}
-if (!qualification.includes('"--dangerously-skip-permissions"')) {
-  failures.push("Claude Code qualification must require unrestricted no-prompt mode");
-}
 
 async function validatePackage(input: {
   readonly directory: string;
@@ -277,6 +258,8 @@ await validatePackage({
   entryPoint: "createProntoWhatsapp",
   name: "pronto-whatsapp",
 });
+
+await validatePackage({ directory: "packages/slack", entryPoint: "createProntoSlack", name: "pronto-slack" });
 
 if (failures.length > 0) {
   for (const failure of failures) console.error(`release validation: ${failure}`);

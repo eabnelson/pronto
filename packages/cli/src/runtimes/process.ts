@@ -1,3 +1,5 @@
+import { dirname } from "node:path";
+
 export interface ProcessSpec {
   args: string[];
   env: Record<string, string>;
@@ -36,7 +38,11 @@ export class BoundedProcessRunner implements ProcessRunner {
       child = Bun.spawn([spec.executable, ...spec.args], {
         cwd: spec.workingDirectory,
         detached: true,
-        env: { ...process.env, ...spec.env },
+        env: {
+          ...process.env, ...spec.env,
+          // A newly selected per-tag agent may live outside launchd's original PATH.
+          PATH: [dirname(spec.executable), spec.env.PATH ?? process.env.PATH ?? ""].join(":"),
+        },
         stderr: "pipe",
         stdin: "pipe",
         stdout: "pipe",

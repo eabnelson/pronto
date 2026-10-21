@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "releaseTag": "v0.5.2",
+  "artifacts": {
+    "arm64": "8aea72a7d622709ec2666865bcf19568c462e96958b383f1588d5a5a6f36f579",
+    "x64": "7c407c1c4a3f709ad3eef381247ee57522c7d8cf755c7a0cb15aa3044437039e"
+  },
+  "checks": [
+    {
+      "id": "signed-helper-arm64",
+      "status": "pass",
+      "evidence": "v0.5.2-candidate.1, source 83a884f310126874c3ba930263c60cdacd1ea9ad, signed workflow 39649163823: downloaded CLI checksum/Developer ID requirement, embedded arm64 helper hash/signature/protocol self-test and Go 1.27.3 binary vulnerability audit passed on the owner's arm64 Mac."
+    },
+    {
+      "id": "signed-helper-x64",
+      "status": "pass",
+      "evidence": "Same candidate/source/run: x64 CLI checksum/Developer ID requirement, embedded x64 helper hash/signature/protocol self-test and Go 1.27.3 binary vulnerability audit passed. Execution used Rosetta on arm64; no native Intel test is claimed."
+    },
+    {
+      "id": "owner-acceptance",
+      "status": "pass",
+      "evidence": "On 2026-10-21 the owner reported successful daily Slack use and authorized rollout. That acceptance concerns installed v0.5.1-candidate.20 source a39b61d334bdc898cfc7da76d42aa70640185be6. Runtime/provider/native/menu source and build scripts are unchanged in v0.5.2-candidate.1; later changes are testing policy/tooling and version metadata. Candidate.1 is now installed and all three apps are Ready."
+    },
+    {
+      "id": "setup-and-reply",
+      "status": "pass",
+      "evidence": "Carry forward the owner's existing workspace/tag setup and observed correctly routed Slack replies in daily use, plus prior signed self-DM/thread routing evidence. Signed candidate.19 source 9a7706225f4febcd6b2786a617708f63f114bee4 proved unattended connection and canonical owner participation with isolated read-only recovery; candidate.20 and v0.5.2-candidate.1 subsequently restarted all apps Ready with settings preserved. No fresh outbound request, native Intel, broad workspace matrix or long-sleep pass is claimed. Carry-forward is accepted by the 2026-10-21 beta policy."
+    }
+  ]
+}

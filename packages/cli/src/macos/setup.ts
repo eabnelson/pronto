@@ -9,9 +9,11 @@ import {
   ensurePrivateDirectory,
   loadConfig,
   normalizeTags,
+  runtimeExecutables,
   saveConfig,
   type RuntimeKind,
   type ProntoConfig,
+  type ChannelsConfig,
   UNRESTRICTED_TRUST_VERSION,
 } from "../config";
 import {
@@ -34,10 +36,10 @@ import {
   type ProntoPaths,
 } from "./paths";
 import { renderCompatibilityLauncher } from "../compatibility";
-import { CHANNEL_LABELS, type ChannelKind } from "../channels/types";
+import { CHANNEL_LABELS, isSlackChannel, type ChannelKind } from "../channels/types";
 import { inspectProntoExecutableIdentity } from "./release-identity";
 
-export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage, RCS, or WhatsApp conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider, and the agent can send a file from this Mac into the chat, so any participant who can use your tag can ask it for one. You are responsible for informing participants.`;
+export const TRUST_DISCLOSURE = `The trigger tag is not authentication: any participant, current or future, in an eligible iMessage, RCS, WhatsApp, or Slack conversation can instruct your selected local agent. Claude Code and Codex will bypass their approval and sandbox prompts and can run commands or change files anywhere this macOS user can access. Adding a participant or eligible chat does not ask for consent again; untagged messages and attachments are untrusted evidence but may still influence the model. A selected folder's project instructions, hooks, and MCP servers may also run with this unrestricted access. Conversation material may be sent to your selected model provider, and the agent can send a file from this Mac into the chat, so any participant who can use your tag can ask it for one. You are responsible for informing participants.`;
 
 export interface WorkspaceSelection {
   exists: boolean;
@@ -47,6 +49,8 @@ export interface WorkspaceSelection {
 export interface ExistingSetupDefaults {
   chatKeySalt: string;
   tags: string[];
+  tagRuntimes?: ProntoConfig["tagRuntimes"];
+  slackWorkspaces?: ChannelsConfig;
   workingDirectory: string;
 }
 
@@ -69,7 +73,7 @@ export function setupCompletionMessage(
   ];
   const configured = Object.entries(tagsByApp).length > 1
     ? Object.entries(tagsByApp)
-      .map(([app, tags]) => `${CHANNEL_LABELS[app as ChannelKind]}: ${tags.join(", ")}`)
+      .map(([app, tags]) => `${CHANNEL_LABELS[app as ChannelKind] ?? "Slack"}: ${tags?.join(", ") ?? ""}`)
       .join("; ")
     : Object.values(tagsByApp)[0]?.join(", ") ?? "";
   return `Pronto installed and qualified.
@@ -113,9 +117,17 @@ export async function loadExistingSetupDefaults(
         ? Object.values(value.channels as Record<string, { tags?: unknown }>)
         : [];
       const all = channels.flatMap((channel) => Array.isArray(channel?.tags) ? channel.tags : [null]);
-      tags = all.length > 0 && all.every((tag) => typeof tag === "string")
-        ? normalizeTags(all as string[])
-        : null;
+      if (all.length === 0 && channels.length > 0) {
+        // Only Slack may legitimately wait for its first tag. Validate the full
+        // config before offering defaults for an additional app; keep the saved
+        // workspace's empty assignments and installation identity unchanged.
+        await loadConfig(configPath);
+        tags = ["@s4"];
+      } else {
+        tags = all.length > 0 && all.every((tag) => typeof tag === "string")
+          ? normalizeTags(all as string[])
+          : null;
+      }
     } else {
       throw new Error(`Unsupported configuration version ${String(value.version)}`);
     }
@@ -131,6 +143,9 @@ export async function loadExistingSetupDefaults(
     return {
       chatKeySalt: value.chatKeySalt,
       tags,
+      ...(value.tagRuntimes === undefined ? {} : { tagRuntimes: (await loadConfig(configPath)).tagRuntimes }),
+      ...(value.version === 3 && value.channels !== null && typeof value.channels === "object" && Object.entries(value.channels).some(([kind, entry]) => kind.startsWith("slack:") || kind === "slack" && entry !== null && typeof entry === "object" && "workspaceKey" in entry)
+        ? { slackWorkspaces: Object.fromEntries(Object.entries((await loadConfig(configPath)).channels).filter(([kind]) => isSlackChannel(kind))) } : {}),
       workingDirectory: value.workingDirectory,
     };
   } catch (error) {
@@ -422,6 +437,7 @@ export async function qualifyInstalledExecutable(
   runner: InstalledExecutableRunner = runCommand,
   suspendListener: () => Promise<() => Promise<void>> = async () => async () => undefined,
   wait: (milliseconds: number) => Promise<void> = Bun.sleep,
+  allowSlackSelectionRequired = false,
 ): Promise<void> {
   const restoreListener = await suspendListener();
   let result: ProcessResult;
@@ -437,8 +453,15 @@ export async function qualifyInstalledExecutable(
   }
   let status: ProcessResult | undefined;
   for (let attempt = 0; attempt < INSTALLED_STATUS_POLL_ATTEMPTS; attempt += 1) {
-    status = await runner(executablePath, ["status"]);
+    status = await runner(executablePath, allowSlackSelectionRequired ? ["status", "--json"] : ["status"]);
     if (status.exitCode === 0) return;
+    if (allowSlackSelectionRequired) {
+      try {
+        const value = JSON.parse(status.stdout);
+        const channels = Object.entries(value.channels ?? {}) as Array<[string, { state?: string; reason?: string }]>;
+        if (value.listener === "running" && channels.length > 0 && channels.every(([kind, channel]) => channel.state === "ready" || kind === "slack" && channel.state === "degraded" && channel.reason === "slack-selection-required")) return;
+      } catch { /* Keep waiting for the installed process to settle. */ }
+    }
     if (attempt < INSTALLED_STATUS_POLL_ATTEMPTS - 1) {
       await wait(INSTALLED_STATUS_POLL_INTERVAL_MS);
     }
@@ -616,6 +639,7 @@ export function prepareSetupConfig(input: {
   tagApps?: Readonly<Record<string, readonly ChannelKind[]>>;
   tags: readonly string[];
   whatsappRiskConsentVersion?: number;
+  slackRiskConsentVersion?: number;
   workingDirectory: string;
 }): ProntoConfig {
   const primaryRuntimePath = input.discovery.runtimes[input.primaryRuntime];
@@ -670,6 +694,7 @@ function setupChannels(input: Parameters<typeof prepareSetupConfig>[0]): ConfigI
       wacliPath: input.discovery.wacliPath,
     };
   }
+  if (apps.includes("slack")) channels.slack = { enabled: true, riskConsentVersion: input.slackRiskConsentVersion ?? 0, tags: tagsFor("slack") };
   return channels;
 }
 
@@ -748,11 +773,10 @@ export function sourceBuild(
 ): (outputPath: string) => Promise<void> {
   return async (outputPath) => {
     const result = await runner(Bun.which("bun") ?? "bun", [
-      "build",
-      join(repositoryRoot, "packages", "cli", "src", "cli.ts"),
-      "--compile",
-      "--outfile",
+      join(repositoryRoot, "scripts", "compile-cli.ts"),
       outputPath,
+      `bun-darwin-${process.arch}`,
+      signingIdentity,
     ]);
     if (result.exitCode !== 0) {
       throw new Error(`Unable to compile pronto: ${result.stderr.trim() || result.exitCode}`);
@@ -816,10 +840,7 @@ export async function installSetup(input: {
       plist: renderLaunchAgent({
         executablePath: input.paths.executablePath,
         logPath: input.paths.logPath,
-        runtimeExecutablePaths: [
-          input.config.primaryRuntimePath,
-          input.config.fallbackRuntimePath,
-        ].filter((path): path is string => path !== undefined),
+        runtimeExecutablePaths: runtimeExecutables(input.config).map(([, path]) => path),
       }),
       plistPath: input.paths.launchAgentPath,
     });
@@ -929,6 +950,9 @@ export async function inspectInstallation(
     ["wacli-command", config.channels.whatsapp?.enabled === true ? config.channels.whatsapp.wacliPath : undefined],
     ["primary-runtime", config.primaryRuntimePath],
     ["fallback-runtime", config.fallbackRuntimePath],
+    ...runtimeExecutables(config)
+      .filter(([, path]) => path !== config.primaryRuntimePath && path !== config.fallbackRuntimePath)
+      .map(([kind, path]) => [`tag-runtime-${kind}`, path] as const),
   ] as const) {
     if (executable === undefined) continue;
     if (!(await executableCheck(executable))) {

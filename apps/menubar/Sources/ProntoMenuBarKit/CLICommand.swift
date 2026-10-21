@@ -3,6 +3,12 @@ import Foundation
 /// Every CLI invocation the menu bar app makes. `arguments` is the exact
 /// argument vector passed to the executable (never a shell string).
 public enum CLICommand: Hashable, Sendable {
+    case slackDiscover
+    case slackLink(workspace: String, tags: [String])
+    case slackConversations
+    case slackSelect([String])
+    case slackUnlink
+    case slackRemoveWorkspace(AppID)
     case status
     case channelsList
     case channelsEnable(AppID)
@@ -12,6 +18,8 @@ public enum CLICommand: Hashable, Sendable {
     case tagsAdd(tag: String, apps: [AppID])
     /// `tags remove <tag> [--app <app>]... --json`. Empty `apps` means "every app".
     case tagsRemove(tag: String, apps: [AppID])
+    case tagsAgents(tag: String, primary: AgentID, backup: AgentID?)
+    case tagsAgentsReset(tag: String)
     case start
     case stop
     case doctor
@@ -21,6 +29,12 @@ public enum CLICommand: Hashable, Sendable {
 
     public var arguments: [String] {
         switch self {
+        case .slackDiscover: return ["slack", "discover", "--json"]
+        case .slackLink(let workspace, let tags): return ["slack", "link", "--workspace", workspace, "--events", "--accept-risk"] + (tags.isEmpty ? ["--defer-tags"] : tags.flatMap { ["--tag", $0] })
+        case .slackConversations: return ["slack", "conversations", "list", "--json"]
+        case .slackSelect(let handles): return ["slack", "conversations", "select"] + (handles.isEmpty ? ["--clear"] : handles.flatMap { ["--conversation", $0] }) + ["--json"]
+        case .slackUnlink: return ["slack", "unlink", "--json"]
+        case .slackRemoveWorkspace(let app): return ["slack", "unlink", "--app", app.rawValue, "--json"]
         case .status:
             return ["status", "--json"]
         case .channelsList:
@@ -35,6 +49,10 @@ public enum CLICommand: Hashable, Sendable {
             return ["tags", "add", tag] + Self.appFlags(apps) + ["--json"]
         case .tagsRemove(let tag, let apps):
             return ["tags", "remove", tag] + Self.appFlags(apps) + ["--json"]
+        case .tagsAgents(let tag, let primary, let backup):
+            return ["tags", "agents", tag, "--primary", primary.rawValue, "--backup", backup?.rawValue ?? "none", "--json"]
+        case .tagsAgentsReset(let tag):
+            return ["tags", "agents", tag, "--reset", "--json"]
         case .start:
             return ["start", "--json"]
         case .stop:
@@ -58,6 +76,8 @@ public enum CLICommand: Hashable, Sendable {
         case .updateInstall: return 900
         case .updateCheck: return 90
         case .start, .stop: return 120
+        case .slackLink: return 75
+        case .slackConversations: return 180
         case .whatsappLink: return nil
         default: return 30
         }
@@ -66,7 +86,7 @@ public enum CLICommand: Hashable, Sendable {
     /// Commands that change state; the UI serializes these.
     public var isMutation: Bool {
         switch self {
-        case .channelsEnable, .channelsDisable, .tagsAdd, .tagsRemove, .start, .stop, .updateInstall, .whatsappLink:
+        case .channelsEnable, .channelsDisable, .tagsAdd, .tagsRemove, .tagsAgents, .tagsAgentsReset, .start, .stop, .updateInstall, .whatsappLink, .slackLink, .slackSelect, .slackUnlink, .slackRemoveWorkspace:
             return true
         default:
             return false

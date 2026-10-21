@@ -176,7 +176,7 @@ describe("setup discovery", () => {
     expect(TRUST_DISCLOSURE).toContain("bypass");
     expect(TRUST_DISCLOSURE).toContain("current or future");
     expect(TRUST_DISCLOSURE).toContain("hooks");
-    expect(TRUST_DISCLOSURE).toContain("iMessage, RCS, or WhatsApp");
+    expect(TRUST_DISCLOSURE).toContain("iMessage, RCS, WhatsApp, or Slack");
   });
 
   test("resolves and creates a home-relative workspace without changing an existing folder", async () => {
@@ -761,11 +761,10 @@ test("source builds replace Bun's embedded signature before installation", async
     {
       executable: Bun.which("bun") ?? "bun",
       args: [
-        "build",
-        "/Users/example/pronto/packages/cli/src/cli.ts",
-        "--compile",
-        "--outfile",
+        "/Users/example/pronto/scripts/compile-cli.ts",
         "/private/tmp/pronto",
+        `bun-darwin-${process.arch}`,
+        "Developer ID Application: Example",
       ],
     },
     {
@@ -1279,4 +1278,21 @@ test("confirmed purge removes private state and logs", async () => {
 
   await expect(access(paths.appSupportDirectory)).rejects.toThrow();
   await expect(access(paths.logDirectory)).rejects.toThrow();
+});
+
+test("setup preserves a Slack-only installation waiting for its first tag", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pronto-slack-tagless-setup-"));
+  temporaryDirectories.push(directory);
+  const path = join(directory, "config.json");
+  const salt = "synthetic-slack-installation-key-32-characters";
+  await saveConfig(path, {
+    version: 3, channels: { slack: { enabled: true, tags: [], riskConsentVersion: 1, workspaceKey: "a".repeat(32), workspaceLabel: "Synthetic" } },
+    primaryRuntime: "codex", primaryRuntimePath: "/synthetic/codex", chatKeySalt: salt,
+    unrestrictedTrustVersion: 1, workingDirectory: directory,
+  });
+  const defaults = await loadExistingSetupDefaults(path);
+  expect(defaults?.chatKeySalt).toBe(salt);
+  expect(defaults?.workingDirectory).toBe(directory);
+  expect(defaults?.slackWorkspaces?.slack?.tags).toEqual([]);
+  expect(defaults?.tags.length).toBeGreaterThan(0); // Suggestions for another app, not workspace assignments.
 });

@@ -27,3 +27,5 @@ Only the generic database identity canonicalization was retained. Adoption
 requires the caller's pre-cutover provider-message witness and is covered by
 public replacement/rebuild rejection tests; no consumer code or private history
 was copied.
+
+The Slack desktop helper adapts the public MIT-licensed sttts/slagent LevelDB reader at commit `4b959bdf2a8207daeb597ed8f2ed360b2c7f51a9`, with its license retained. Credential decryption, the bounded private RPC, transport, native power integration, selection, scopes, and recovery were implemented here from public contracts and authorized local experiments. Committed tests use synthetic accounts and messages. Private prototype results and planning remain ignored under `.scratch/`.

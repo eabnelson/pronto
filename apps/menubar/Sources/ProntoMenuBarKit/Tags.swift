@@ -51,7 +51,7 @@ public enum TagPlanner {
     /// Tags sorted for display with their apps in stable order.
     public static func sorted(_ response: TagsResponse?) -> [TagEntry] {
         (response?.tags ?? [])
-            .map { TagEntry(tag: $0.tag, apps: Array(Set($0.apps)).sorted()) }
+            .map { TagEntry(tag: $0.tag, apps: Array(Set($0.apps)).sorted(), agents: $0.agents) }
             .sorted { $0.tag.localizedStandardCompare($1.tag) == .orderedAscending }
     }
 }

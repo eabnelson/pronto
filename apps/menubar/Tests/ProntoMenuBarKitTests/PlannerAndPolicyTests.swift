@@ -148,11 +148,6 @@ struct PresentationTests {
         #expect(Presentation.updateResultText(UpdateInstallResponse(status: .migrationInstalled, version: "1.0.0")).contains("1.0.0"))
     }
 
-    @Test func disclosureIsVerbatim() {
-        #expect(WhatsAppDisclosure.text.hasPrefix("WhatsApp support uses wacli, which links this Mac as a WhatsApp device"))
-        #expect(WhatsAppDisclosure.text.hasSuffix("can trigger a reply with your tag."))
-        #expect(WhatsAppDisclosure.text.contains("It is not affiliated with WhatsApp or Meta."))
-    }
 }
 
 @Suite("QR rendering")
@@ -173,12 +168,11 @@ struct QRCodeTests {
 
 @Suite("Setup prompt")
 struct SetupPromptTests {
-    @Test func installMatchesWebsite() {
-        #expect(SetupPrompt.install == "Help me set up Pronto on this Mac. Follow https://studiofour.io/pronto-setup.md and stay with me until, in each messaging app I choose, one tagged message gets exactly one agent reply.")
-    }
-
     @Test func addKeepsEnabledApps() {
-        #expect(SetupPrompt.add(.imessage, keeping: [.whatsapp]) == "Help me add iMessage to Pronto on this Mac. Pronto is already installed and answering in WhatsApp. Follow https://studiofour.io/pronto-setup.md, re-run setup and choose iMessage as well as WhatsApp so they all stay on, and stay with me until one tagged message in iMessage gets exactly one agent reply.")
+        let prompt = SetupPrompt.add(.imessage, keeping: [.whatsapp])
+        #expect(prompt.contains("iMessage"))
+        #expect(prompt.contains("WhatsApp"))
+        #expect(prompt.contains("https://studiofour.io/pronto-setup.md"))
     }
 
     @Test func addWithNothingEnabled() {

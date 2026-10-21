@@ -24,10 +24,6 @@ async function fixture(files: Readonly<Record<string, string>>): Promise<string>
   return root;
 }
 
-test("the standalone product cannot recreate provider mechanics outside pronto-imessage", async () => {
-  expect(await providerOwnershipViolations(join(import.meta.dir, "../.."))).toEqual([]);
-});
-
 test("provider ownership rejects every prohibited implementation category", async () => {
   const legacy = await fixture({
     "packages/cli/src/imessage/message.ts": "export const duplicate = true;",

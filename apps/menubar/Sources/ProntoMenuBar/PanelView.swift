@@ -102,12 +102,20 @@ struct PanelView: View {
     private var appsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeader(title: "Apps")
-            ForEach(model.channelRows) { row in
+            ForEach(model.channelRows.filter(\.configured)) { row in
                 ChannelRowView(row: row) {
-                    controller.prepareLink()
-                    openWindow(id: WindowID.linkWhatsApp)
+                    if row.app.isSlack {
+                        controller.slackWorkspaceToReconnect = row.app
+                        openWindow(id: WindowID.slack)
+                    }
+                    else { controller.prepareLink(); openWindow(id: WindowID.linkWhatsApp) }
                     controller.bringToFront()
                 }
+            }
+            AddAppSection {
+                controller.slackWorkspaceToReconnect = nil
+                openWindow(id: WindowID.slack)
+                controller.bringToFront()
             }
         }
     }
@@ -155,28 +163,17 @@ struct ChannelRowView: View {
     let row: ChannelRow
     let onLink: () -> Void
     @Environment(MenuBarModel.self) private var model
-    @State private var showingSetup = false
-
-    /// Apps that aren't set up and can't be linked from here show a prompt for the owner's agent.
-    private var offersSetupPrompt: Bool { !row.configured && !row.showsLinkButton }
 
     var body: some View {
-        VStack(spacing: 0) {
-            item
-            if offersSetupPrompt && showingSetup {
-                ExpandedGroup {
-                    CopyablePrompt(prompt: SetupPrompt.add(row.app, labels: model.appLabels,
-                                                           keeping: model.channels?.enabledApps ?? []))
-                }
-            }
-        }
+        item
     }
 
     private var item: some View {
         MenuItem(action: action, disabled: model.busyAction != nil) {
             IconRow(
                 icon: MenuIcon(systemName: row.app == .whatsapp ? "phone.fill" : "message.fill",
-                               active: row.enabled && row.configured),
+                               active: row.enabled && row.configured,
+                               applicationBundleIdentifier: row.app.isSlack ? "com.tinyspeck.slackmacgap" : nil),
                 title: row.label,
                 subtitle: row.detail.map { "\(row.statusText) · \($0)" } ?? row.statusText,
                 subtitleColor: subtitleColor
@@ -184,13 +181,22 @@ struct ChannelRowView: View {
                 if model.busyAction == .channel(row.app) {
                     ProgressView().controlSize(.small)
                 } else if row.showsLinkButton {
-                    Text("Link…").foregroundStyle(.secondary)
-                } else if offersSetupPrompt {
-                    DisclosureChevron(expanded: showingSetup)
+                    Text(row.app.isSlack ? "Reconnect…" : "Link…").foregroundStyle(.secondary)
                 }
             }
         }
         .accessibilityElement(children: .combine)
+        .contextMenu {
+            if row.app.isSlack, row.configured {
+                Button("Remove Workspace", role: .destructive) {
+                    Task { await model.removeSlackWorkspace(row.app) }
+                }
+                .disabled(!row.workspaceRemovalAllowed || model.busyAction != nil)
+                if !row.workspaceRemovalAllowed {
+                    Text("Add another app before removing this workspace.")
+                }
+            }
+        }
         .accessibilityLabel(row.accessibilityLabel)
         .accessibilityHint(hint ?? "")
         .help(hint ?? "")
@@ -198,17 +204,13 @@ struct ChannelRowView: View {
 
     private var action: (() -> Void)? {
         if row.showsLinkButton { return onLink }
-        if offersSetupPrompt {
-            return { withAnimation(.snappy(duration: 0.2)) { showingSetup.toggle() } }
-        }
         guard row.showsToggle, row.toggleAllowed else { return nil }
         let enabled = !row.enabled
         return { Task { await model.setChannel(row.app, enabled: enabled) } }
     }
 
     private var hint: String? {
-        if row.showsLinkButton { return "Link \(row.label)" }
-        if offersSetupPrompt { return "Get a prompt that has your agent set up \(row.label)" }
+        if row.showsLinkButton { return "Reconnect \(row.label)" }
         guard row.showsToggle else { return nil }
         if !row.toggleAllowed { return row.toggleHelp }
         return row.enabled ? "Stop answering in \(row.label)" : "Answer in \(row.label)"

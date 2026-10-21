@@ -56,13 +56,43 @@ enabled. Changes apply to the running listener without restarting it.
 
 ## Tags
 
-`pronto tags list --json` prints `{"tags": [{"tag": "@s4", "apps": ["imessage", "whatsapp"]}]}`.
+`pronto tags list --json` prints:
+
+```json
+{
+  "tags": [{"tag": "@s4", "apps": ["imessage", "whatsapp"],
+            "agents": {"primary": "codex", "backup": "claude", "inherited": true}}],
+  "availableAgents": [{"id": "codex", "label": "Codex", "available": true},
+                      {"id": "claude", "label": "Claude Code", "available": true}]
+}
+```
 
 `pronto tags add <tag> --app <app> [--app <app>] --json` and
 `pronto tags remove <tag> [--app <app>]... --json` print the same shape. Without
 `--app`, `add` applies to every enabled app and `remove` removes the tag from
-every app. Every enabled app must keep at least one tag. Changes apply to the
+every app. iMessage and WhatsApp must keep at least one tag. Slack workspaces
+can have no tags while waiting for assignment from the Tags section; they
+accept no tagged requests in that state. Changes apply to the
 running listener without restarting it.
+
+`pronto tags agents <tag> --primary codex|claude --backup codex|claude|none --json`
+saves a complete agent pair for one existing tag and returns the same shape.
+`pronto tags agents <tag> --reset --json` removes the override and restores the
+global setup defaults. The pair applies to that tag in every messaging app;
+other tags and global defaults remain unchanged. The default and backup must
+differ, and selected executables must be installed. `backup: null` disables
+backup for that tag, even when setup has a global backup.
+
+Existing configurations inherit the global pair. Overrides persist across
+restarts, updates, and setup for tags retained by setup. Removing a tag's final
+app assignment also removes its override. Choices are captured when each turn
+starts; an active turn retains its original pair. Backup still runs only after
+an operational failure with no tool activity. This preserves the existing
+protection against repeating work with uncertain side effects.
+
+The extra JSON fields are additive. Older menu bar versions ignore them;
+newer menu bar versions can read the old shape but require an updated CLI to
+edit agent choices.
 
 ## WhatsApp linking
 
@@ -124,3 +154,68 @@ The updater quits and reopens the app when it replaces it.
 `{"status": "not_installed", "version": "0.5.1"}`. `pronto menubar install --json`
 installs or updates `~/Applications/Pronto.app` from the signed release and opens
 it; `pronto menubar uninstall --json` removes it.
+
+## Slack workspaces (beta candidate)
+
+Each connected Slack workspace is a separate app in `channels list`, with its
+own label, tags, enabled state, and health. The original connection keeps the
+app ID `slack` and its existing memory. Additional workspace IDs use
+`slack:<32 lowercase hexadecimal characters>`. These are opaque identities,
+not Slack provider IDs. `channels enable/disable <app>` and
+`tags add/remove --app <app>` accept these IDs, including tag edits while a
+workspace is off.
+
+`slack discover --json` returns `workspaceApps: true`, `deferredTags: true` and workspace choices
+with `handle`, `id` (opaque workspace key), `label`, `profile`, and `connected`.
+Handles expire after ten minutes. Discovery sends no messages and does not
+choose a workspace. The add picker excludes already-added workspaces.
+
+`slack link --workspace <handle> --events --accept-risk [--defer-tags | --tag <tag>...]` adds
+the chosen workspace without replacing another connection. It streams
+`approval_required`, then `linked` with `workspace`, `member`, `app`, and
+`selectionRequired: false`, or an `error` event with a safe reason and message.
+macOS credential approval occurs only during this explicit operation.
+Workspace tags apply in supported conversations where positive owner
+participation has been observed. Connecting sends no message; requests before
+the connection cutoff cannot activate.
+
+The menu bar uses `--defer-tags`: a new workspace starts with no tags, and
+reconnecting preserves its latest existing tag assignments. Tag creation and
+assignment happen only under Tags in the menu bar. `--defer-tags` cannot be
+combined with `--tag`. Without either flag, existing tags are preserved and a
+new connection defaults to `@pronto` for CLI compatibility.
+
+Existing manually selected connections retain their policy until explicitly
+reconnected or migrated with
+`slack scope --all-participated [--app <app>] --json`. This returns `app` and
+`coverage: participated`. The menu bar has no conversation-selection step.
+Advanced consumers can still use
+`slack conversations list [--app <app>] --json` and
+`slack conversations select (--conversation <handle>... | --clear) [--app <app>] --json`
+to opt into the original selection policy.
+
+`slack unlink [--app <app>] --json` removes that workspace's app and tag
+assignments and returns `linked: false`. It revokes only that workspace's
+scopes, preserves other workspaces and their settings, and leaves Slack's
+desktop sign-in unchanged. At least one enabled app must remain. Turning a
+workspace off preserves catch-up state. Removing a tag's final app assignment
+also removes its per-tag agent override.
+
+Workspace connection does not enumerate conversation histories or import an archive. The listener receives live messages and filters configured tags before admission. Untagged owner messages may establish positive participation without storing their text. For a tagged request in an unknown conversation, a targeted owner search supplies up to three hints, each verified against its canonical message before granting eligibility. Zero matches leave participation unknown.
+
+At startup, reconnect/wake and roughly every sixty seconds, recovery searches for configured tags within the last 24 hours and after connection/selection cutoffs. Each pass has five search pages per tag, 50 budgeted provider read operations, 4 MiB of normalized responses, a 30-second boundary between operation starts, and 100 recovered observations. Native identity/metadata checks can add HTTP requests within an operation; an already-running native RPC can finish after the time boundary. At most 500 conversation bindings are retained per workspace. No archive crawl follows a failed or empty search.
+
+Recovery is best effort because Slack search can omit or filter matches. A successful bounded search reports `recovered`; a failed read/admission or exhausted work budget reports `degraded`. Neither socket health nor a zero-result search proves exhaustive offline coverage. The optional legacy recovery `progress` field is not produced by this search path. Missing participation evidence never grants permission. Slack Connect, externally shared, archived, and read-only conversations remain unsupported. Reconnecting rotates authority; workspace, member, conversation, and thread isolation remain enforced.
+
+Replies are text-only and come from the connected member. Channel roots open
+a response thread; actual replies retain their root; ordinary DMs use the
+timeline. Each thread has separate memory and a working folder. Any human
+participant in an eligible conversation can invoke the workspace's tags.
+No test command sends automatically.
+
+`slack self-test --json` verifies the bundled helper without opening the Slack
+profile, accessing Keychain, connecting, migrating provider state, or sending.
+It returns `helperProtocol`, `version`, `architecture`, and `signatureVerified`.
+Private monitor logs contain only recovery costs and latency, never credentials,
+provider IDs, scope tokens, or message bodies. Added workspace app IDs require
+a CLI supporting workspace apps; older executables cannot load those entries.

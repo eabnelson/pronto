@@ -13,14 +13,17 @@ public struct AppID: RawRepresentable, Codable, Hashable, Sendable, Comparable, 
     public init(_ rawValue: String) { self.rawValue = rawValue }
 
     public static let imessage = AppID("imessage")
+    public static let slack = AppID("slack")
     public static let whatsapp = AppID("whatsapp")
+    public var isSlack: Bool { self == .slack || rawValue.hasPrefix("slack:") }
 
     /// Human label used when the CLI did not provide one.
     public var defaultLabel: String {
         switch self {
         case .imessage: return "iMessage"
+        case .slack: return "Slack"
         case .whatsapp: return "WhatsApp"
-        default: return rawValue.prefix(1).uppercased() + rawValue.dropFirst()
+        default: return isSlack ? "Slack" : rawValue.prefix(1).uppercased() + rawValue.dropFirst()
         }
     }
 
@@ -168,16 +171,18 @@ public struct ChannelInfo: Codable, Hashable, Sendable, Identifiable {
     public var enabled: Bool
     public var tags: [String]
     public var tool: ChannelTool?
+    public var workspaceKey: String?
 
     public var id: AppID { app }
 
-    public init(app: AppID, label: String? = nil, configured: Bool, enabled: Bool, tags: [String] = [], tool: ChannelTool? = nil) {
+    public init(app: AppID, label: String? = nil, configured: Bool, enabled: Bool, tags: [String] = [], tool: ChannelTool? = nil, workspaceKey: String? = nil) {
         self.app = app
         self.label = label ?? app.defaultLabel
         self.configured = configured
         self.enabled = enabled
         self.tags = tags
         self.tool = tool
+        self.workspaceKey = workspaceKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -188,6 +193,7 @@ public struct ChannelInfo: Codable, Hashable, Sendable, Identifiable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         tool = try c.decodeIfPresent(ChannelTool.self, forKey: .tool)
+        workspaceKey = try c.decodeIfPresent(String.self, forKey: .workspaceKey)
     }
 }
 
@@ -202,20 +208,50 @@ public struct ChannelsResponse: Codable, Hashable, Sendable {
 
 // MARK: - tags list/add/remove --json
 
+public struct AgentID: RawRepresentable, Codable, Hashable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let codex = AgentID(rawValue: "codex")
+    public static let claude = AgentID(rawValue: "claude")
+}
+
+public struct AgentOption: Codable, Hashable, Sendable, Identifiable {
+    public var id: AgentID
+    public var label: String
+    public var available: Bool
+    public init(id: AgentID, label: String, available: Bool) {
+        self.id = id; self.label = label; self.available = available
+    }
+}
+
+public struct TagAgents: Codable, Hashable, Sendable {
+    public var primary: AgentID
+    public var backup: AgentID?
+    public var inherited: Bool
+    public init(primary: AgentID, backup: AgentID? = nil, inherited: Bool) {
+        self.primary = primary; self.backup = backup; self.inherited = inherited
+    }
+}
+
 public struct TagEntry: Codable, Hashable, Sendable, Identifiable {
     public var tag: String
     public var apps: [AppID]
+    public var agents: TagAgents?
     public var id: String { tag }
 
-    public init(tag: String, apps: [AppID]) {
+    public init(tag: String, apps: [AppID], agents: TagAgents? = nil) {
         self.tag = tag
         self.apps = apps
+        self.agents = agents
     }
 }
 
 public struct TagsResponse: Codable, Hashable, Sendable {
     public var tags: [TagEntry]
-    public init(tags: [TagEntry]) { self.tags = tags }
+    public var availableAgents: [AgentOption]?
+    public init(tags: [TagEntry], availableAgents: [AgentOption]? = nil) {
+        self.tags = tags; self.availableAgents = availableAgents
+    }
 }
 
 // MARK: - start/stop --json

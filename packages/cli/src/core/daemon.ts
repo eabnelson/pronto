@@ -1,6 +1,7 @@
 import { routeCurrentChat } from "../channels/current-chat";
 import {
   ChannelNeedsLinkError,
+  isSlackChannel,
   type Channel,
   type ChannelKind,
   type ChannelWatch,
@@ -8,11 +9,12 @@ import {
 } from "../channels/types";
 import { channelTags, enabledChannels, type ProntoConfig } from "../config";
 import { ImessageChannel } from "../imessage/channel";
+import { SlackChannel } from "../slack/channel";
+import { standaloneSlack } from "../slack/standalone";
 import { WhatsappChannel } from "../whatsapp/channel";
 import { standaloneWhatsapp } from "../whatsapp/standalone";
 import type { ProntoPaths } from "../macos/paths";
-import { RuntimeChain } from "../runtimes/chain";
-import { createRuntimeAdapter } from "../runtimes/factory";
+import { runtimeChainForTag } from "../runtimes/selection";
 import { openProntoDatabase } from "../storage/database";
 import { DeliveryJournal, type ChannelHealth } from "../storage/journal";
 import { DEFAULT_SCHEMA_VERSION, MULTI_APP_SCHEMA_VERSION } from "../storage/migrations";
@@ -44,12 +46,6 @@ export function standaloneMessagesOptions(input: {
   };
 }
 
-function runtimePath(config: ProntoConfig, fallback = false): string {
-  const path = fallback ? config.fallbackRuntimePath : config.primaryRuntimePath;
-  if (path === undefined) throw new Error("Runtime executable path is missing; run pronto setup");
-  return path;
-}
-
 type Health = { reason?: string; state: ChannelHealth["state"] };
 
 export class ProntoDaemon {
@@ -62,6 +58,7 @@ export class ProntoDaemon {
   constructor(
     config: ProntoConfig,
     readonly paths: ProntoPaths,
+    private readonly channelFactory?: (kind: ChannelKind) => Channel | Promise<Channel>,
   ) {
     this.#config = config;
   }
@@ -77,8 +74,8 @@ export class ProntoDaemon {
 
   /**
    * Re-reads the configuration and applies tag changes and enabled apps without restarting.
-   * Apps that need linking or failed to start are retried. Runtime, folder, and tool path
-   * changes still need a listener restart, which setup performs.
+   * Apps that need linking or failed to start are retried. Agent choices are read at
+   * the start of each turn; working-folder changes still need a listener restart.
    */
   reload(load: () => Promise<ProntoConfig>): Promise<void> {
     this.#reloads = this.#reloads.then(async () => {
@@ -112,6 +109,7 @@ export class ProntoDaemon {
     const health = new Map<ChannelKind, Health>();
     const degraded = new Map<ChannelKind, readonly string[]>();
     const recoveryReasons = new Map<ChannelKind, string>();
+    const connectionReasons = new Map<ChannelKind, string>();
     let signalTransportClosed!: () => void;
     const transportClosed = new Promise<"transport-closed">((resolve) => {
       signalTransportClosed = () => resolve("transport-closed");
@@ -138,7 +136,8 @@ export class ProntoDaemon {
       ]);
     };
     const settle = (kind: ChannelKind) => {
-      const reason = recoveryReasons.get(kind);
+      // A completed catch-up search cannot repair a disconnected live stream.
+      const reason = connectionReasons.get(kind) ?? recoveryReasons.get(kind);
       const current = health.get(kind);
       if (current?.state === "needs_link" || current?.state === "failed") return;
       health.set(kind, reason !== undefined
@@ -148,10 +147,10 @@ export class ProntoDaemon {
     /** Creates and qualifies one app; returns the failure, if any. */
     const qualifyChannel = async (kind: ChannelKind): Promise<unknown> => {
       if (kind !== "imessage") journal.enableMultiApp();
-      const channel = this.#createChannel(kind, journal);
-      created.set(kind, channel);
       journal.recordChannelHealth(kind, "starting");
       try {
+        const channel = await (this.channelFactory?.(kind) ?? this.#createChannel(kind, journal));
+        created.set(kind, channel);
         const qualification = await channel.qualify();
         degraded.set(kind, qualification.degraded);
         health.set(kind, { state: "starting" });
@@ -176,6 +175,8 @@ export class ProntoDaemon {
           admit.admit(activation);
         },
         onHealth: (connection) => {
+          if (connection.state === "reconnecting") connectionReasons.set(kind, connection.reason);
+          else connectionReasons.delete(kind);
           if (connection.state === "needs_link") {
             health.set(kind, { state: "needs_link" });
           } else if (connection.state === "reconnecting") {
@@ -187,12 +188,13 @@ export class ProntoDaemon {
           updateHealth();
         },
         onRecovery: (outcome) => {
+          if (isSlackChannel(kind) && outcome.status === "recovered") degraded.set(kind, []);
           if (outcome.status === "degraded") recoveryReasons.set(kind, outcome.reason);
           else recoveryReasons.delete(kind);
           settle(kind);
           updateHealth();
         },
-        tags: () => channelTags(this.#config, kind),
+        tags: () => enabledChannels(this.#config).includes(kind) ? channelTags(this.#config, kind) : [],
       });
       activeWatches.set(kind, watch);
       void watch.terminated.then(() => {
@@ -207,22 +209,18 @@ export class ProntoDaemon {
       await watch?.close().catch(() => undefined);
       await created.get(kind)?.close().catch(() => undefined);
       created.delete(kind);
-      for (const state of [health, degraded, recoveryReasons]) state.delete(kind);
+      for (const state of [health, degraded, recoveryReasons, connectionReasons]) state.delete(kind);
       journal.recordChannelHealth(kind, "stopped");
     };
 
     try {
       let firstFailure: unknown;
       for (const kind of enabledChannels(this.#config)) {
-        firstFailure ??= await qualifyChannel(kind);
+        const failure = await qualifyChannel(kind);
+        firstFailure ??= failure;
       }
       if (channels.size === 0) throw firstFailure ?? new Error("No messaging app is enabled");
       brokerServer = broker.listen();
-      const primary = createRuntimeAdapter(this.#config.primaryRuntime, runtimePath(this.#config));
-      const fallback =
-        this.#config.fallbackRuntime === undefined
-          ? undefined
-          : createRuntimeAdapter(this.#config.fallbackRuntime, runtimePath(this.#config, true));
       const memory = new MemoryStore(database);
       const workspaces = new WorkspaceStore(database);
       coordinator = new TurnCoordinator(
@@ -233,7 +231,8 @@ export class ProntoDaemon {
           channels,
           journal,
           memory,
-          runtimes: new RuntimeChain(primary, fallback),
+          runtimes: runtimeChainForTag(this.#config),
+          runtimesForTag: (tag) => runtimeChainForTag(this.#config, tag),
           defaultWorkingDirectory: this.#config.workingDirectory,
           outboundStagingDirectory: this.paths.outboundStagingDirectory,
           workspaces,
@@ -263,7 +262,10 @@ export class ProntoDaemon {
         }
         for (const kind of wanted) {
           const state = health.get(kind)?.state;
-          if (created.has(kind) && state !== "needs_link" && state !== "failed") continue;
+          if (created.has(kind) && state !== "needs_link" && state !== "failed") {
+            await channels.get(kind)?.reload?.();
+            continue;
+          }
           if (created.has(kind)) await stopChannel(kind);
           if (await qualifyChannel(kind) === undefined) await watchChannel(kind);
         }
@@ -299,7 +301,7 @@ export class ProntoDaemon {
     }
   }
 
-  #createChannel(kind: ChannelKind, journal: DeliveryJournal): Channel {
+  async #createChannel(kind: ChannelKind, journal: DeliveryJournal): Promise<Channel> {
     const matchesOutboundEcho = (chat: ChatAddress, text: string) => {
       return journal.matchesOutboundEcho(chat, text);
     };
@@ -318,6 +320,13 @@ export class ProntoDaemon {
           matchesOutboundEcho,
           onMessageRowId: (rowId) => journal.advanceCursor(rowId),
         },
+      );
+    }
+    if (isSlackChannel(kind)) {
+      return new SlackChannel(
+        await standaloneSlack({ paths: this.paths, chatKeySalt: this.#config.chatKeySalt, workspace: kind }),
+        (sample) => console.log(JSON.stringify({ component: "slack-monitor", ...sample })),
+        kind,
       );
     }
     const whatsapp = this.#config.channels.whatsapp;

@@ -69,6 +69,7 @@ public struct CLIOutput: Sendable, Equatable {
 /// installed executable; `FakeCLIClient` serves fixtures for tests and previews.
 public protocol CLIClient: Sendable {
     /// Runs a one-shot `--json` command and returns its raw output.
+    func linkSlack(workspace: String, tags: [String]) -> AsyncThrowingStream<SlackLinkProgress, Error>
     func run(_ command: CLICommand) async throws -> CLIOutput
     /// Runs `whatsapp link --events`, yielding events as NDJSON lines arrive.
     /// Cancelling the consuming task terminates the process.
@@ -76,6 +77,22 @@ public protocol CLIClient: Sendable {
 }
 
 public extension CLIClient {
+    func linkSlack(workspace: String, tags: [String]) -> AsyncThrowingStream<SlackLinkProgress, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let output = try await run(.slackLink(workspace: workspace, tags: tags))
+                    for line in output.stdout.split(separator: 10) {
+                        try Task.checkCancellation()
+                        continuation.yield(try JSONDecoder().decode(SlackLinkProgress.self, from: Data(line)))
+                    }
+                    continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     func status() async throws -> StatusResponse { try await run(.status).decode(StatusResponse.self) }
     func channels() async throws -> ChannelsResponse { try await run(.channelsList).decode(ChannelsResponse.self) }
     func setChannel(_ app: AppID, enabled: Bool) async throws -> ChannelsResponse {

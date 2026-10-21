@@ -1,4 +1,4 @@
-import type { ChannelActivation, ChannelKind, TurnChannel } from "../channels/types";
+import { isSlackChannel, type ChannelActivation, type ChannelKind, type TurnChannel } from "../channels/types";
 import { assembleContext, type ContextEnvelope, type RecentMessage } from "../context/assemble";
 import { parseCurrentChatMessage } from "../imessage/event-adapter";
 import type { ChainedRuntimeResult, RuntimeChain } from "../runtimes/chain";
@@ -183,6 +183,7 @@ export class TurnProcessor {
       journal: DeliveryJournal;
       memory: MemoryStore;
       runtimes: RuntimeChain;
+      runtimesForTag?: (tag: string | undefined) => RuntimeChain;
       channels: ReadonlyMap<ChannelKind, TurnChannel>;
       defaultWorkingDirectory: string;
       /** Private directory for files sent with replies; without it replies carry text only. */
@@ -223,6 +224,8 @@ export class TurnProcessor {
     let consumePendingCandidates = false;
     let runtimeStarted = false;
     try {
+      // Pin the pair for this turn, so a reload cannot change its backup mid-attempt.
+      const runtimes = this.dependencies.runtimesForTag?.(event.activationTag) ?? this.dependencies.runtimes;
       const channel = this.#channel(event.chat.channel);
       const workspaceState = this.dependencies.workspaces.get(event.chatKey);
       const pendingCandidates = workspaceState.pendingCandidates;
@@ -269,7 +272,7 @@ export class TurnProcessor {
         capabilities.clear();
       };
       const inputForAttempt = (): RuntimeInput => {
-        const { token } = this.dependencies.broker.issue(event.chat);
+        const { token } = this.dependencies.broker.issue(event.chat, event.conversation);
         capabilities.add(token);
         return {
           bridgeExecutablePath: this.dependencies.bridgeExecutablePath,
@@ -285,7 +288,7 @@ export class TurnProcessor {
       void channel.acknowledge?.(event.chat, event.conversation).catch(() => undefined);
       const stopTyping = showTyping(channel, event);
       try {
-        result = await this.dependencies.runtimes.run(inputForAttempt(), {
+        result = await runtimes.run(inputForAttempt(), {
           fallbackInput: inputForAttempt,
           onAttemptStart: () => {
             this.dependencies.journal.beginRuntimeAttempt(event.providerGuid, lease);
@@ -308,7 +311,9 @@ export class TurnProcessor {
       if (result.status === "success") {
         const candidates = await this.#validCandidates(result.output.workspaceCandidates);
         const rendered = discoveryReply(
-          result.output.reply,
+          isSlackChannel(event.chat.channel) && result.output.attachmentPath !== undefined
+            ? `Slack file replies are not supported; no file was uploaded.\n\n${result.output.reply}`
+            : result.output.reply,
           candidates,
           event.activationTag === undefined
             ? MAX_RUNTIME_TEXT_CHARACTERS
@@ -437,7 +442,8 @@ export class TurnProcessor {
       this.dependencies.journal.beginSend(event.providerGuid, lease, event.chat, replyText);
       const disposition = await channel.sendText(event.chat, replyText, event.conversation, attachment);
       if (disposition.disposition === "confirmed") {
-        this.dependencies.journal.confirmDelivery(event.providerGuid, lease, disposition.guid);
+        const allowPromotion = channel.canCommit === undefined || await channel.canCommit(event.chat, event.conversation);
+        this.dependencies.journal.confirmDelivery(event.providerGuid, lease, disposition.guid, allowPromotion);
       } else if (disposition.disposition === "ambiguous") {
         this.dependencies.journal.markAmbiguous(event.providerGuid, lease);
       } else {

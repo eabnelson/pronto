@@ -1,4 +1,4 @@
-import { CHANNEL_LABELS, isChannelKind, type ChannelKind } from "./channels/types";
+import { channelLabel, isChannelKind, type ChannelKind } from "./channels/types";
 
 export interface TagAppChoice {
   readonly apps: ChannelKind[];
@@ -6,7 +6,7 @@ export interface TagAppChoice {
 }
 
 export function appList(apps: readonly ChannelKind[]): string {
-  return apps.map((app) => CHANNEL_LABELS[app]).join(" and ");
+  return apps.map(channelLabel).join(" and ");
 }
 
 /** Choices offered when adding a tag: every enabled app first (the default), then each app alone. */
@@ -14,7 +14,7 @@ export function tagAppChoices(enabled: readonly ChannelKind[]): TagAppChoice[] {
   if (enabled.length <= 1) return [{ apps: [...enabled], label: appList(enabled) }];
   return [
     { apps: [...enabled], label: appList(enabled) },
-    ...enabled.map((app) => ({ apps: [app], label: `${CHANNEL_LABELS[app]} only` })),
+    ...enabled.map((app) => ({ apps: [app], label: `${channelLabel(app)} only` })),
   ];
 }
 
@@ -48,7 +48,7 @@ export function parseAppFlags(args: readonly string[]): {
     if (arg === "--json") json = true;
     else if (arg === "--app") {
       const value = args[index + 1]?.toLowerCase();
-      if (!isChannelKind(value)) throw new Error("--app must be imessage or whatsapp");
+      if (!isChannelKind(value)) throw new Error("--app must be imessage, whatsapp, or slack");
       if (!apps.includes(value)) apps.push(value);
       index += 1;
     } else positional.push(arg);

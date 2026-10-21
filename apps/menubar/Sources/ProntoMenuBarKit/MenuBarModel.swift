@@ -68,7 +68,12 @@ public final class MenuBarModel {
 
     @ObservationIgnored private let statusFlight = SingleFlight<StatusResponse>()
     @ObservationIgnored private let channelsFlight = SingleFlight<ChannelsResponse>()
-    @ObservationIgnored private let tagsFlight = SingleFlight<TagsResponse>()
+    private struct TagRead: Sendable {
+        let revision: UInt
+        let response: TagsResponse
+    }
+    @ObservationIgnored private let tagsFlight = SingleFlight<TagRead>()
+    @ObservationIgnored private var tagRevision: UInt = 0
     @ObservationIgnored private var pollTask: Task<Void, Never>?
 
     public init(
@@ -179,13 +184,14 @@ public final class MenuBarModel {
         let client = client
         do {
             if full {
+                let revision = tagRevision
                 async let s = statusFlight.run { try await client.status() }
                 async let c = channelsFlight.run { try await client.channels() }
-                async let t = tagsFlight.run { try await client.tags() }
+                async let t = tagsFlight.run { TagRead(revision: revision, response: try await client.tags()) }
                 let (status, channels, tags) = try await (s, c, t)
                 self.status = status
                 self.channels = channels
-                self.tags = tags
+                if tags.revision == tagRevision { self.tags = tags.response }
             } else {
                 status = try await statusFlight.run { try await client.status() }
             }
@@ -209,7 +215,11 @@ public final class MenuBarModel {
     private func perform(_ action: BusyAction, _ body: () async throws -> Void) async -> Bool {
         guard busyAction == nil else { return false }
         busyAction = action
-        defer { busyAction = nil }
+        tagRevision &+= 1
+        defer {
+            tagRevision &+= 1
+            busyAction = nil
+        }
         do {
             try await body()
             return true
@@ -231,6 +241,19 @@ public final class MenuBarModel {
         actionError = nil
         return await perform(.channel(app)) {
             self.channels = try await self.client.setChannel(app, enabled: enabled)
+            await self.refresh(full: false)
+        }
+    }
+
+    private struct WorkspaceRemoval: Decodable { let linked: Bool }
+    @discardableResult
+    public func removeSlackWorkspace(_ app: AppID) async -> Bool {
+        guard app.isSlack else { return false }
+        actionError = nil
+        return await perform(.channel(app)) {
+            _ = try await self.client.run(.slackRemoveWorkspace(app)).decode(WorkspaceRemoval.self)
+            self.channels = try await self.client.channels()
+            self.tags = try await self.client.tags()
             await self.refresh(full: false)
         }
     }
@@ -280,6 +303,21 @@ public final class MenuBarModel {
     @discardableResult
     public func removeTag(_ entry: TagEntry) async -> Bool {
         await setApps([], for: entry)
+    }
+
+    /// Saves both choices together, or restores global inheritance with `primary: nil`.
+    @discardableResult
+    public func setAgents(for tag: String, primary: AgentID?, backup: AgentID? = nil) async -> Bool {
+        tagError = nil
+        if let primary, primary == backup {
+            tagError = "Backup agent must differ from the default agent."
+            return false
+        }
+        let command = primary.map { CLICommand.tagsAgents(tag: tag, primary: $0, backup: backup) }
+            ?? .tagsAgentsReset(tag: tag)
+        return await perform(.tag(tag)) {
+            self.tags = try await self.client.run(command).decode(TagsResponse.self)
+        }
     }
 
     /// `update --check --json`. Automatic checks are silent; manual checks report the result.

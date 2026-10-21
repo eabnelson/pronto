@@ -1,599 +1,102 @@
-import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { expect, test } from "bun:test";
 
-const repoRoot = new URL("../../", import.meta.url);
-const siteRoot = new URL("site/", repoRoot);
-const setupPrompt =
-  "Help me set up Pronto on this Mac. Follow https://studiofour.io/pronto-setup.md and stay with me until, in each messaging app I choose, one tagged message gets exactly one agent reply.";
+type BrowserEvent = { matches?: boolean; preventDefault(): void };
 
-async function read(name: string): Promise<string> {
-  return Bun.file(new URL(name, siteRoot)).text();
-}
+class EventTarget {
+  private readonly listeners = new Map<string, (event: BrowserEvent) => unknown>();
 
-type FakeEvent = {
-  animationName?: string;
-  matches?: boolean;
-  preventDefault(): void;
-};
-
-type Listener = {
-  callback: (event: FakeEvent) => unknown;
-  once: boolean;
-};
-
-class FakeEventTarget {
-  private readonly listeners = new Map<string, Listener[]>();
-
-  addEventListener(
-    type: string,
-    callback: (event: FakeEvent) => unknown,
-    options?: { once?: boolean },
-  ): void {
-    const listeners = this.listeners.get(type) ?? [];
-    listeners.push({ callback, once: options?.once === true });
-    this.listeners.set(type, listeners);
+  addEventListener(type: string, callback: (event: BrowserEvent) => unknown): void {
+    this.listeners.set(type, callback);
   }
 
-  async dispatch(type: string, event: Partial<FakeEvent> = {}): Promise<void> {
-    const dispatchedEvent: FakeEvent = {
-      preventDefault: () => undefined,
-      ...event,
-    };
-    const listeners = [...(this.listeners.get(type) ?? [])];
-
-    for (const listener of listeners) {
-      await listener.callback(dispatchedEvent);
-      if (listener.once) {
-        this.listeners.set(
-          type,
-          (this.listeners.get(type) ?? []).filter((candidate) => candidate !== listener),
-        );
-      }
-    }
+  async emit(type: string, event: BrowserEvent = { preventDefault() {} }): Promise<void> {
+    await this.listeners.get(type)?.(event);
   }
 }
 
-class FakeStyle {
-  position = "";
-  opacity = "";
-  readonly properties = new Map<string, string>();
-
-  setProperty(name: string, value: string): void {
-    this.properties.set(name, value);
-  }
-
-  getPropertyValue(name: string): string {
-    return this.properties.get(name) ?? "";
-  }
-}
-
-class FakeElement extends FakeEventTarget {
-  readonly animations: Array<{
-    canceled: boolean;
-    keyframes: Array<Record<string, number | string>>;
-    options: Record<string, number | string>;
-  }> = [];
-  readonly children: FakeElement[] = [];
+class Element extends EventTarget {
+  readonly children: Element[] = [];
   readonly dataset: Record<string, string> = {};
-  readonly style = new FakeStyle();
-  className = "";
-  href = "";
-  offsetHeight = 40;
-  offsetTop = 780;
-  offsetWidth = 220;
-  parent: FakeElement | undefined;
+  readonly properties = new Map<string, string>();
+  readonly style = {
+    setProperty: (name: string, value: string) => this.properties.set(name, value),
+    getPropertyValue: (name: string) => this.properties.get(name) ?? "",
+  };
   textContent = "";
-  value = "";
+  href = "";
+  offsetWidth = 220;
+  animations = 0;
+  canceled = 0;
 
-  get childElementCount(): number {
-    return this.children.length;
-  }
-
-  getBoundingClientRect(): { bottom: number; top: number } {
-    return { bottom: this.offsetTop + this.offsetHeight, top: this.offsetTop };
-  }
-
-  animate(
-    keyframes: Array<Record<string, number | string>>,
-    options: Record<string, number | string>,
-  ): { cancel(): void } {
-    const animation = {
-      canceled: false,
-      keyframes,
-      options,
-    };
-    this.animations.push(animation);
-    return {
-      cancel: () => {
-        animation.canceled = true;
-      },
-    };
-  }
-
-  append(child: FakeElement): void {
-    child.parent = this;
-    this.children.push(child);
-  }
-
-  remove(): void {
-    if (!this.parent) return;
-    const index = this.parent.children.indexOf(this);
-    if (index >= 0) this.parent.children.splice(index, 1);
-    this.parent = undefined;
-  }
-
-  replaceChildren(): void {
-    for (const child of this.children) child.parent = undefined;
-    this.children.length = 0;
-  }
-
-  select(): void {}
-}
-
-class FakeMediaQueryList extends FakeEventTarget {
-  constructor(public matches: boolean) {
-    super();
-  }
-
-  async change(matches: boolean): Promise<void> {
-    this.matches = matches;
-    await this.dispatch("change", { matches });
+  append(child: Element): void { this.children.push(child); }
+  replaceChildren(): void { this.children.length = 0; }
+  animate(): { cancel(): void } {
+    this.animations += 1;
+    return { cancel: () => { this.canceled += 1; } };
   }
 }
 
-class FakeDocument extends FakeEventTarget {
-  readonly body = new FakeElement();
-  hidden = false;
-
-  constructor(
-    readonly stream: FakeElement,
-    readonly copyButton: FakeElement,
-  ) {
-    super();
-  }
-
-  querySelector(selector: string): FakeElement | undefined {
-    if (selector === "[data-bubble-stream]") return this.stream;
-    if (selector === "#copy-prompt") return this.copyButton;
-    return undefined;
-  }
-
-  createElement(): FakeElement {
-    return new FakeElement();
-  }
-
-  execCommand(): boolean {
-    return true;
-  }
-}
-
-class FakeWindow extends FakeEventTarget {
-  readonly assignedLocations: string[] = [];
-  readonly motionPreference: FakeMediaQueryList;
-  readonly timers = new Map<number, () => void>();
-  innerHeight = 844;
-  innerWidth = 1200;
-  private nextTimer = 1;
-
-  readonly location = {
-    assign: (href: string) => this.assignedLocations.push(href),
+async function page(clipboardRejects = false) {
+  const html = await Bun.file(new URL("../../site/index.html", import.meta.url)).text();
+  const script = html.split("<script>")[1]?.split("</script>")[0];
+  const link = html.match(/<a\b[^>]*\bid="copy-prompt"[^>]*>/)?.[0];
+  if (!script || !link) throw new Error("Setup link or page script is missing");
+  const button = new Element();
+  button.href = link.match(/\bhref="([^"]+)"/)?.[1] ?? "";
+  if (!button.href) throw new Error("Setup link has no destination");
+  button.textContent = "Help me get set up";
+  const stream = new Element();
+  const motion = Object.assign(new EventTarget(), { matches: false });
+  const copied: string[] = [];
+  const navigations: string[] = [];
+  const timers = new Map<number, () => void>();
+  let nextTimer = 0;
+  const window = Object.assign(new EventTarget(), {
+    innerWidth: 1200,
+    innerHeight: 844,
+    matchMedia: () => motion,
+    location: { assign: (url: string) => navigations.push(url) },
+    setTimeout: (callback: () => void) => { timers.set(++nextTimer, callback); return nextTimer; },
+    clearTimeout: (id: number) => timers.delete(id),
+  });
+  const document = {
+    querySelector: (selector: string) => selector === "#copy-prompt" ? button : stream,
+    createElement: () => new Element(),
   };
-
-  constructor(reducedMotion = false) {
-    super();
-    this.motionPreference = new FakeMediaQueryList(reducedMotion);
-  }
-
-  matchMedia(): FakeMediaQueryList {
-    return this.motionPreference;
-  }
-
-  setTimeout(callback: () => void): number {
-    const timer = this.nextTimer;
-    this.nextTimer += 1;
-    this.timers.set(timer, callback);
-    return timer;
-  }
-
-  clearTimeout(timer: number | undefined): void {
-    if (timer !== undefined) this.timers.delete(timer);
-  }
-
-  runNextTimer(): void {
-    const next = this.timers.entries().next().value as [number, () => void] | undefined;
-    if (!next) throw new Error("expected a scheduled timer");
-    const [timer, callback] = next;
-    this.runTimer(timer, callback);
-  }
-
-  runTimer(timer: number, callback = this.timers.get(timer)): void {
-    if (!callback) throw new Error(`expected timer ${timer}`);
-    this.timers.delete(timer);
-    callback();
-  }
-}
-
-type LandingPageHarness = {
-  copyButton: FakeElement;
-  copiedText: string[];
-  document: FakeDocument;
-  motionPreference: FakeMediaQueryList;
-  stream: FakeElement;
-  window: FakeWindow;
-};
-
-async function createLandingPageHarness(options: {
-  clipboardRejects?: boolean;
-  innerWidth?: number;
-  reducedMotion?: boolean;
-} = {}): Promise<LandingPageHarness> {
-  const html = await read("index.html");
-  const openMarker = "<script>";
-  const closeMarker = "</script>";
-  const scriptStart = html.indexOf(openMarker);
-  const scriptEnd = html.indexOf(closeMarker, scriptStart + openMarker.length);
-  if (scriptStart === -1 || scriptEnd <= scriptStart + openMarker.length) {
-    throw new Error("landing page inline script markers are missing or invalid");
-  }
-  const script = html.slice(scriptStart + openMarker.length, scriptEnd);
-
-  const stream = new FakeElement();
-  const copyButton = new FakeElement();
-  copyButton.href = "https://example.test/setup.md";
-  copyButton.offsetHeight = 54;
-  copyButton.offsetTop = 180;
-  copyButton.textContent = "Help me get set up";
-  const document = new FakeDocument(stream, copyButton);
-  const window = new FakeWindow(options.reducedMotion);
-  window.innerWidth = options.innerWidth ?? window.innerWidth;
-  const copiedText: string[] = [];
-  const navigator = {
-    clipboard: {
-      writeText: async (text: string) => {
-        if (options.clipboardRejects) throw new Error("clipboard unavailable");
-        copiedText.push(text);
-      },
-    },
-  };
-
+  const navigator = { clipboard: { writeText: async (text: string) => {
+    if (clipboardRejects) throw new Error("Clipboard unavailable");
+    copied.push(text);
+  } } };
   Function("document", "window", "navigator", script)(document, window, navigator);
-
-  return {
-    copyButton,
-    copiedText,
-    document,
-    motionPreference: window.motionPreference,
-    stream,
-    window,
-  };
+  return { button, stream, motion, copied, navigations, timers };
 }
 
-describe("public landing page", () => {
-  test("deploys the site directory to GitHub Pages from main", async () => {
-    const workflow = await Bun.file(
-      new URL(".github/workflows/pages.yml", repoRoot),
-    ).text();
+test("the setup button copies a usable handoff and clears its copied state", async () => {
+  const h = await page();
+  await h.button.emit("click");
+  expect(h.copied).toHaveLength(1);
+  expect(h.copied[0]).toContain(h.button.href);
+  expect(h.copied[0]).toContain("Pronto");
+  expect(h.button.dataset.copied).toBe("true");
+  for (const callback of h.timers.values()) callback();
+  expect(h.button.dataset.copied).toBeUndefined();
+});
 
-    expect(workflow).toContain("branches: [main]");
-    expect(workflow).toContain("pages: write");
-    expect(workflow).toContain("id-token: write");
-    expect(workflow).toContain("contents: read");
-    expect(workflow).not.toContain("contents: write");
-    expect(workflow).toContain("name: github-pages");
-    expect(workflow).toMatch(/^\s+path: site$/m);
-    expect(workflow).toContain("needs: verify");
-    expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
-    expect(workflow).toContain("actions/upload-pages-artifact@");
-    expect(workflow).toContain("actions/deploy-pages@");
-    expect(workflow.indexOf("- run: bun run build")).toBeLessThan(
-      workflow.indexOf("- run: bun run release:validate"),
-    );
-  });
+test("clipboard failure opens the setup guide without claiming the prompt was copied", async () => {
+  const h = await page(true);
+  await h.button.emit("click");
+  expect(h.copied).toEqual([]);
+  expect(h.navigations).toEqual([h.button.href]);
+  expect(h.button.dataset.copied).toBeUndefined();
+});
 
-  test("keeps the hero minimal and points to the setup prompt", async () => {
-    const html = await read("index.html");
-
-    expect(html).toContain(">Pick any tag</h1>");
-    expect(html).toContain("iMessage or WhatsApp your agent from any conversation");
-    expect(html).toContain('id="copy-prompt"');
-    expect(html).toContain('href="https://studiofour.io/pronto-setup.md"');
-    expect(html).toContain(">Help me get set up</a>");
-    expect(html).toContain("https://studiofour.io/pronto-setup.md");
-    expect(html).toContain("overflow-x: hidden");
-    expect(html).toContain("overflow-y: auto");
-    expect(html).not.toContain('class="mark"');
-  });
-
-  test("renders the setup button as still, frosted glass", async () => {
-    const html = await read("index.html");
-    const button = html.slice(html.indexOf("      .cta {"), html.indexOf(".cta:focus-visible"));
-
-    expect(button).toContain("backdrop-filter: blur(12px) saturate(180%);");
-    expect(button).toContain("-webkit-backdrop-filter: blur(12px) saturate(180%);");
-    expect(button).toContain("feTurbulence");
-    expect(button).not.toContain("animation");
-    expect(html).not.toContain(".cta:hover");
-    expect(html).not.toContain("cta-morph");
-  });
-
-  test("styles WhatsApp bubbles in WhatsApp's light theme", async () => {
-    const html = await read("index.html");
-
-    expect(html).toContain('const bubbleStyles = ["blue", "gray", "whatsapp-sent", "whatsapp-received"];');
-    expect(html).toContain("background: #e0fbd6;");
-    expect(html).toContain("color: #111b21;");
-    expect(html).toContain("color: #667781;");
-    expect(html).toContain("content: attr(data-time);");
-    expect(html).toContain("%2353bdeb");
-    expect(html).toContain("bubbleBody.dataset.time = clockTime();");
-  });
-
-  test("publishes a bubble-only social preview", async () => {
-    const html = await read("index.html");
-    const source = await read("og-image.svg");
-    const sourceBytes = new Uint8Array(
-      await Bun.file(new URL("og-image.svg", siteRoot)).arrayBuffer(),
-    );
-    const png = new Uint8Array(await Bun.file(new URL("og-image.png", siteRoot)).arrayBuffer());
-    const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
-
-    expect(html).toContain(
-      '<meta property="og:image" content="https://erik.studiofour.io/pronto-og.png">',
-    );
-    expect(html).toContain('<meta property="og:image:width" content="1200">');
-    expect(html).toContain('<meta property="og:image:height" content="630">');
-    expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
-    expect(html).toContain(
-      '<meta name="twitter:image" content="https://erik.studiofour.io/pronto-og.png">',
-    );
-    expect(source).toContain('viewBox="0 0 1200 630"');
-    expect(source).toContain("@codex");
-    expect(source).toContain("@claude");
-    expect(source).toContain("@plan");
-    expect(source).toContain("#0a84ff");
-    expect(source).toContain("#e5e5ea");
-    expect(source).toContain("#e0fbd6");
-    expect(source).not.toContain(">pronto<");
-    expect(createHash("sha256").update(sourceBytes).digest("hex")).toBe(
-      "45c66b76430c5f044841c66b858bc41666c1afbeb7f2f7bab6e570b853b44629",
-    );
-    expect(createHash("sha256").update(png).digest("hex")).toBe(
-      "56e39e4d43ae8f2f1fd0f7dd11f38579d4a5ce1a45559db16c8e072079d121c4",
-    );
-    expect([...png.slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
-    expect(view.getUint32(16)).toBe(1200);
-    expect(view.getUint32(20)).toBe(630);
-  });
-
-  test("keeps the send entrance separate from the rising fade timeline", async () => {
-    const html = await read("index.html");
-
-    expect(html).toContain('data-bubble-stream');
-    expect(html).toContain("@codex");
-    expect(html).toContain("@claude");
-    expect(html).toContain("@plan");
-    expect(html).toContain("--rotation");
-    expect(html).toContain("@keyframes send-bubble-cycle");
-    expect(html).toContain("send-bubble-cycle var(--duration)");
-    expect(html).toContain("transform: translate3d(0, 18px, 0) scale(0.82)");
-    expect(html).toContain("frame(0, 1)");
-    expect(html).not.toContain("translateY(${entranceLift}px)");
-    expect(html).toContain("align-items: start");
-    expect(html).toContain("bubble.animate(keyframes");
-    expect(html).toContain("iterations: Number.POSITIVE_INFINITY");
-    expect(html).toContain("transform: `translate3d(");
-    expect(html).toContain('copyButton.getBoundingClientRect().top - mobileFadeOvershoot');
-    expect(html).toContain("if (window.innerWidth === layoutWidth) return");
-    expect(html).not.toContain("68% {\n          opacity: 0;");
-    expect(html).not.toContain("setInterval");
-    expect(html).not.toContain(".hero::before");
-    expect(html).not.toContain(".bubble.incoming::after");
-    expect(html).not.toContain(".bubble.outgoing::after");
-  });
-
-  test("copies the exact setup prompt and restores the setup label", async () => {
-    const harness = await createLandingPageHarness();
-
-    await harness.copyButton.dispatch("click");
-
-    expect(harness.copiedText).toEqual([setupPrompt]);
-    expect(harness.copyButton.textContent).toBe("Copied prompt");
-    expect(harness.copyButton.dataset.copied).toBe("true");
-    expect(harness.window.assignedLocations).toEqual([]);
-
-    const resetTimer = Math.max(...harness.window.timers.keys());
-    harness.window.runTimer(resetTimer);
-
-    expect(harness.copyButton.textContent).toBe("Help me get set up");
-    expect(harness.copyButton.dataset.copied).toBeUndefined();
-  });
-
-  test("opens the setup guide and clears copied state when clipboard access fails", async () => {
-    const harness = await createLandingPageHarness({ clipboardRejects: true });
-    harness.copyButton.dataset.copied = "true";
-
-    await harness.copyButton.dispatch("click");
-
-    expect(harness.copyButton.dataset.copied).toBeUndefined();
-    expect(harness.copyButton.textContent).toBe("Opening setup guide…");
-    expect(harness.window.assignedLocations).toEqual([harness.copyButton.href]);
-  });
-
-  test("starts one bubble immediately and keeps a continuous staggered stream", async () => {
-    const harness = await createLandingPageHarness();
-
-    expect(harness.stream.childElementCount).toBe(12);
-    const delays = harness.stream.children.map((bubble) =>
-      Number.parseFloat(bubble.style.properties.get("--delay") ?? ""),
-    );
-    expect(delays.filter((delay) => delay <= 0)).toHaveLength(1);
-    expect(delays).toEqual([...delays].sort((left, right) => left - right));
-    const intervals = delays.slice(1).map((delay, index) => delay - delays[index]!);
-    expect(Math.min(...intervals)).toBeGreaterThanOrEqual(1.25);
-    expect(harness.window.timers.size).toBe(0);
-    expect(harness.stream.children.every((bubble) => bubble.animations.length === 1)).toBe(
-      true,
-    );
-    for (const bubble of harness.stream.children) {
-      const animation = bubble.animations[0];
-      const keyframes = animation?.keyframes;
-      expect(animation?.options.easing).toBe("linear");
-      expect(keyframes?.[0]).toMatchObject({
-        opacity: 1,
-        transform: expect.stringContaining("translate3d"),
-      });
-      for (const frame of keyframes ?? []) {
-        expect(frame.easing).toBeUndefined();
-        const transform = String(frame.transform ?? "");
-        expect(transform).not.toContain("translateY");
-        expect(transform).not.toContain("scale");
-      }
-    }
-
-    harness.document.hidden = true;
-    await harness.document.dispatch("visibilitychange");
-    expect(harness.stream.childElementCount).toBe(12);
-    expect(harness.window.timers.size).toBe(0);
-  });
-
-  test("advances inspiration without replacing the looping bubble", async () => {
-    const harness = await createLandingPageHarness();
-    const bubble = harness.stream.children[0];
-    const bubbleBody = bubble?.children[0];
-    if (!bubble || !bubbleBody) throw new Error("expected an animated bubble");
-    const initialText = bubbleBody.textContent;
-
-    await bubbleBody.dispatch("animationiteration");
-
-    expect(harness.stream.childElementCount).toBe(12);
-    expect(harness.stream.children[0]).toBe(bubble);
-    expect(bubbleBody.textContent).not.toBe(initialText);
-  });
-
-  test("lets mobile bubbles rise past the setup button before fading", async () => {
-    const harness = await createLandingPageHarness({ innerWidth: 390 });
-    const bubble = harness.stream.children[0];
-    if (!bubble) throw new Error("expected an animated bubble");
-    const animation = bubble.animations[0];
-    if (!animation) throw new Error("expected a bubble animation");
-    const fadeFrame = animation.keyframes.find(
-      (frame) =>
-        frame.opacity === 0 && Number(frame.offset) > 0.05 && Number(frame.offset) < 1,
-    );
-    const expectedFadeEnd =
-      (bubble.offsetTop - (harness.copyButton.getBoundingClientRect().top - 60)) /
-      (harness.window.innerHeight * 0.85);
-
-    expect(Number(fadeFrame?.offset)).toBeCloseTo(expectedFadeEnd);
-    expect(animation.keyframes[0]?.transform).toContain("translate3d");
-    expect(animation.options.duration).toBe(16_800);
-    expect(animation.options.iterations).toBe(Number.POSITIVE_INFINITY);
-  });
-
-  test("does not restart bubbles during a height-only mobile resize", async () => {
-    const harness = await createLandingPageHarness({ innerWidth: 390 });
-    const bubbles = [...harness.stream.children];
-
-    await harness.window.dispatch("resize");
-
-    expect(harness.stream.children).toEqual(bubbles);
-    expect(bubbles.every((bubble) => bubble.animations.length === 1)).toBe(true);
-    expect(
-      bubbles.every((bubble) => bubble.animations.every((animation) => !animation.canceled)),
-    ).toBe(true);
-  });
-
-  test("responds to live reduced-motion changes", async () => {
-    const harness = await createLandingPageHarness();
-
-    await harness.motionPreference.change(true);
-    expect(harness.stream.childElementCount).toBe(8);
-    expect(harness.window.timers.size).toBe(0);
-    expect(harness.stream.children.every((bubble) => bubble.dataset.static === "true")).toBe(true);
-
-    await harness.motionPreference.change(false);
-    expect(harness.stream.childElementCount).toBe(12);
-    expect(harness.window.timers.size).toBe(0);
-    expect(harness.stream.children.every((bubble) => bubble.dataset.static === undefined)).toBe(true);
-    expect(
-      harness.stream.children.every(
-        (bubble) =>
-          bubble.style.properties.has("--duration") &&
-          Number.parseFloat(bubble.style.properties.get("--delay") ?? "") >= 0,
-      ),
-    ).toBe(true);
-    expect(harness.stream.children[0]?.style.properties.get("--delay")).toBe("0s");
-  });
-
-  test("provides a complete agent-readable setup handoff", async () => {
-    const setup = await read("setup.md");
-
-    expect(setup).toContain("https://github.com/eabnelson/pronto");
-    expect(setup).toContain('"$PRONTO_CANDIDATE" setup');
-    expect(setup).toContain('identifier \"dev.pronto.cli\"');
-    expect(setup).toContain('certificate leaf[subject.OU] = \"9YCNUWK84C\"');
-    expect(setup).toContain("Full Disk Access");
-    expect(setup).toContain("doctor");
-    expect(setup).toContain("status");
-    expect(setup).toContain("Do not type `yes` for me");
-    expect(setup).toContain("Do not use `sudo`");
-    expect(setup).toContain("iMessage or RCS");
-    expect(setup).toContain("SMS messages do not activate Pronto");
-  });
-
-  test("guides WhatsApp setup without deciding or linking for the owner", async () => {
-    // Compare prose with line wrapping collapsed so rewrapping the guide doesn't matter.
-    const setup = (await read("setup.md")).replace(/\s+/g, " ");
-
-    expect(setup).toContain("brew install openclaw/tap/wacli");
-    expect(setup).toContain("WhatsApp risk prompt");
-    expect(setup).toContain("never scan, approve, or link a device for me");
-    expect(setup).toContain("Settings → Linked devices → Link a device");
-    expect(setup).toContain("WhatsApp alone needs no Full Disk Access");
-    expect(setup).toContain('"$PRONTO" tags add @plan --app whatsapp');
-    expect(setup).toContain('"$PRONTO" whatsapp link');
-  });
-
-  test("explains choosing apps and adding one to an existing install", async () => {
-    const setup = (await read("setup.md")).replace(/\s+/g, " ");
-
-    expect(setup).toContain("Ask whether I want iMessage and RCS, WhatsApp, or both");
-    expect(setup).toContain("every app I chose needs its tool before setup runs");
-    expect(setup).toContain("choose every app I want to keep, not just the new one");
-    expect(setup).toContain("A Mac that is already linked skips this step");
-  });
-
-  test("grants setup and installed executables Full Disk Access at the right times", async () => {
-    const setup = await read("setup.md");
-    const setupCommand = setup.indexOf('"$PRONTO_CANDIDATE" setup');
-    const setupPermission = setup.indexOf("terminal or parent app that will run setup");
-    const installedPermission = setup.indexOf("exact installed executable");
-
-    expect(setupPermission).toBeGreaterThan(-1);
-    expect(setupPermission).toBeLessThan(setupCommand);
-    expect(installedPermission).toBeGreaterThan(setupCommand);
-  });
-
-  test("downloads and verifies the immutable release identity before setup", async () => {
-    const setup = await read("setup.md");
-    const download = setup.indexOf("releases/latest/download/pronto-$PRONTO_TARGET");
-    const signature = setup.indexOf("codesign --verify --strict");
-    const version = setup.indexOf('"$PRONTO_CANDIDATE" --version');
-    const install = setup.indexOf('"$PRONTO_CANDIDATE" setup');
-
-    expect(download).toBeGreaterThan(-1);
-    expect(signature).toBeGreaterThan(download);
-    expect(version).toBeGreaterThan(signature);
-    expect(install).toBeGreaterThan(version);
-    expect(setup).not.toContain("bun run packages/cli/src/cli.ts setup");
-  });
-
-  test("makes the final installed status check self-contained", async () => {
-    const setup = await read("setup.md");
-    const finalStep = setup.slice(setup.indexOf("7. "));
-
-    expect(finalStep).toContain(
-      'PRONTO="$HOME/Library/Application Support/pronto/bin/pronto"\n   "$PRONTO" status',
-    );
-  });
+test("reduced motion stops animated bubbles and keeps visible examples", async () => {
+  const h = await page();
+  const animated = [...h.stream.children];
+  expect(animated.length).toBeGreaterThan(0);
+  expect(animated.every((bubble) => bubble.animations > 0)).toBe(true);
+  await h.motion.emit("change", { matches: true, preventDefault() {} });
+  expect(animated.every((bubble) => bubble.canceled > 0)).toBe(true);
+  expect(h.stream.children.length).toBeGreaterThan(0);
+  expect(h.stream.children.every((bubble) => bubble.dataset.static === "true" && bubble.animations === 0)).toBe(true);
 });

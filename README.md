@@ -41,13 +41,14 @@ switch a chat into a repository you do not trust.
 
 ## Requirements
 
-- macOS 14 or newer with Messages signed in to iMessage
+- macOS 14 or newer; Messages must be signed in when using iMessage
 - For RCS, an iPhone and carrier configuration that makes the RCS conversation
   available in Messages on the Mac
 - [Bun 1.3.14](https://bun.sh/) only for development from source
 - For iMessage and RCS, [`imsg`](https://github.com/openclaw/imsg) 0.15.0
 - For WhatsApp, [`wacli`](https://github.com/openclaw/wacli) 0.19.0 or newer and
   the WhatsApp app on your phone (see [WhatsApp](#whatsapp) before enabling it)
+- For the Slack candidate, the direct-download Slack desktop app signed in to your chosen workspace; source builds also require Go 1.27.3 or newer and Xcode command line tools
 - At least one authenticated [Codex CLI](https://github.com/openai/codex) or
   [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/getting-started)
 
@@ -388,7 +389,8 @@ bun run build
 bun run release:validate
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
+See [testing guidance](docs/TESTING.md), [CONTRIBUTING.md](CONTRIBUTING.md),
+[SECURITY.md](SECURITY.md), and the
 [release qualification matrix](docs/RELEASE_QUALIFICATION.md).
 
 ## License and trademarks
@@ -397,3 +399,15 @@ MIT. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 This project is not affiliated with Apple, Anthropic, or OpenAI. iMessage,
 Claude, and Codex are trademarks of their respective owners.
+
+### Slack desktop beta candidate
+
+Slack support uses your sign-in in the direct-download macOS Slack desktop app. It needs no Slack developer app, browser, manual token, or hosted relay. This is an opt-in beta. Release checks cover signed helpers, owner acceptance and a short setup/reply smoke; owner daily use counts as evidence. See [qualification](docs/SLACK_QUALIFICATION.md) for the required record and follow-up testing.
+
+In the menu bar, choose **Add App… → Slack Workspace…**, select a signed-in workspace, and approve macOS credential access if requested. Each workspace appears as its own app with its name and Slack logo. Add and assign tags only under **Tags**; the same tag can use a default and backup agent across apps. A newly added workspace has no tags until you assign them. Click a workspace row to turn replies on or off, or right-click it to **Remove Workspace**. At least one enabled app must remain. The [CLI contract](docs/CLI_JSON.md#slack-workspaces-beta-candidate) provides the same operations, and `pronto setup` also supports Slack-only installation.
+
+Workspace tags work in supported self DMs, DMs, group DMs, and public/private channels where there is positive evidence that you have participated. Membership alone does not grant permission. Any human participant in an eligible conversation can invoke your unrestricted local agent with its configured tag. Connecting sends no messages. Slack Connect, externally shared, archived, read-only/inaccessible destinations, App Store Slack, files, reactions, and typing indicators are unsupported.
+
+Setup does not enumerate conversation histories or import a workspace archive. Pronto listens for live tags and searches Slack for missed tag uses within the last 24 hours, after the connection cutoff. Searches run at startup, on reconnect/wake, and roughly every minute. Participation is checked as needed for a request, and bounded context is read from that request's thread or DM timeline. Offline catch-up is best effort because Slack search can filter or omit matches; failed reads and budget exhaustion remain visible. [Provider documentation](packages/slack/README.md) lists the limits.
+
+Replies come from your account. Channel requests open a response thread; actual thread replies stay under their original root; ordinary DMs use the timeline. Memory and working folders are isolated by thread. Ambiguous sends are never automatically reposted. Turning a workspace off preserves catch-up state; removing it revokes its scopes and keeps your Slack desktop sign-in unchanged. `pronto doctor` checks the connection without sending a test message.

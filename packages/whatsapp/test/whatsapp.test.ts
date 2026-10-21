@@ -278,6 +278,30 @@ test("recovery sweeps report limits and failures", async () => {
   expect(f.recovery[0]).toEqual({ messages: 0, reason: "sweep-failed", status: "degraded" });
 });
 
+test.each(["sweep-failed", "sweep-limit"] as const)("an empty successful interval clears %s without repeating healthy notifications", async (reason) => {
+  const h = await setup({
+    auth: LINKED,
+    listFails: reason === "sweep-failed",
+    messages: reason === "sweep-limit" ? [row({ id: "LIMIT", ts: iso(1_000), fromMe: true })] : [],
+    syncRuns: [{}],
+  }, { recoveryLimits: { maxMessages: 1 } }, { liveSweepIntervalMs: 120 });
+  await seedState(h.statePath, iso(60_000));
+  const c = collector();
+  const subscription = await h.module.subscribe(c.input);
+  try {
+    await waitFor(() => c.recovery.some((outcome) => outcome.status === "degraded" && outcome.reason === reason));
+    const reads = async () => (await h.invocations("messages list")).filter((entry) => entry.args.includes("--asc")).length;
+    const before = await reads();
+    await h.writeScenario({ auth: LINKED, messages: [], syncRuns: [{}] });
+    // A later serialized sweep proves the preceding successful read has completed.
+    await waitFor(async () => await reads() >= before + 3);
+    expect(c.recovery.at(-1)).toEqual({ messages: 0, status: "recovered" });
+    const count = c.recovery.length;
+    await waitFor(async () => await reads() >= before + 5);
+    expect(c.recovery.length).toBe(count);
+  } finally { await subscription.close(); }
+});
+
 test("reply waits for the delegate socket and passes the self and quote flags", async () => {
   const h = await setup({ auth: LINKED, send: { id: "3EB0SENT", mode: "ok" }, syncRuns: [{ socketDelayMs: 400 }] });
   await h.module.subscribe(collector().input);
