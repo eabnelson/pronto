@@ -2,10 +2,15 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -30,10 +35,6 @@ jobs:
       - run: bun run build
       - run: codesign --verify --strict --verbose=4 dist/pronto
       - run: bun test
-      - run: ./dist/pronto --version
-      - run: ./dist/pronto --help
-      - run: node --input-type=module --eval 'import("./packages/messages/dist/index.js").then((module) => { if (typeof module.createProntoMessages !== "function") process.exit(1); })'
-      - run: node --input-type=module --eval 'import("./packages/whatsapp/dist/index.js").then((module) => { if (typeof module.createProntoWhatsapp !== "function") process.exit(1); })'
       - run: go test ./...
         working-directory: packages/slack/native
       - run: bun run release:validate

@@ -1,7 +1,12 @@
 # Release qualification
 
-Public release requires every automated gate and an owner-run live smoke. This
-file records capability evidence, not private conversation data.
+Public release requires the automated checks and the short, change-focused smoke
+in `docs/LIVE_SMOKE.md`. This file records evidence, not private conversation data.
+On 2026-10-21 the owner requested simpler testing. Routine release evidence now
+covers installed startup, the changed app flow and rollback readiness. Daily use
+on the candidate counts; unchanged behavior can carry forward named evidence.
+Tool versions and exhaustive feature matrices are historical context, not separate
+manual release gates. Signing, integrity checks and publication approval remain.
 
 ## v0.5.1 scope
 
@@ -369,6 +374,14 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
+| Installed startup | unreleased | Record signed candidate startup and preserved settings for the next release | Pending |
+| Changed app flow | unreleased | Record changed-app smoke or owner daily use and the tested candidate/source | Pending |
+| Rollback readiness | unreleased | Record retained compatible build/config and applicable automated rollback results | Pending |
+
+## Historical v0.5.1 matrix
+
+| Surface | Qualified version | Evidence | Status |
+| --- | --- | --- | --- |
 | macOS | 26.5.1 | Owner smoke of v0.5.0-candidate.4 on the owner's Mac (arm64) on 2026-09-30 | Pass |
 | Bun | 1.3.14 | 392 tests passed; frozen install, typecheck, build and release validation passed; signed candidate CI 37085047206 | Pass |
 | Node.js | 22.23.1 | Clean packed import and public-interface smoke passed in signed candidate CI 36746029798 | Pass |
@@ -482,10 +495,8 @@ strings alone, determine whether setup and startup proceed.
 
 ## Owner-only gate
 
-Run `docs/LIVE_SMOKE.md` after installing the exact release candidate. Normally,
-mark the remote row Pass only after a remote participant's exactly-one reply,
-recent context, tagged continuity, restart suppression, and content-free logs are
-observed. When the checklist's narrowly scoped carry-forward exception applies,
-record the prior remote release, fresh exact-candidate self-chat evidence, and the
-reviewed unchanged surfaces in the matrix. Do not publish a GitHub release while
-any cell is Pending or Blocked.
+Use `docs/LIVE_SMOKE.md` for the changed behavior. Fill the three Current matrix
+rows for the intended release tag, naming the observed candidate/source and any
+reviewed carry-forward evidence. A separate remote participant and broad manual
+regression campaign are unnecessary for every release. Do not mark an unobserved
+case passed or publish while a required result is pending or failed.

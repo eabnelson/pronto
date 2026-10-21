@@ -32,6 +32,7 @@ const REQUIRED_CONTROLS = [
   ["candidate_only:", "explicit candidate-only input"],
   ["if: ${{ inputs.candidate_only != true && !contains(github.ref_name, '-candidate.') }}", "candidate publication fence"],
   ["- name: Verify owner qualification is complete\n        if: ${{ inputs.candidate_only != true }}", "normal-release owner qualification gate"],
+  ["- name: Require Slack qualification before publishing\n        if: ${{ inputs.candidate_only != true }}", "normal-release Slack qualification gate"],
   ["- name: Create signed update manifest and checksums\n        if: ${{ inputs.candidate_only != true }}", "candidate update-manifest fence"],
   [
     "ref: ${{ github.ref }}",
@@ -47,6 +48,7 @@ const PUBLISHED_PACKAGES = 2;
 
 const ORDERED_STEPS = [
   "- name: Verify owner qualification is complete",
+  "- name: Require Slack qualification before publishing",
   "- name: Create signed update manifest and checksums",
   "\n  publish:",
   "- name: Verify downloaded checksum",

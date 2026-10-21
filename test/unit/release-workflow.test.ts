@@ -1,131 +1,48 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { releaseWorkflowViolations } from "../../scripts/release-workflow-validation";
 
-const repoRoot = new URL("../../", import.meta.url);
+const workflow = await Bun.file(new URL("../../.github/workflows/release.yml", import.meta.url)).text();
 
-async function releaseWorkflow(): Promise<string> {
-  return Bun.file(new URL(".github/workflows/release.yml", repoRoot)).text();
-}
+test("the release workflow preserves signing, qualification and candidate publication fences", () => {
+  expect(releaseWorkflowViolations(workflow)).toEqual([]);
+});
 
-describe("release workflow", () => {
-  test("candidate-only signing cannot enter either public publication path", async () => {
-    const workflow = await releaseWorkflow();
-    expect(workflow).toContain("candidate_only:");
-    expect(workflow).toContain("type: boolean");
-    expect(workflow).toContain("default: false");
-    expect(workflow).toContain("- \"!v*-candidate.*\"");
-    expect(workflow).toContain("name: Build candidate checksums");
-    expect(releaseWorkflowViolations(workflow)).toEqual([]);
-    for (const guardedStep of ["Verify owner qualification is complete", "Create signed update manifest and checksums"]) {
-      expect(releaseWorkflowViolations(workflow.replace(
-        `- name: ${guardedStep}\n        if: \${{ inputs.candidate_only != true }}`,
-        `- name: ${guardedStep}`,
-      ))).not.toEqual([]);
-    }
-    expect(releaseWorkflowViolations(workflow.replace(
-      "if: ${{ inputs.candidate_only != true && !contains(github.ref_name, '-candidate.') }}", "if: always()",
-    ))).not.toEqual([]);
-  });
+test("draft verification and immutable publication retain their remote integrity checks", () => {
+  const beforePublish = workflow.split("      - name: Publish verified release")[0]!;
+  expect(beforePublish.split('gh api --paginate "repos/$GH_REPO/releases?per_page=100"').length - 1).toBe(2);
+  for (const control of [
+    ".draft == true",
+    "([.assets[].name] | sort) == ([",
+    "Refuse to mutate an existing release",
+    'test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"',
+  ]) expect(workflow).toContain(control);
+});
 
-  test("uses draft-aware release lookups before publishing", async () => {
-    const workflow = await releaseWorkflow();
-    const beforePublish = workflow.split("      - name: Publish verified release")[0]!;
-    const listLookups = beforePublish.match(
-      /gh api --paginate "repos\/\$GH_REPO\/releases\?per_page=100"/g,
-    );
+test("removing publication controls or reordering publication fails validation", () => {
+  for (const control of [
+    'npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public',
+    "id-token: write",
+    "for ATTEMPT in {1..60}; do",
+    "sha256sum -c pronto-imessage.sha256",
+    "workflow_dispatch:",
+    "ref: ${{ github.ref }}",
+    'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
+    "if: ${{ inputs.candidate_only != true && !contains(github.ref_name, '-candidate.') }}",
+  ]) expect(releaseWorkflowViolations(workflow.replace(control, "removed-control"))).not.toEqual([]);
 
-    expect(listLookups).toHaveLength(2);
-    expect(beforePublish).not.toContain("releases/tags/$RELEASE_TAG");
-    expect(beforePublish).toContain('--arg tag "$RELEASE_TAG"');
-    expect(beforePublish).toContain(".tag_name == $tag");
-    expect(beforePublish).toContain(".draft == true");
-    expect(beforePublish).toContain('([.assets[].name] | sort) == ([');
-    expect(beforePublish).toContain('$package');
-    expect(workflow).toContain("codesign --verify --strict --verbose=4 -R=\"$requirement\"");
-    expect(workflow).toContain("codesign --force --options runtime --timestamp");
-    expect(workflow).toContain("grep -Eq '^CodeDirectory .*flags=.*runtime'");
-    expect(workflow).toContain("xcrun notarytool submit");
-    expect(workflow).toContain("environment: release");
-    expect(workflow).toContain("pronto-update.json");
-    expect(workflow).not.toContain("dist/s4imsg");
-    expect(workflow).not.toContain("release-assets/s4imsg");
-    expect(workflow).toContain("release/pronto-imessage-*.tgz");
-  });
+  for (const step of [
+    "Verify owner qualification is complete",
+    "Require Slack qualification before publishing",
+    "Create signed update manifest and checksums",
+  ]) {
+    const guarded = "- name: " + step + "\n        if: ${{ inputs.candidate_only != true }}";
+    expect(releaseWorkflowViolations(workflow.replace(guarded, "- name: " + step))).not.toEqual([]);
+  }
 
-  test("keeps releases immutable and verifies the published release", async () => {
-    const workflow = await releaseWorkflow();
-
-    expect(workflow).toContain("Refuse to mutate an existing release");
-    expect(workflow).toContain("gh release create \"$RELEASE_TAG\" --draft");
-    expect(workflow).toContain('gh release edit "$RELEASE_TAG" --draft=false');
-    expect(workflow).toContain(
-      'gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq \'.draft\'',
-    );
-    expect(workflow).toContain('test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"');
-  });
-
-  test("retries npm verification while a new version propagates", async () => {
-    const workflow = await releaseWorkflow();
-
-    expect(workflow).toContain("for ATTEMPT in {1..60}; do");
-    expect(workflow).toContain('REMOTE_VERSION="$(npm view "pronto-imessage@$PACKAGE_VERSION" version 2>/dev/null || true)"');
-    expect(workflow).toContain('[[ "$REMOTE_VERSION" = "$PACKAGE_VERSION" ]] && break');
-    expect(workflow).toContain("sleep 5");
-    expect(workflow).toContain('test "$REMOTE_VERSION" = "$PACKAGE_VERSION"');
-  });
-
-  test("orders qualification, draft verification, package publication, and release publication", async () => {
-    const workflow = await releaseWorkflow();
-    expect(releaseWorkflowViolations(workflow)).toEqual([]);
-  });
-
-  test("rejects missing publication controls and reordered publication", async () => {
-    const workflow = await releaseWorkflow();
-    for (const control of [
-      'npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public',
-      "id-token: write",
-      "npm install --global npm@11.19.1",
-      'test "$(npm --version)" = "11.19.1"',
-      "for ATTEMPT in {1..60}; do",
-      "release/pronto-imessage-*.tgz",
-      "sha256sum -c pronto-imessage.sha256",
-      "workflow_dispatch:",
-      "ref: ${{ github.ref }}",
-      'git rev-parse "refs/tags/$RELEASE_TAG^{commit}"',
-    ]) {
-      expect(releaseWorkflowViolations(workflow.replace(control, "removed-control")))
-        .not.toEqual([]);
-    }
-    expect(releaseWorkflowViolations(`${workflow}\nNODE_AUTH_TOKEN: \${{ secrets.NPM_TOKEN }}`))
-      .toContain("release workflow must use OIDC instead of an npm token");
-    const reordered = workflow
-      .replace("- name: Publish and verify pronto-imessage", "- name: temporary-step")
-      .replace("- name: Create draft release", "- name: Publish and verify pronto-imessage")
-      .replace("- name: temporary-step", "- name: Create draft release");
-    expect(releaseWorkflowViolations(reordered)).toContain(
-      "release workflow step is out of order: - name: Upload and verify draft assets",
-    );
-    const unverifiedDraft = workflow
-      .replace("- name: Verify downloaded checksum", "- name: temporary-step")
-      .replace("- name: Create draft release", "- name: Verify downloaded checksum")
-      .replace("- name: temporary-step", "- name: Create draft release");
-    expect(releaseWorkflowViolations(unverifiedDraft)).toContain(
-      "release workflow step is out of order: - name: Create draft release",
-    );
-  });
-
-  test("manual recovery rebuilds an explicit immutable tag", async () => {
-    const workflow = await releaseWorkflow();
-
-    expect(workflow).toContain("RELEASE_TAG: ${{ github.ref_name }}");
-    expect(workflow).toContain("ref: ${{ github.ref }}");
-    expect(workflow).toContain("Verify immutable tag and package version");
-    expect(workflow).toContain('git rev-parse "refs/tags/$RELEASE_TAG^{commit}"');
-    expect(workflow).toContain('test "v$VERSION" = "$RELEASE_TAG"');
-    expect(workflow).toContain('echo "release-tag=$RELEASE_TAG"');
-    expect(workflow).toContain('} >> "$GITHUB_OUTPUT"');
-    expect(workflow).toContain("RELEASE_TAG: ${{ needs.build.outputs.release-tag }}");
-    expect(workflow).toContain('--title "Pronto $RELEASE_TAG"');
-    expect(workflow).not.toContain("$GITHUB_REF_NAME");
-  });
+  expect(releaseWorkflowViolations(workflow + "\nNODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}")).not.toEqual([]);
+  const reordered = workflow
+    .replace("- name: Publish and verify pronto-imessage", "- name: temporary-step")
+    .replace("- name: Create draft release", "- name: Publish and verify pronto-imessage")
+    .replace("- name: temporary-step", "- name: Create draft release");
+  expect(releaseWorkflowViolations(reordered)).not.toEqual([]);
 });

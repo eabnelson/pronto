@@ -1,9 +1,33 @@
 import { expect, test } from "bun:test";
-import { SLACK_GATES, validateSlackQualification, type SlackQualification } from "../../scripts/slack-qualification";
-test("a release cannot claim Slack qualification from missing or prototype-only evidence", () => {
-  const valid: SlackQualification = { version: 1, releaseTag: "v0.4.3", artifacts: { arm64: "a".repeat(64), x64: "b".repeat(64) }, checks: SLACK_GATES.map((id) => ({ id, status: "pass", evidence: "Synthetic qualification evidence fixture" })), monitoring: { durationMs: 1_800_000, conversations: 5, samples: 20, missed: 0, p95Ms: 9_000, clockSkewMs: 10 }, sleep: { durationMs: 7_200_000, nativeWake: true, independentlyPublishedDuringSleep: true } };
-  expect(() => validateSlackQualification(valid, "v0.4.3")).not.toThrow();
-  expect(() => validateSlackQualification({ ...valid, sleep: { ...valid.sleep!, independentlyPublishedDuringSleep: false } }, "v0.4.3")).toThrow();
-  expect(() => validateSlackQualification({ ...valid, checks: valid.checks.slice(1) }, "v0.4.3")).toThrow();
-  expect(() => validateSlackQualification(valid, "v0.4.4")).toThrow();
+import { validateSlackQualification, type SlackQualification } from "../../scripts/slack-qualification";
+
+function record(): SlackQualification {
+  return {
+    version: 2,
+    releaseTag: "v0.5.2",
+    artifacts: { arm64: "a".repeat(64), x64: "b".repeat(64) },
+    checks: ["signed-helper-arm64", "signed-helper-x64", "owner-acceptance", "setup-and-reply"]
+      .map((id) => ({ id, status: "pass", evidence: "Recorded candidate evidence" })),
+  };
+}
+
+test("the beta needs signed helpers and owner smoke evidence, without a timed test campaign", () => {
+  expect(() => validateSlackQualification(record(), "v0.5.2")).not.toThrow();
+});
+
+test("pending, failed, stale or incomplete evidence still blocks publication", () => {
+  const valid = record();
+  const invalid: SlackQualification[] = [
+    { ...valid, releaseTag: "v0.5.1" },
+    { ...valid, artifacts: { arm64: "a".repeat(64) } },
+    { ...valid, checks: valid.checks.slice(1) },
+    { ...valid, checks: [...valid.checks, valid.checks[0]!] },
+    ...(["pending", "fail"] as const).map((status) => ({
+      ...valid, checks: [{ ...valid.checks[0]!, status }, ...valid.checks.slice(1)],
+    })),
+    { ...valid, checks: [{ ...valid.checks[0]!, evidence: "" }, ...valid.checks.slice(1)] },
+    { ...valid, checks: [{ ...valid.checks[0]!, id: "unknown" }, ...valid.checks.slice(1)] },
+  ];
+  for (const value of invalid) expect(() => validateSlackQualification(value, "v0.5.2")).toThrow();
+  expect(() => validateSlackQualification({ ...valid, version: 1 } as unknown as SlackQualification, "v0.5.2")).toThrow();
 });

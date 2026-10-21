@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "releaseTag": "v0.4.3",
+  "version": 2,
+  "releaseTag": "unreleased",
   "artifacts": {},
   "checks": [
     {
@@ -14,72 +14,12 @@
       "evidence": ""
     },
     {
-      "id": "fresh-keychain-approval",
+      "id": "owner-acceptance",
       "status": "pending",
       "evidence": ""
     },
     {
-      "id": "background-without-prompts",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "desktop-open-closed-updated",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "identity-change-and-revocation",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "self-dm-end-to-end",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "dm-group-public-private",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "five-conversations-30-minutes",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "unseen-old-threads-and-read-elsewhere",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "hard-restart-and-ambiguous-send",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "native-wake-two-hour-sleep",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "menu-bar-and-cli-parity",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "update-and-rollback",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "workspace-app-isolation",
-      "status": "pending",
-      "evidence": ""
-    },
-    {
-      "id": "participation-based-workspace-coverage",
+      "id": "setup-and-reply",
       "status": "pending",
       "evidence": ""
     }

@@ -1,121 +1,37 @@
-# Live test-chat checklist
+# Release smoke
 
-Use a dedicated iMessage or RCS conversation whose participants know the test is
-happening. A live smoke sends real conversation material to the selected model
-provider and sends real Messages replies; it is never run by CI. SMS is not an
-eligible activation service.
+Run this short check for the installed signed candidate. Use an owner-approved
+test conversation; the tagged request invokes a real agent and sends a real reply.
+CI never sends messages. Do not repeat unchanged feature tests for each release.
 
-## Core reply and permissions
+1. **Installed startup:** confirm `pronto status` reports the listener running and
+   the configured apps healthy. Confirm the menu agrees. Check that installation
+   preserved settings and background startup requires no unexpected prompt.
+2. **Changed app flow:** in each app whose behavior changed, send one tagged
+   request and confirm exactly one reply reaches the intended conversation/thread.
+   Check the changed feature if relevant. Owner daily use on the candidate can
+   supply this evidence; record what was observed. Reuse earlier evidence only
+   for reviewed unchanged runtime/build inputs and name its candidate/source.
+3. **Rollback readiness:** retain the previous signed executable/helper, compatible
+   menu app, configuration and any state backup required by a schema change.
+   Confirm how to restore them without replaying ambiguous work. Exercise actual
+   rollback when update, migration or rollback code changes; otherwise the retained
+   build and passing automated rollback tests are sufficient.
 
-1. Confirm Messages is signed in and the owner has already sent a message in the
-   test chat.
-2. Run setup and confirm it offers `~/pronto`, asks before reusing an existing
-   folder, and presents the
-   unrestricted trust disclosure before the runtime probe.
-3. Confirm the probe completes without a Claude Code or Codex approval prompt.
-4. Run `~/Library/Application\ Support/pronto/bin/pronto doctor`. Resolve failed checks. A degraded
-   `messages-send-automation` check is expected until this smoke succeeds.
-5. Run `~/Library/Application\ Support/pronto/bin/pronto status` and confirm the listener is `running`.
-6. Send `<tag> reply with exactly: pronto smoke ok` in the test chat.
-7. Approve the macOS Messages Automation prompt for the installed `pronto`
-   executable if it appears.
-8. Confirm exactly one plain-text reply arrives and it contains
-   `pronto smoke ok`.
-9. Wait one minute and confirm the sent reply did not trigger an echo-loop turn.
+Record these three results against the intended release tag in the Current matrix
+of [RELEASE_QUALIFICATION.md](RELEASE_QUALIFICATION.md). Name the tested
+candidate/source, signed build and any carry-forward evidence. Leave unknown
+results pending. Publishing still requires the owner's authorization.
 
-## Self-chat mirror handling
+For Slack, also record the four entries in [SLACK_QUALIFICATION.md](SLACK_QUALIFICATION.md);
+the same startup/reply evidence can satisfy both records. Slack recovery remains
+best effort, not an arbitrary-history or exhaustive catch-up guarantee.
 
-1. Re-run setup; self-chat handling should require no question or address entry.
-2. Re-grant Full Disk Access if macOS treats the rebuilt executable as a new
-   identity, then confirm `pronto status` reports `daemon ready`.
-3. Send one new tagged message to yourself and confirm the agent runs once and
-   sends one reply, even though Messages displays incoming and outgoing copies.
-4. In a different eligible chat, have another participant send a tagged message
-   and confirm their request still runs once.
+Deeper manual testing is driven by the diff or a reported bug. Examples include
+fresh permissions after signing/setup changes, attachments after media changes,
+working-folder isolation after routing changes, or wake/restart after recovery
+changes. Timed soak tests, a second participant, multiple workspaces, account
+revocation and long sleep are not routine release requirements.
 
-If no separate participant is available, the release owner may carry forward the
-most recent passing remote-participant evidence only when the reviewed diff does
-not change activation, Messages transport, runtime invocation, outbound delivery,
-or echo suppression. The exact candidate must still pass the self-chat flow, and
-the qualification matrix must name both the carried-forward release and the fresh
-self-chat evidence. This exception is not available for a release that changes any
-of those message-processing surfaces.
-
-## Per-chat working folders
-
-1. In one test chat, send a tagged `use /absolute/path/to/project` request and
-   confirm that turn operates there.
-2. Send a later tagged request in that chat and confirm it retains the folder.
-3. Use another test chat and confirm it still starts in the setup default.
-4. Ask the first chat to find a project without giving a path. Confirm it offers
-   numbered choices and does not switch until the next tagged message selects one.
-
-## Bounded conversation context
-
-1. Send an untagged message containing a synthetic fact, such as
-   `The synthetic launch color is amber.`
-2. Send `<tag> what is the synthetic launch color?` and confirm the answer uses
-   the recent untagged message.
-3. Send `<tag> remember that the synthetic release owner is Rowan.`
-4. Exchange enough ordinary messages to move that request out of the immediate
-   recent window.
-5. Send `<tag> who is the synthetic release owner?` and confirm the answer uses
-   prior tagged memory.
-
-## WhatsApp
-
-Use a WhatsApp account whose owner accepts the linked-device risk described in the
-README, and chats whose participants know the test is happening.
-
-1. Run setup with `wacli` installed, choose both apps, give one tag both apps and
-   one tag WhatsApp only, accept the WhatsApp disclosure, and link by scanning the
-   terminal QR code. Confirm setup does not ask for Full Disk Access when only
-   WhatsApp is chosen.
-2. Run `pronto status` and confirm `whatsapp` reports `ready` with its tags, and
-   `pronto tags` lists each tag with its apps.
-3. From the phone, send `<tag> reply with exactly: pronto smoke ok` in
-   "Message yourself", a one-to-one chat, and a group where the owner has spoken.
-   Confirm each gets exactly one reply from the owner's account, quoting the tagged
-   message, with the bold tag heading, and that the chat shows typing meanwhile.
-   Confirm the tagged message gets a 👀 reaction when the turn starts.
-4. Send a photo with the caption `<tag> describe this photo in one sentence` and
-   confirm the reply describes it, then do the same with a PDF document. Send
-   `<tag> send me a small text file` and confirm the reply arrives with the file.
-5. Have another participant send a tagged message in the group and confirm it runs
-   once. Confirm a WhatsApp-only tag does not activate in iMessage and an
-   iMessage-only tag does not activate in WhatsApp.
-6. Stop the listener, send a tagged message, wait over five minutes, and start it
-   again. Confirm the message is answered once after reconnecting.
-7. Wait one minute after each reply and confirm no echo-loop turn ran.
-8. Log the device out from the phone (Linked devices). Confirm `pronto status`
-   reports `whatsapp needs_link`, iMessage still answers, and
-   `pronto whatsapp link` restores WhatsApp.
-
-## Menu bar app
-
-1. Let setup install the menu bar app, or run `pronto menubar install`. Confirm
-   `~/Applications/Pronto.app` opens, shows an @ in the menu bar, and passes
-   `codesign --verify --strict` with the `dev.pronto.menubar` identifier.
-2. Open the menu and confirm each app's status matches `pronto status`.
-3. Add a tag from the menu, confirm `pronto tags` lists it, and use it in a chat
-   straight away without restarting. Remove it from the menu.
-4. Turn Pronto off with the header switch, confirm `pronto status` reports the
-   listener stopped, then turn it back on.
-5. On a single-app install, click the app that isn't set up and confirm Copy
-   Setup Prompt copies a prompt naming the app.
-
-## Recovery and inspection
-
-1. Run `~/Library/Application\ Support/pronto/bin/pronto status --chats`; confirm it prints only opaque `c_...` keys and
-   counts, never handles or message text.
-2. Stop and restart through `bun run packages/cli/src/cli.ts setup`, then send one new tagged
-   request. Confirm no old request is replayed.
-3. Run `~/Library/Application\ Support/pronto/bin/pronto forget <opaque-chat-key>`, then confirm the prior tagged fact is no
-   longer available unless it is still present in recent Messages history.
-4. Inspect `~/Library/Logs/pronto/daemon.log` and confirm it contains no message
-   text, participant handles, chat identifiers, provider output, or attachment
-   paths.
-
-Record the date, macOS version, `imsg --version`, `wacli --version`, selected runtime versions, and
-pass/fail result in `docs/RELEASE_QUALIFICATION.md`. Never record real chat
-content or participant identifiers.
+Keep private contents, identities, credentials and screenshots in gitignored
+`.scratch/`; record only redacted evidence in the release documents.

@@ -389,7 +389,8 @@ bun run build
 bun run release:validate
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
+See [testing guidance](docs/TESTING.md), [CONTRIBUTING.md](CONTRIBUTING.md),
+[SECURITY.md](SECURITY.md), and the
 [release qualification matrix](docs/RELEASE_QUALIFICATION.md).
 
 ## License and trademarks
@@ -401,7 +402,7 @@ Claude, and Codex are trademarks of their respective owners.
 
 ### Slack desktop beta candidate
 
-Slack support uses your sign-in in the direct-download macOS Slack desktop app. It needs no Slack developer app, browser, manual token, or hosted relay. Signed candidates are available for supervised use; the broader installed/live qualification record remains pending. See [qualification](docs/SLACK_QUALIFICATION.md) for the release gates.
+Slack support uses your sign-in in the direct-download macOS Slack desktop app. It needs no Slack developer app, browser, manual token, or hosted relay. This is an opt-in beta. Release checks cover signed helpers, owner acceptance and a short setup/reply smoke; owner daily use counts as evidence. See [qualification](docs/SLACK_QUALIFICATION.md) for the required record and follow-up testing.
 
 In the menu bar, choose **Add App… → Slack Workspace…**, select a signed-in workspace, and approve macOS credential access if requested. Each workspace appears as its own app with its name and Slack logo. Add and assign tags only under **Tags**; the same tag can use a default and backup agent across apps. A newly added workspace has no tags until you assign them. Click a workspace row to turn replies on or off, or right-click it to **Remove Workspace**. At least one enabled app must remain. The [CLI contract](docs/CLI_JSON.md#slack-workspaces-beta-candidate) provides the same operations, and `pronto setup` also supports Slack-only installation.
 

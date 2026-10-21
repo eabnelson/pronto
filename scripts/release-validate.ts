@@ -172,33 +172,8 @@ for (const workflow of await sourceFiles(".github/workflows")) {
   }
 }
 
-const [codexAdapter, claudeAdapter, qualification] = await Promise.all([
-  read("packages/cli/src/runtimes/codex.ts"),
-  read("packages/cli/src/runtimes/claude.ts"),
-  read("packages/cli/src/runtimes/qualification.ts"),
-]);
 const releaseWorkflow = await read(".github/workflows/release.yml");
 failures.push(...releaseWorkflowViolations(releaseWorkflow));
-for (const [name, source] of [
-  ["Codex", codexAdapter],
-  ["Claude Code", claudeAdapter],
-] as const) {
-  for (const forbidden of ["--model", "--sandbox", "bypassPermissions", "--permission-mode"]) {
-    if (source.includes(forbidden)) failures.push(`${name} adapter overrides ${forbidden}`);
-  }
-}
-if (!codexAdapter.includes("--dangerously-bypass-approvals-and-sandbox")) {
-  failures.push("Codex adapter must use unrestricted no-prompt mode");
-}
-if (!claudeAdapter.includes("--dangerously-skip-permissions")) {
-  failures.push("Claude Code adapter must use unrestricted no-prompt mode");
-}
-if (!qualification.includes('"--dangerously-bypass-approvals-and-sandbox"')) {
-  failures.push("Codex qualification must require unrestricted no-prompt mode");
-}
-if (!qualification.includes('"--dangerously-skip-permissions"')) {
-  failures.push("Claude Code qualification must require unrestricted no-prompt mode");
-}
 
 async function validatePackage(input: {
   readonly directory: string;

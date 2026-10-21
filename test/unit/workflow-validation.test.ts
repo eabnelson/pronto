@@ -5,6 +5,8 @@ describe("workflow action validation", () => {
   test("build workflows install the helper's Go toolchain before compiling", async () => {
     for (const name of ["ci", "release", "pages"]) {
       const workflow = await Bun.file(new URL(`../../.github/workflows/${name}.yml`, import.meta.url)).text();
+      expect(mutableActionReferences(workflow)).toEqual([]);
+      if (name === "pages") continue; // Static site deployment does not compile native code.
       const setup = workflow.indexOf("uses: actions/setup-go@");
       const build = workflow.indexOf("run: bun run build");
       expect(setup).toBeGreaterThan(-1);
@@ -13,7 +15,6 @@ describe("workflow action validation", () => {
       const configuration = workflow.slice(setup, workflow.indexOf("\n      - ", setup));
       expect(configuration).toContain("go-version-file: packages/slack/native/go.mod");
       expect(configuration).toContain("cache-dependency-path: packages/slack/native/go.sum");
-      expect(mutableActionReferences(workflow)).toEqual([]);
     }
   });
 

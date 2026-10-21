@@ -18,15 +18,16 @@ bun run build
 bun run release:validate
 ```
 
-The automated suite uses synthetic fixtures and does not read or send iMessages.
-Run the owner-only [live smoke checklist](docs/LIVE_SMOKE.md) only when a change
-affects the real Messages integration.
+The automated suite uses synthetic fixtures and does not read or send real messages.
+See [testing guidance](docs/TESTING.md) for choosing useful coverage and the short
+[release smoke](docs/LIVE_SMOKE.md) for changes that need live verification.
 
 ## Project rules
 
 - Keep the project independent of Studio Four packages and services.
 - Use synthetic message fixtures only.
-- Add focused tests for behavior changes.
+- Add focused tests for meaningful behavior changes or real bugs. Copy, colors,
+  layout and other reversible visual edits do not need new automated tests.
 - Never put message text, handles, chat identifiers, attachment paths,
   credentials, or provider output in issues, fixtures, snapshots, or logs.
 - Do not add rich outbound Messages mutations without a separately reviewed

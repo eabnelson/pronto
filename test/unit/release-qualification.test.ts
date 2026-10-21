@@ -1,108 +1,34 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { validateReleaseQualification } from "../../scripts/release-qualification";
 
-const surfaces = [
-  "macOS",
-  "Bun",
-  "Node.js",
-  "imsg",
-  "Codex CLI",
-  "Claude Code",
-  "Codex effective local probe",
-  "Claude effective local probe",
-  "Messages Automation",
-  "Self-chat mirror handling",
-  "Full remote tagged flow",
-  "wacli",
-  "WhatsApp tagged flow",
-  "Menu bar app",
-] as const;
-
-function matrix(
-  overrides: Partial<Record<(typeof surfaces)[number], Partial<{
-    evidence: string;
-    status: string;
-    version: string;
-  }>>> = {},
-): string {
-  const rows = surfaces.map((surface) => {
-    const override = overrides[surface] ?? {};
-    const version = override.version
-      ?? (surface === "Full remote tagged flow" ? "v0.1.0" : "qualified-version");
-    return `| ${surface} | ${version} | ${override.evidence ?? "qualification evidence"} | ${override.status ?? "Pass"} |`;
-  });
-
+function matrix(): string {
   return [
-    "# Release qualification",
-    "",
     "## Current matrix",
     "",
     "| Surface | Qualified version | Evidence | Status |",
     "| --- | --- | --- | --- |",
-    ...rows,
-    "",
-    "## Owner-only gate",
+    ...["Installed startup", "Changed app flow", "Rollback readiness"].map(
+      (surface) => `| ${surface} | v0.5.2 | Recorded candidate evidence | Pass |`,
+    ),
   ].join("\n");
 }
 
-describe("release qualification matrix", () => {
-  test("accepts every expected row exactly once when all statuses pass", () => {
-    expect(() => validateReleaseQualification(matrix(), "v0.1.0")).not.toThrow();
-  });
+test("release smoke needs three practical results instead of a tool-version matrix", () => {
+  expect(() => validateReleaseQualification(matrix(), "v0.5.2")).not.toThrow();
+});
 
-  for (const status of ["Pending", "Fail"]) {
-    test(`rejects a ${status} status`, () => {
-      expect(() => validateReleaseQualification(matrix({ Bun: { status } }), "v0.1.0"))
-        .toThrow(`Bun status must be Pass, received ${status}`);
-    });
-  }
-
-  test("rejects a missing expected row", () => {
-    const markdown = matrix().replace(
-      "| imsg | qualified-version | qualification evidence | Pass |\n",
-      "",
-    );
-    expect(() => validateReleaseQualification(markdown, "v0.1.0"))
-      .toThrow("missing expected qualification row: imsg");
-  });
-
-  test("rejects a duplicate expected row", () => {
-    const row = "| Codex CLI | qualified-version | qualification evidence | Pass |";
-    const markdown = matrix().replace(row, `${row}\n${row}`);
-    expect(() => validateReleaseQualification(markdown, "v0.1.0"))
-      .toThrow("duplicate qualification row: Codex CLI");
-  });
-
-  test("rejects remote-flow evidence for a stale release tag", () => {
-    expect(() => validateReleaseQualification(
-      matrix({ "Full remote tagged flow": { version: "v0.0.9" } }),
-      "v0.1.0",
-    )).toThrow("Full remote tagged flow must be qualified for exact release tag v0.1.0");
-  });
-
-  test("trims cells before validating them", () => {
-    const markdown = matrix().replace(
-      "| Bun | qualified-version | qualification evidence | Pass |",
-      "|   Bun   |   qualified-version   |   qualification evidence   |   Pass   |",
-    );
-    expect(() => validateReleaseQualification(markdown, "v0.1.0")).not.toThrow();
-  });
-
-  test("rejects unknown rows", () => {
-    const markdown = matrix().replace(
-      "| Full remote tagged flow |",
-      "| Unknown surface | qualified-version | qualification evidence | Pass |\n| Full remote tagged flow |",
-    );
-    expect(() => validateReleaseQualification(markdown, "v0.1.0"))
-      .toThrow("unknown qualification row: Unknown surface");
-  });
-
-  test("rejects malformed rows", () => {
-    const markdown = matrix().replace(
-      "| imsg | qualified-version | qualification evidence | Pass |",
-      "| imsg | qualified-version | Pass |",
-    );
-    expect(() => validateReleaseQualification(markdown, "v0.1.0"))
-      .toThrow("malformed qualification row");
-  });
+test("unproven or stale release evidence cannot pass", () => {
+  const valid = matrix();
+  for (const invalid of [
+    valid.replace(/\| Pass \|/g, "| Pending |"),
+    valid.replace(/\| Pass \|/g, "| Fail |"),
+    valid.replace("v0.5.2", "v0.5.1"),
+    valid.replace("Recorded candidate evidence", ""),
+    valid.replace("| Rollback readiness | v0.5.2 | Recorded candidate evidence | Pass |", ""),
+    `${valid}\n| Changed app flow | v0.5.2 | Recorded candidate evidence | Pass |`,
+    valid.replace("Changed app flow", "Unknown result"),
+    valid.replace("| Rollback readiness | v0.5.2 | Recorded candidate evidence | Pass |", "| Rollback readiness | Pass |"),
+    `${valid}\n\n## Current matrix`,
+  ]) expect(() => validateReleaseQualification(invalid, "v0.5.2")).toThrow();
+  expect(() => validateReleaseQualification(valid, "not-a-tag")).toThrow();
 });
