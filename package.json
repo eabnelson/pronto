@@ -35,7 +35,7 @@
     "release:validate": "bun ./scripts/release-validate.ts"
   },
   "devDependencies": {
-    "@types/bun": "1.3.14",
+    "@types/bun": "1.4.3",
     "@types/node": "26.2.0",
     "pronto-imessage": "workspace:*",
     "pronto-imessage-v0-2-0": "npm:pronto-imessage@0.2.0",
