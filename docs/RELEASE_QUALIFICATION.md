@@ -374,9 +374,28 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
-| Installed startup | unreleased | Record signed candidate startup and preserved settings for the next release | Pending |
-| Changed app flow | unreleased | Record changed-app smoke or owner daily use and the tested candidate/source | Pending |
-| Rollback readiness | unreleased | Record retained compatible build/config and applicable automated rollback results | Pending |
+| Installed startup | v0.5.2 | Signed v0.5.2-candidate.1, source 83a884f310126874c3ba930263c60cdacd1ea9ad, workflow 39649163823. Installed CLI checksum verified; launchd listener, database and iMessage/WhatsApp/Slack Ready; settings preserved. Both CLI/helper signatures and universal menu signature/staple/Gatekeeper pass; compatible existing menu retained pending public update. | Pass |
+| Changed app flow | v0.5.2 | Owner accepted daily Slack use on 2026-10-21 with v0.5.1-candidate.20 source a39b61d334bdc898cfc7da76d42aa70640185be6. Runtime/provider/native/menu source and build scripts are unchanged in candidate.1; changes are tests/tooling and version metadata. Prior workspace/tag setup and scoped replies carry forward. WhatsApp's changed empty-catch-up warning path passed its original bounded read-only repro and two regressions; no fresh outbound smoke is claimed. | Pass |
+| Rollback readiness | v0.5.2 | Candidate.1 cutover retained the previous signed CLI/matching helper, configuration and launch agents privately; compatible prior menu remains available. No schema or rollback algorithm changes; full automated update/setup/rollback tests pass in CI 39649136587, and signed candidate workflow 39649163823 passes. Delivery fences and existing ambiguous/parked work are preserved. | Pass |
+
+### v0.5.2 evidence scope
+
+The owner authorized rollout on 2026-10-21 under the shorter beta policy. Candidate
+arm64 SHA256 is `8aea72a7d622709ec2666865bcf19568c462e96958b383f1588d5a5a6f36f579`;
+x64 is `7c407c1c4a3f709ad3eef381247ee57522c7d8cf755c7a0cb15aa3044437039e`.
+These are the tested candidate bytes, not a claim that fresh signing timestamps
+produce byte-identical public artifacts. Final runtime/build source must match
+candidate.1; only qualification/documentation may differ. Public manifests and
+asset checksums bind the final signed bytes.
+
+Candidate.1 startup was observed on the owner's arm64 Mac on 2026-10-21, with no
+new model invocation or external message. The x64 self-test ran under Rosetta.
+Owner daily-use/setup/reply observations are explicitly carried forward for the
+reviewed unchanged behavior; no new conversation/platform coverage, native Intel,
+timed benchmark or two-hour sleep result is inferred. Private content, settings,
+provider state and rollback copies remain outside Git. Signed candidate packaging
+and current CI pass; all CodeQL analyses passed on 3b1992c, with subsequent source
+changes limited to version/lock metadata and this evidence.
 
 ## Historical v0.5.1 matrix
 
