@@ -61,11 +61,13 @@ const ORDERED_STEPS = [
 
 export function releaseWorkflowViolations(workflow: string): string[] {
   const violations: string[] = [];
+  // Recovery must not mask a missing control in the normal release publisher.
+  const normalRelease = workflow.split("\n  publish-npm-existing:")[0]!;
   for (const [control, label] of REQUIRED_CONTROLS) {
-    if (!workflow.includes(control)) violations.push(`release workflow is missing ${label}`);
+    if (!normalRelease.includes(control)) violations.push(`release workflow is missing ${label}`);
   }
   // Each published package waits for its own registry propagation.
-  if (workflow.split("for ATTEMPT in {1..60}; do").length - 1 < PUBLISHED_PACKAGES) {
+  if (normalRelease.split("for ATTEMPT in {1..60}; do").length - 1 < PUBLISHED_PACKAGES) {
     violations.push("release workflow is missing a registry propagation retry for each package");
   }
 
