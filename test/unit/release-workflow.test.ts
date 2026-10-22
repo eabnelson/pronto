@@ -7,6 +7,13 @@ test("the release workflow preserves signing, qualification and candidate public
   expect(releaseWorkflowViolations(workflow)).toEqual([]);
 });
 
+test("the publish job verifies the Node version it installs", () => {
+  const publish = workflow.split("\n  publish:")[1]!;
+  const installedVersion = publish.match(/node-version:\s*([^\s]+)/)?.[1];
+  expect(installedVersion).toBeDefined();
+  expect(publish).toContain(`test "$(node --version)" = "v${installedVersion}"`);
+});
+
 test("draft verification and immutable publication retain their remote integrity checks", () => {
   const beforePublish = workflow.split("      - name: Publish verified release")[0]!;
   expect(beforePublish.split('gh api --paginate "repos/$GH_REPO/releases?per_page=100"').length - 1).toBe(2);
