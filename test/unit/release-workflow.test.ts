@@ -7,12 +7,15 @@ test("the release workflow preserves signing, qualification and candidate public
   expect(releaseWorkflowViolations(workflow)).toEqual([]);
 });
 
-test("each publish job verifies the Node version it installs", () => {
+test("each publish job verifies the Node and npm versions it installs", () => {
   for (const name of ["publish", "publish-npm-existing"]) {
-    const publish = workflow.split(`\n  ${name}:`)[1]!;
+    const publish = workflow.split(`\n  ${name}:`)[1]!.split(/\n  [\w-]+:/)[0]!;
     const installedVersion = publish.match(/node-version:\s*([^\s]+)/)?.[1];
     expect(installedVersion).toBeDefined();
     expect(publish).toContain(`test "$(node --version)" = "v${installedVersion}"`);
+    const npmVersion = publish.match(/npm install --global npm@([^\s]+)/)?.[1];
+    expect(npmVersion).toBeDefined();
+    expect(publish).toContain(`test "$(npm --version)" = "${npmVersion}"`);
   }
 });
 
