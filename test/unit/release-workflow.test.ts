@@ -7,11 +7,13 @@ test("the release workflow preserves signing, qualification and candidate public
   expect(releaseWorkflowViolations(workflow)).toEqual([]);
 });
 
-test("the publish job verifies the Node version it installs", () => {
-  const publish = workflow.split("\n  publish:")[1]!;
-  const installedVersion = publish.match(/node-version:\s*([^\s]+)/)?.[1];
-  expect(installedVersion).toBeDefined();
-  expect(publish).toContain(`test "$(node --version)" = "v${installedVersion}"`);
+test("each publish job verifies the Node version it installs", () => {
+  for (const name of ["publish", "publish-npm-existing"]) {
+    const publish = workflow.split(`\n  ${name}:`)[1]!;
+    const installedVersion = publish.match(/node-version:\s*([^\s]+)/)?.[1];
+    expect(installedVersion).toBeDefined();
+    expect(publish).toContain(`test "$(node --version)" = "v${installedVersion}"`);
+  }
 });
 
 test("draft verification and immutable publication retain their remote integrity checks", () => {
