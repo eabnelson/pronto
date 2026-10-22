@@ -393,7 +393,7 @@ jobs:
 
   publish-npm-existing:
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.npm_only_tag != '' && inputs.candidate_only != true }}
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     timeout-minutes: 10
     permissions:
       attestations: read
@@ -437,10 +437,10 @@ jobs:
           gh release download "$RELEASE_TAG" --dir release-assets \
             --pattern "$PACKAGE_FILE" --pattern "$PACKAGE_NAME.sha256"
           cd release-assets
-          test "$(wc -l < "$PACKAGE_NAME.sha256" | tr -d ' ')" = "1"
+          test "$(wc -l < "$PACKAGE_NAME.sha256" | tr -d '[:space:]')" = "1"
           grep -Eq '^[a-f0-9]{64}  [a-z0-9.-]+[.]tgz$' "$PACKAGE_NAME.sha256"
           test "$(cut -c 67- "$PACKAGE_NAME.sha256")" = "$PACKAGE_FILE"
-          sha256sum -c "$PACKAGE_NAME.sha256"
+          shasum -a 256 -c "$PACKAGE_NAME.sha256"
           tar -xOzf "$PACKAGE_FILE" package/package.json |
             jq -e --arg name "$PACKAGE_NAME" --arg version "$VERSION" '.name == $name and .version == $version'
           gh attestation verify "$PACKAGE_FILE" --repo "$GH_REPO" \
@@ -451,13 +451,13 @@ jobs:
           echo "PACKAGE_VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Publish missing package and verify registry integrity
         run: |
-          LOCAL_SHASUM="$(sha1sum "release-assets/$PACKAGE_FILE" | awk '{print $1}')"
+          LOCAL_SHASUM="$(shasum -a 1 "release-assets/$PACKAGE_FILE" | awk '{print $1}')"
           REMOTE_SHASUM="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.shasum 2>/dev/null || true)"
           if [[ -n "$REMOTE_SHASUM" ]]; then
             test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"
           else
             # A timed-out write can still succeed server-side; verify before retrying.
-            if ! timeout 150s npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public; then
+            if ! python3 -c 'import subprocess, sys; sys.exit(subprocess.run(sys.argv[1:], timeout=150).returncode)' npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public; then
               echo "Publish did not complete successfully; checking registry integrity before failing."
               REMOTE_SHASUM="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.shasum 2>/dev/null || true)"
               test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"
