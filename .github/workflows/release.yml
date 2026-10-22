@@ -12,13 +12,18 @@ on:
         type: boolean
         required: false
         default: false
+      npm_only_tag:
+        description: "Retry npm publication using verified assets from an existing public stable release"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
   build:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.npm_only_tag == ''
     runs-on: macos-15
     environment: release
     env:
@@ -385,3 +390,87 @@ jobs:
         run: |
           gh release edit "$RELEASE_TAG" --draft=false
           test "$(gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq '.draft')" = "false"
+
+  publish-npm-existing:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.npm_only_tag != '' && inputs.candidate_only != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      attestations: read
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [pronto-imessage, pronto-whatsapp]
+    concurrency:
+      group: npm-existing-${{ inputs.npm_only_tag }}-${{ matrix.package }}
+      cancel-in-progress: false
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.npm_only_tag }}
+      PACKAGE_NAME: ${{ matrix.package }}
+      NPM_CONFIG_FETCH_TIMEOUT: "30000"
+      NPM_CONFIG_FETCH_RETRIES: "1"
+      NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "2000"
+      NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "5000"
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.4
+          registry-url: https://registry.npmjs.org
+      - name: Install npm with trusted-publishing support
+        run: |
+          npm install --global npm@11.19.1
+          test "$(node --version)" = "v22.23.4"
+          test "$(npm --version)" = "11.19.1"
+      - name: Verify existing release package and build provenance
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          VERSION="${RELEASE_TAG#v}"
+          gh release view "$RELEASE_TAG" --json tagName,isDraft,isPrerelease |
+            jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false'
+          SOURCE_SHA="$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq '.sha')"
+          PACKAGE_FILE="$PACKAGE_NAME-$VERSION.tgz"
+          gh release download "$RELEASE_TAG" --dir release-assets \
+            --pattern "$PACKAGE_FILE" --pattern "$PACKAGE_NAME.sha256"
+          cd release-assets
+          test "$(wc -l < "$PACKAGE_NAME.sha256" | tr -d ' ')" = "1"
+          grep -Eq '^[a-f0-9]{64}  [a-z0-9.-]+[.]tgz$' "$PACKAGE_NAME.sha256"
+          test "$(cut -c 67- "$PACKAGE_NAME.sha256")" = "$PACKAGE_FILE"
+          sha256sum -c "$PACKAGE_NAME.sha256"
+          tar -xOzf "$PACKAGE_FILE" package/package.json |
+            jq -e --arg name "$PACKAGE_NAME" --arg version "$VERSION" '.name == $name and .version == $version'
+          gh attestation verify "$PACKAGE_FILE" --repo "$GH_REPO" \
+            --signer-workflow "$GH_REPO/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$SOURCE_SHA" \
+            --deny-self-hosted-runners
+          echo "PACKAGE_FILE=$PACKAGE_FILE" >> "$GITHUB_ENV"
+          echo "PACKAGE_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Publish missing package and verify registry integrity
+        run: |
+          LOCAL_SHASUM="$(sha1sum "release-assets/$PACKAGE_FILE" | awk '{print $1}')"
+          REMOTE_SHASUM="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.shasum 2>/dev/null || true)"
+          if [[ -n "$REMOTE_SHASUM" ]]; then
+            test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"
+          else
+            # A timed-out write can still succeed server-side; verify before retrying.
+            if ! timeout 150s npm publish "./release-assets/$PACKAGE_FILE" --provenance --access public; then
+              echo "Publish did not complete successfully; checking registry integrity before failing."
+              REMOTE_SHASUM="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.shasum 2>/dev/null || true)"
+              test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"
+            fi
+          fi
+          for ATTEMPT in {1..60}; do
+            REMOTE_SHASUM="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.shasum 2>/dev/null || true)"
+            if [[ -n "$REMOTE_SHASUM" ]]; then
+              test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"
+              npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version dist.shasum dist.attestations --json
+              exit 0
+            fi
+            echo "Waiting for npm registry propagation (attempt $ATTEMPT/60)."
+            sleep 5
+          done
+          echo "Package did not reach the registry with the verified release checksum."
+          exit 1
