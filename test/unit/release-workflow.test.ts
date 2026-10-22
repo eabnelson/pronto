@@ -65,7 +65,7 @@ test("npm recovery requires a public stable release and its original signed buil
   expect(recovery).toContain("github.ref == 'refs/heads/main'");
   expect(recovery).toContain("inputs.npm_only_tag != '' && inputs.candidate_only != true");
   expect(recovery).toContain('.isDraft == false and .isPrerelease == false');
-  expect(recovery).toContain('sha256sum -c "$PACKAGE_NAME.sha256"');
+  expect(recovery).toContain('shasum -a 256 -c "$PACKAGE_NAME.sha256"');
   expect(recovery).toContain('--source-ref "refs/tags/$RELEASE_TAG" --source-digest "$SOURCE_SHA"');
   expect(recovery).toContain('--signer-workflow "$GH_REPO/.github/workflows/release.yml"');
   expect(recovery).toContain('test "$REMOTE_SHASUM" = "$LOCAL_SHASUM"');
@@ -74,7 +74,7 @@ test("npm recovery requires a public stable release and its original signed buil
 test("npm recovery bounds stalled writes and cannot alter release assets or tags", () => {
   const recovery = workflow.split("\n  publish-npm-existing:")[1]!;
   expect(recovery).toContain("timeout-minutes: 10");
-  expect(recovery).toContain("timeout 150s npm publish");
+  expect(recovery).toContain("subprocess.run(sys.argv[1:], timeout=150)");
   expect(recovery).toContain('NPM_CONFIG_FETCH_TIMEOUT: "30000"');
   expect(recovery).toContain("contents: read");
   expect(recovery).toContain("id-token: write");
