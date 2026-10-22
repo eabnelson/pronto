@@ -374,9 +374,34 @@ the final v0.4.0 tag; no runtime change is qualified by this evidence.
 
 | Surface | Qualified version | Evidence | Status |
 | --- | --- | --- | --- |
-| Installed startup | v0.5.2 | Signed v0.5.2-candidate.1, source 83a884f310126874c3ba930263c60cdacd1ea9ad, workflow 39649163823. Installed CLI checksum verified; launchd listener, database and iMessage/WhatsApp/Slack Ready; settings preserved. Both CLI/helper signatures and universal menu signature/staple/Gatekeeper pass; compatible existing menu retained pending public update. | Pass |
-| Changed app flow | v0.5.2 | Owner accepted daily Slack use on 2026-10-21 with v0.5.1-candidate.20 source a39b61d334bdc898cfc7da76d42aa70640185be6. Runtime/provider/native/menu source and build scripts are unchanged in candidate.1; changes are tests/tooling and version metadata. Prior workspace/tag setup and scoped replies carry forward. WhatsApp's changed empty-catch-up warning path passed its original bounded read-only repro and two regressions; no fresh outbound smoke is claimed. | Pass |
-| Rollback readiness | v0.5.2 | Candidate.1 cutover retained the previous signed CLI/matching helper, configuration and launch agents privately; compatible prior menu remains available. No schema or rollback algorithm changes; full automated update/setup/rollback tests pass in CI 39649136587, and signed candidate workflow 39649163823 passes. Delivery fences and existing ambiguous/parked work are preserved. | Pass |
+| Installed startup | v0.5.3 | Signed v0.5.3-candidate.1, source 1f2d9199b989deccf13edf4e87b465c56ff77bcc, workflow 39709812170. Both CLI checksums, Developer ID requirements and embedded Slack helper protocol/signature checks pass (x64 under Rosetta). New universal menu signature, staple and Gatekeeper checks pass. Installed arm64 candidate passes offline doctor and starts all three apps Ready with unchanged settings; compatible existing menu retained. | Pass |
+| Changed app flow | v0.5.3 | Security patch changes the embedded Bun compiler from 1.3.14 to 1.4.3 and pins Node release tooling to 22.23.4; no provider, routing, native helper, menu, schema or compile-script source changes since v0.5.2. Fresh signed execution/helper checks and installed startup cover the changed compiler. Candidate CI passes the complete automated suite. Named owner setup/reply and daily-use observations from v0.5.2's evidence below carry forward only for unchanged app behavior. No fresh outbound conversation test is claimed. | Pass |
+| Rollback readiness | v0.5.3 | Previous signed v0.5.2 CLI, matching hash-addressed helpers, configuration, launch agents and compatible menu retained privately before cutover. No schema or rollback algorithm changes. Automated update/setup/rollback tests pass in candidate workflow 39709812170. Installed listener returns Ready with zero active work and the same one ambiguous/one parked event; no delivery state rewind. | Pass |
+
+### v0.5.3 evidence scope
+
+The owner explicitly authorized publishing the security patch on 2026-10-21.
+Candidate arm64 SHA256 is
+`f7dbbc6eac827c2b737724e97981fcb5ef1f15bc4db3e288557f31a4b7193f0c`;
+x64 is `6af48feffc9f476737f5e47dfd6126298f8ac7da6b968cc7120f0e8d3d8d4bb5`.
+Signed candidate workflow 39709812170 passed both architectures, notarization,
+package smoke checks and the full automated suite. On the owner's arm64 Mac,
+both downloaded CLIs and embedded helpers passed signature/protocol checks;
+x64 execution used Rosetta, not native Intel hardware. The new universal menu
+passed signature, stapled ticket and Gatekeeper checks; the compatible installed
+menu remains available pending the public update.
+
+The installed candidate passed offline doctor, including its local runtime
+file-tool probe, and restarted iMessage, WhatsApp and Slack Ready. No outbound
+conversation test was initiated. User configuration is identical except for the
+required installed executable integrity hash. Delivery counts remained zero active,
+one ambiguous and one parked; these existing fences were not replayed or rewound.
+The new Bun compiler is covered by fresh signed execution/startup and automated
+tests; unchanged setup/routing behavior alone uses the named prior owner evidence
+below. This does not claim identical compiler inputs or new daily-use acceptance
+on candidate.1. Final runtime/build inputs must match this candidate; only release
+qualification documentation may differ. Public asset checksums bind newly signed
+final bytes, which can differ because of signing timestamps.
 
 ### v0.5.2 evidence scope
 

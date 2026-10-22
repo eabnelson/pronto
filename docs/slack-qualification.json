@@ -1,30 +1,30 @@
 {
   "version": 2,
-  "releaseTag": "v0.5.2",
+  "releaseTag": "v0.5.3",
   "artifacts": {
-    "arm64": "8aea72a7d622709ec2666865bcf19568c462e96958b383f1588d5a5a6f36f579",
-    "x64": "7c407c1c4a3f709ad3eef381247ee57522c7d8cf755c7a0cb15aa3044437039e"
+    "arm64": "f7dbbc6eac827c2b737724e97981fcb5ef1f15bc4db3e288557f31a4b7193f0c",
+    "x64": "6af48feffc9f476737f5e47dfd6126298f8ac7da6b968cc7120f0e8d3d8d4bb5"
   },
   "checks": [
     {
       "id": "signed-helper-arm64",
       "status": "pass",
-      "evidence": "v0.5.2-candidate.1, source 83a884f310126874c3ba930263c60cdacd1ea9ad, signed workflow 39649163823: downloaded CLI checksum/Developer ID requirement, embedded arm64 helper hash/signature/protocol self-test and Go 1.27.3 binary vulnerability audit passed on the owner's arm64 Mac."
+      "evidence": "v0.5.3-candidate.1, source 1f2d9199b989deccf13edf4e87b465c56ff77bcc, signed workflow 39709812170: downloaded arm64 CLI checksum/Developer ID requirement and embedded helper hash/signature/protocol self-test passed on the owner arm64 Mac. Fresh installed offline doctor and listener startup passed with all three apps Ready; Bun compiler is now 1.4.3."
     },
     {
       "id": "signed-helper-x64",
       "status": "pass",
-      "evidence": "Same candidate/source/run: x64 CLI checksum/Developer ID requirement, embedded x64 helper hash/signature/protocol self-test and Go 1.27.3 binary vulnerability audit passed. Execution used Rosetta on arm64; no native Intel test is claimed."
+      "evidence": "Same v0.5.3 candidate/source/run: x64 CLI checksum/Developer ID requirement and embedded x64 helper hash/signature/protocol self-test passed. Execution used Rosetta on arm64; no native Intel test is claimed. Signed workflow also passed Go helper vulnerability checks and both architecture smoke checks."
     },
     {
       "id": "owner-acceptance",
       "status": "pass",
-      "evidence": "On 2026-10-21 the owner reported successful daily Slack use and authorized rollout. That acceptance concerns installed v0.5.1-candidate.20 source a39b61d334bdc898cfc7da76d42aa70640185be6. Runtime/provider/native/menu source and build scripts are unchanged in v0.5.2-candidate.1; later changes are testing policy/tooling and version metadata. Candidate.1 is now installed and all three apps are Ready."
+      "evidence": "Owner explicitly approved publishing this security patch on 2026-10-21. Named prior daily Slack use was accepted on v0.5.1-candidate.20 source a39b61d334bdc898cfc7da76d42aa70640185be6 and carried into v0.5.2-candidate.1 source 83a884f310126874c3ba930263c60cdacd1ea9ad. Provider/native/menu/routing source is unchanged in v0.5.3; changed Bun compiler inputs receive fresh signed execution, offline doctor and installed startup checks. No new daily-use observation on v0.5.3 is claimed."
     },
     {
       "id": "setup-and-reply",
       "status": "pass",
-      "evidence": "Carry forward the owner's existing workspace/tag setup and observed correctly routed Slack replies in daily use, plus prior signed self-DM/thread routing evidence. Signed candidate.19 source 9a7706225f4febcd6b2786a617708f63f114bee4 proved unattended connection and canonical owner participation with isolated read-only recovery; candidate.20 and v0.5.2-candidate.1 subsequently restarted all apps Ready with settings preserved. No fresh outbound request, native Intel, broad workspace matrix or long-sleep pass is claimed. Carry-forward is accepted by the 2026-10-21 beta policy."
+      "evidence": "Carry forward the owner workspace/tag setup and correctly routed daily Slack replies named in v0.5.2 qualification, including prior signed self-DM/thread evidence and candidate.19 source 9a7706225f4febcd6b2786a617708f63f114bee4 read-only recovery. v0.5.3-candidate.1 preserves settings and restarts all apps Ready with prior ambiguous/parked fences intact. Changed compiler covered by fresh helper/installed checks and complete automated tests. No fresh outbound request, native Intel or long-sleep test is claimed. Carry-forward applies only to unchanged app behavior under the 2026-10-21 beta policy."
     }
   ]
 }

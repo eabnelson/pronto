@@ -17,7 +17,7 @@
     },
     "packages/cli": {
       "name": "pronto-cli",
-      "version": "0.5.2",
+      "version": "0.5.3",
       "bin": {
         "pronto": "./src/cli.ts",
       },
@@ -30,15 +30,15 @@
     },
     "packages/messages": {
       "name": "pronto-imessage",
-      "version": "0.5.2",
+      "version": "0.5.3",
     },
     "packages/slack": {
       "name": "pronto-slack",
-      "version": "0.5.2",
+      "version": "0.5.3",
     },
     "packages/whatsapp": {
       "name": "pronto-whatsapp",
-      "version": "0.5.2",
+      "version": "0.5.3",
     },
   },
   "packages": {
