@@ -44,7 +44,7 @@ switch a chat into a repository you do not trust.
 - macOS 14 or newer; Messages must be signed in when using iMessage
 - For RCS, an iPhone and carrier configuration that makes the RCS conversation
   available in Messages on the Mac
-- [Bun 1.3.14](https://bun.sh/) only for development from source
+- [Bun 1.4.3](https://bun.sh/) only for development from source
 - For iMessage and RCS, [`imsg`](https://github.com/openclaw/imsg) 0.15.0
 - For WhatsApp, [`wacli`](https://github.com/openclaw/wacli) 0.19.0 or newer and
   the WhatsApp app on your phone (see [WhatsApp](#whatsapp) before enabling it)
